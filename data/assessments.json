@@ -1,0 +1,109 @@
+{
+  "assessments": [
+    {
+      "_id": "seed-assessment-demo2024",
+      "companyUserId": "demo-company",
+      "title": "Sample Frontend Engineer Assessment",
+      "code": "DEMO2024",
+      "status": "active",
+      "createdAt": "2026-01-15T09:00:00.000Z",
+      "questions": [
+        {
+          "id": "b9789f351325dd24738d9d1b",
+          "type": "text",
+          "text": "Describe how React reconciliation works.",
+          "weight": 1,
+          "keywords": [
+            "virtual dom",
+            "diff",
+            "fiber",
+            "keys"
+          ],
+          "maxLength": 400
+        },
+        {
+          "id": "c86379744424e86611aea1f2",
+          "type": "mcq",
+          "text": "Which hook runs after every render by default?",
+          "weight": 1,
+          "keywords": [],
+          "maxLength": null,
+          "choices": [
+            {
+              "id": "a",
+              "text": "useMemo"
+            },
+            {
+              "id": "b",
+              "text": "useEffect"
+            },
+            {
+              "id": "c",
+              "text": "useCallback"
+            },
+            {
+              "id": "d",
+              "text": "useRef"
+            }
+          ],
+          "correctChoiceId": "b"
+        }
+      ]
+    },
+    {
+      "_id": "faab0b9e02545aaa662f7637",
+      "code": "9C8D3224",
+      "status": "active",
+      "createdAt": "2026-07-28T08:59:00.712Z",
+      "companyUserId": "demo-company",
+      "title": "hi this is the code",
+      "questions": [
+        {
+          "id": "c2a599c2e27ffdb510990691",
+          "type": "text",
+          "text": "how is the code it is  working in the java",
+          "weight": 1,
+          "keywords": [
+            "react"
+          ],
+          "maxLength": 200
+        },
+        {
+          "id": "ef367ab0b1108dad241bcb62",
+          "type": "code",
+          "text": "what is the corrent code",
+          "weight": 1,
+          "keywords": [],
+          "maxLength": null,
+          "starterCode": "public class Main {\n    public static void main(String[] args) {\n        // read input, print output\n    }\n}\n",
+          "testCases": [
+            {
+              "input": "5565",
+              "expectedStdout": "456"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "_id": "af436ecb2154dcf6185f429d",
+      "code": "886E880B",
+      "status": "active",
+      "createdAt": "2026-07-28T09:02:06.981Z",
+      "companyUserId": "demo-company",
+      "title": "hi",
+      "questions": [
+        {
+          "id": "9de6a49cfe01b101bbfd3cc3",
+          "type": "text",
+          "text": "hhv;j",
+          "weight": 1,
+          "keywords": [
+            "jg"
+          ],
+          "maxLength": 456
+        }
+      ]
+    }
+  ]
+}
