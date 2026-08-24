@@ -1,0 +1,12 @@
+node_modules/
+.output/
+.vite/
+.wrangler/
+dist/
+.env
+data/users.json
+data/attempts.json
+data/reports.json
+
+.npm-cache/
+.env

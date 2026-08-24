@@ -1,0 +1,265 @@
+import type { FaceLandmarker, ObjectDetector, PoseLandmarker } from "@mediapipe/tasks-vision";
+import { setVisionStatus, resetVisionStatus, type Level } from "./vision-status";
+
+const WASM_BASE = "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.35/wasm";
+const FACE_MODEL =
+  "https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task";
+const POSE_MODEL =
+  "https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_lite/float16/1/pose_landmarker_lite.task";
+const OBJECT_MODEL =
+  "https://storage.googleapis.com/mediapipe-models/object_detector/efficientdet_lite0/float32/1/efficientdet_lite0.tflite";
+
+// Face Mesh indices with refineLandmarks / iris on
+const LEFT_IRIS = 468;
+const RIGHT_IRIS = 473;
+const LEFT_EYE_L = 33;
+const LEFT_EYE_R = 133;
+const RIGHT_EYE_L = 362;
+const RIGHT_EYE_R = 263;
+
+function evalEye(lm: Array<{ x: number; y: number }>): { text: string; level: Level } {
+  const li = lm[LEFT_IRIS],
+    le1 = lm[LEFT_EYE_L],
+    le2 = lm[LEFT_EYE_R];
+  const ri = lm[RIGHT_IRIS],
+    re1 = lm[RIGHT_EYE_L],
+    re2 = lm[RIGHT_EYE_R];
+  if (!li || !ri || !le1 || !le2 || !re1 || !re2) {
+    return { text: "No Face Detected", level: "bad" };
+  }
+  const leftRatio = (li.x - Math.min(le1.x, le2.x)) / Math.abs(le2.x - le1.x);
+  const rightRatio = (ri.x - Math.min(re1.x, re2.x)) / Math.abs(re2.x - re1.x);
+  const avg = (leftRatio + rightRatio) / 2;
+  if (avg > 0.35 && avg < 0.65) return { text: "Good — Looking at Camera", level: "good" };
+  if (avg > 0.2 && avg < 0.8) return { text: "Partial — Slight Gaze Shift", level: "warn" };
+  return { text: "Poor — Looking Away", level: "bad" };
+}
+
+function evalPosture(lm: Array<{ x: number; y: number }>): { text: string; level: Level } {
+  const LS = lm[11],
+    RS = lm[12],
+    NOSE = lm[0];
+  if (!LS || !RS || !NOSE) return { text: "No Pose Detected", level: "bad" };
+  const shoulderDiff = Math.abs(LS.y - RS.y);
+  const midX = (LS.x + RS.x) / 2;
+  const headOffset = Math.abs(NOSE.x - midX);
+  const shoulderWidth = Math.abs(LS.x - RS.x);
+  const slouch = NOSE.y - Math.min(LS.y, RS.y);
+  if (shoulderWidth < 0.14) return { text: "Too Far From Camera", level: "warn" };
+  if (shoulderWidth > 0.62) return { text: "Too Close To Camera", level: "warn" };
+  if (slouch > -0.02) return { text: "Slouching / Head Low", level: "warn" };
+  if (shoulderDiff > 0.05) return { text: "Uneven Shoulders / Leaning", level: "warn" };
+  if (headOffset > 0.08) return { text: "Head Off-Center", level: "warn" };
+  return { text: "Upright / Good", level: "good" };
+}
+
+function evalHand(
+  lm: Array<{ x: number; y: number; visibility?: number }>,
+  wristIndex: number,
+  shoulderIndex: number,
+): { text: string; level: Level } {
+  const wrist = lm[wristIndex];
+  const shoulder = lm[shoulderIndex];
+  if (!wrist || !shoulder || (wrist.visibility ?? 1) < 0.45) {
+    return { text: "Not visible", level: "idle" };
+  }
+  if (wrist.y < shoulder.y - 0.04) return { text: "Raised", level: "good" };
+  return { text: "Down", level: "idle" };
+}
+
+/**
+ * Grooming / formal-wear read. Samples the torso band of the frame: a plain,
+ * evenly lit garment reads as presentable; a very dark, very noisy or very
+ * dim band reads as "check attire and lighting".
+ */
+function evalGrooming(
+  video: HTMLVideoElement,
+  canvas: HTMLCanvasElement,
+): { text: string; level: Level } {
+  const ctx = canvas.getContext("2d", { willReadFrequently: true });
+  if (!ctx || !video.videoWidth) return { text: "Waiting…", level: "idle" };
+  const w = 64;
+  const h = 36;
+  canvas.width = w;
+  canvas.height = h;
+  // bottom third of the frame ≈ torso / clothing
+  ctx.drawImage(
+    video,
+    0,
+    video.videoHeight * 0.62,
+    video.videoWidth,
+    video.videoHeight * 0.38,
+    0,
+    0,
+    w,
+    h,
+  );
+  const { data } = ctx.getImageData(0, 0, w, h);
+  let sum = 0;
+  let sumSq = 0;
+  const n = w * h;
+  for (let i = 0; i < data.length; i += 4) {
+    const lum = 0.299 * data[i]! + 0.587 * data[i + 1]! + 0.114 * data[i + 2]!;
+    sum += lum;
+    sumSq += lum * lum;
+  }
+  const mean = sum / n;
+  const variance = Math.max(0, sumSq / n - mean * mean);
+  const sd = Math.sqrt(variance);
+  if (mean < 26) return { text: "Too dark to assess attire", level: "warn" };
+  if (sd > 62) return { text: "Busy / informal pattern detected", level: "warn" };
+  return { text: "Presentable / formal", level: "good" };
+}
+
+export class VisionDetector {
+  private face: FaceLandmarker | null = null;
+  private pose: PoseLandmarker | null = null;
+  private objects: ObjectDetector | null = null;
+  private raf: number | null = null;
+  private running = false;
+  private video: HTMLVideoElement | null = null;
+  private canvas = typeof document !== "undefined" ? document.createElement("canvas") : null;
+  private lastEmit = 0;
+  private lastObjects = 0;
+  private lastInference = 0;
+
+  async start(video: HTMLVideoElement) {
+    if (this.running) return;
+    this.running = true;
+    this.video = video;
+    try {
+      const vision = await import("@mediapipe/tasks-vision");
+      const fileset = await vision.FilesetResolver.forVisionTasks(WASM_BASE);
+      this.face = await vision.FaceLandmarker.createFromOptions(fileset, {
+        baseOptions: { modelAssetPath: FACE_MODEL, delegate: "GPU" },
+        runningMode: "VIDEO",
+        numFaces: 4,
+        outputFaceBlendshapes: false,
+        outputFacialTransformationMatrixes: false,
+      });
+      this.pose = await vision.PoseLandmarker.createFromOptions(fileset, {
+        baseOptions: { modelAssetPath: POSE_MODEL, delegate: "GPU" },
+        runningMode: "VIDEO",
+        numPoses: 1,
+      });
+      try {
+        this.objects = await vision.ObjectDetector.createFromOptions(fileset, {
+          baseOptions: { modelAssetPath: OBJECT_MODEL, delegate: "GPU" },
+          runningMode: "VIDEO",
+          scoreThreshold: 0.32,
+          maxResults: 6,
+        });
+      } catch {
+        this.objects = null;
+      }
+      this.loop();
+    } catch (e) {
+      console.warn("VisionDetector init failed", e);
+      this.running = false;
+    }
+  }
+
+  private loop = () => {
+    if (!this.running || !this.video || !this.face || !this.pose) return;
+    const v = this.video;
+    if (v.readyState >= 2 && v.videoWidth > 0) {
+      const ts = performance.now();
+      if (ts - this.lastInference < 80) {
+        this.raf = requestAnimationFrame(this.loop);
+        return;
+      }
+      this.lastInference = ts;
+      try {
+        const faceRes = this.face.detectForVideo(v, ts);
+        const poseRes = this.pose.detectForVideo(v, ts);
+
+        // object detection is heavier — sample it a few times a second
+        if (this.objects && ts - this.lastObjects > 280) {
+          this.lastObjects = ts;
+          const objectRes = this.objects.detectForVideo(v, ts);
+  const detections = objectRes.detections ?? [];
+
+const phone = detections.some((d) => {
+  const category = d.categories?.[0];
+  const name = (category?.categoryName ?? "").toLowerCase();
+  const score = category?.score ?? 0;
+
+  return (
+    score >= 0.45 &&
+    (
+      name === "cell phone" ||
+      name === "mobile phone" ||
+      name === "phone"
+    )
+  );
+});
+
+const names = detections.map((d) =>
+  (d.categories?.[0]?.categoryName ?? "").toLowerCase(),
+);
+          const peopleFromObjects = names.filter((n) => n === "person").length;
+          setVisionStatus({
+            phone,
+            people: Math.max(peopleFromObjects, faceRes.faceLandmarks?.length ?? 0),
+          });
+        }
+
+        if (ts - this.lastEmit > 250) {
+          this.lastEmit = ts;
+          const faces = faceRes.faceLandmarks ?? [];
+          const eye = faces[0]
+            ? evalEye(faces[0])
+            : { text: "No Face Detected", level: "bad" as Level };
+          const posture = poseRes.landmarks?.[0]
+            ? evalPosture(poseRes.landmarks[0])
+            : { text: "No Pose Detected", level: "bad" as Level };
+          const pose = poseRes.landmarks?.[0];
+          const grooming = this.canvas
+            ? evalGrooming(v, this.canvas)
+            : { text: "Unavailable", level: "idle" as Level };
+          setVisionStatus({
+            eye,
+            posture,
+            grooming,
+            leftHand: pose
+              ? evalHand(pose, 15, 11)
+              : { text: "Not visible", level: "idle" as Level },
+            rightHand: pose
+              ? evalHand(pose, 16, 12)
+              : { text: "Not visible", level: "idle" as Level },
+            ...(this.objects ? {} : { people: faces.length }),
+          });
+        }
+      } catch {
+        /* skip frame */
+      }
+    }
+    this.raf = requestAnimationFrame(this.loop);
+  };
+
+  stop() {
+    this.running = false;
+    if (this.raf != null) cancelAnimationFrame(this.raf);
+    this.raf = null;
+    try {
+      this.face?.close();
+    } catch {
+      void 0;
+    }
+    try {
+      this.pose?.close();
+    } catch {
+      void 0;
+    }
+    try {
+      this.objects?.close();
+    } catch {
+      void 0;
+    }
+    this.face = null;
+    this.pose = null;
+    this.objects = null;
+    this.video = null;
+    resetVisionStatus();
+  }
+}

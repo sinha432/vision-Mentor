@@ -1,0 +1,820 @@
+import { useEffect, useRef, useState, useCallback } from "react";
+import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
+import { motion, AnimatePresence } from "framer-motion";
+import {
+  Mic, MicOff, Send, Video, VideoOff, Volume2, VolumeX,
+  Cpu, Activity, Sparkles, Settings as SettingsIcon, Radio, Power, Zap, Sun, Moon, UserCircle, ClipboardList, GraduationCap,
+} from "lucide-react";
+import { toast } from "sonner";
+import { Toaster } from "@/components/ui/sonner";
+import { Switch } from "@/components/ui/switch";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { SettingsPanel, SettingsValues } from "@/components/SettingsPanel";
+import { Companion } from "@/components/nova/Companion";
+import { useTheme } from "@/contexts/ThemeContext";
+import { useDemoAuth } from "@/contexts/DemoAuthContext";
+import { VisionDetector } from "@/lib/vision-detector";
+import { AudioMonitor } from "@/lib/audio-monitor";
+import { useVisionStatus, type Level } from "@/lib/vision-status";
+import { useNovaVoice, voiceLabel, speakWithVoice } from "@/lib/nova/nova-voice";
+import type { NovaExpression, NovaState } from "@/lib/nova/expression";
+import { streamNovaReply } from "@/lib/nova/stream-reply";
+
+export const Route = createFileRoute("/_authenticated/")({ component: VisionMentor });
+
+
+type Status = "idle" | "listening" | "thinking" | "speaking" | "offline";
+type Message = { id: string; role: "ai" | "user"; text: string; ts: number };
+
+function Particles() {
+  const particles = Array.from({ length: 28 });
+  return (
+    <div className="pointer-events-none absolute inset-0 overflow-hidden">
+      {particles.map((_, i) => (
+        <motion.span
+          key={i}
+          className="absolute rounded-full"
+          style={{
+            left: `${(i * 37) % 100}%`,
+            top: `${(i * 53) % 100}%`,
+            width: 2 + (i % 4),
+            height: 2 + (i % 4),
+            background: i % 2 ? "var(--primary)" : "var(--accent)",
+            filter: "blur(0.5px)",
+          }}
+          animate={{ y: [0, -30, 0], opacity: [0.2, 0.8, 0.2] }}
+          transition={{ duration: 4 + (i % 5), repeat: Infinity, delay: i * 0.15 }}
+        />
+      ))}
+    </div>
+  );
+}
+
+function StatusIndicator({ status }: { status: Status }) {
+  const map = {
+    idle:      { label: "Idle",      color: "var(--muted-foreground)" },
+    listening: { label: "Listening", color: "var(--cyber)" },
+    thinking:  { label: "Thinking",  color: "var(--accent)" },
+    speaking:  { label: "Speaking",  color: "var(--primary)" },
+    offline:   { label: "Offline",   color: "var(--destructive)" },
+  }[status];
+  return (
+    <div className="flex items-center gap-2 px-3 py-1.5 rounded-full glass">
+      <span className="relative flex h-2 w-2">
+        <span className="absolute inline-flex h-full w-full rounded-full opacity-75 animate-ping" style={{ background: map.color }} />
+        <span className="relative inline-flex rounded-full h-2 w-2" style={{ background: map.color }} />
+      </span>
+      <span className="text-xs font-display uppercase tracking-widest" style={{ color: map.color }}>{map.label}</span>
+    </div>
+  );
+}
+
+function levelColor(l: Level): string {
+  if (l === "good") return "var(--cyber)";
+  if (l === "warn") return "oklch(0.75 0.18 75)";
+  if (l === "bad") return "var(--destructive)";
+  return "var(--muted-foreground)";
+}
+
+function AvatarPanel({
+  status,
+  expression,
+  pulse,
+}: {
+  status: Status;
+  expression: NovaExpression;
+  pulse: number;
+}) {
+  const vision = useVisionStatus();
+  const { voices: novaVoices, active: activeVoice, setVoice, fellBack } = useNovaVoice();
+  const novaState: NovaState =
+    status === "speaking" ? "speaking" : status === "listening" ? "listening" : status === "thinking" ? "thinking" : "idle";
+  return (
+    <div className="relative flex flex-col items-center justify-center gap-6 p-6">
+      <div className="relative w-64 h-64 flex items-center justify-center">
+        <div className="absolute inset-0 rounded-full border border-primary/30 animate-orbit" />
+        <div className="absolute inset-4 rounded-full border border-accent/30 animate-orbit" style={{ animationDirection: "reverse", animationDuration: "16s" }} />
+        <div className="absolute inset-8 rounded-full border border-cyber/40" />
+        {(status === "speaking" || status === "listening") && (
+          <>
+            <span className="absolute inset-6 rounded-full bg-primary/20 animate-pulse-ring" />
+            <span className="absolute inset-6 rounded-full bg-accent/20 animate-pulse-ring" style={{ animationDelay: "0.6s" }} />
+          </>
+        )}
+        <div className="absolute inset-8 flex items-center justify-center">
+          <Companion
+            expression={status === "offline" ? "sad" : expression}
+            talking={novaState === "speaking"}
+            pulse={pulse}
+          />
+        </div>
+        {[0, 60, 120, 180, 240, 300].map((deg) => (
+          <motion.span
+            key={deg}
+            className="absolute w-2 h-2 rounded-full bg-cyber glow-cyber"
+            style={{ transform: `rotate(${deg}deg) translateY(-130px)`, transformOrigin: "center" }}
+            animate={{ opacity: [0.3, 1, 0.3] }}
+            transition={{ duration: 2, repeat: Infinity, delay: deg / 360 }}
+          />
+        ))}
+      </div>
+      <div className="text-center space-y-2">
+        <h2 className="font-display text-2xl text-gradient">NOVA</h2>
+        <p className="text-xs text-muted-foreground tracking-widest uppercase">
+          Vision Mentor X · AI Interview Companion
+        </p>
+      </div>
+      {novaVoices.length > 0 && (
+        <div className="w-full space-y-2">
+          <label htmlFor="nova-voice-select" className="flex items-center justify-center gap-2 text-[9px] tracking-[0.18em] text-muted-foreground uppercase">
+            <Radio className="size-3" />
+            Nova's voice
+          </label>
+          <select
+            id="nova-voice-select"
+            value={activeVoice?.voiceURI ?? ""}
+            onChange={(e) => setVoice(e.target.value)}
+            className="w-full rounded-lg border border-cyber/25 bg-surface/60 px-2.5 py-1.5 text-[11px] text-foreground backdrop-blur-md focus:border-cyber focus:outline-none"
+          >
+            {novaVoices.map((v) => (
+              <option key={v.voiceURI} value={v.voiceURI}>
+                {voiceLabel(v)}
+              </option>
+            ))}
+          </select>
+          {fellBack && (
+            <p className="text-[10px] text-muted-foreground text-center">
+              Preferred voice unavailable — using {activeVoice ? voiceLabel(activeVoice) : "the browser default"}.
+            </p>
+          )}
+        </div>
+      )}
+      <StatusIndicator status={status} />
+      <div className="w-full grid grid-cols-2 gap-2 mt-2">
+        <Popover>
+          <PopoverTrigger asChild>
+            <button className="chip-3d rounded-lg p-2 flex flex-col items-center gap-1">
+              <Radio className="w-4 h-4 text-cyber" />
+              <span className="text-[10px] uppercase tracking-wider text-muted-foreground">Voice</span>
+              <span className="text-[10px] text-cyber">{status === "offline" ? "OFFLINE" : "ONLINE"}</span>
+            </button>
+          </PopoverTrigger>
+          <PopoverContent className="popover-3d w-64 text-xs">
+            <p className="font-display text-[11px] uppercase tracking-widest mb-1">Voice channel</p>
+            <p className="text-muted-foreground">
+              Browser speech recognition and spoken replies. Works best in Chrome or Edge. Toggle
+              spoken replies with the speaker button in the composer.
+            </p>
+          </PopoverContent>
+        </Popover>
+
+        <Popover>
+          <PopoverTrigger asChild>
+            <button className="chip-3d rounded-lg p-2 flex flex-col items-center gap-1">
+              <Activity className="w-4 h-4 text-cyber" />
+              <span className="text-[10px] uppercase tracking-wider text-muted-foreground">Vision</span>
+              <span
+                className="text-[10px] text-center leading-tight"
+                style={{ color: status === "offline" ? "var(--destructive)" : levelColor(vision.eye.level) }}
+              >
+                {status === "offline"
+                  ? "OFFLINE"
+                  : `${vision.eye.text.split(" — ")[0]} · ${vision.posture.text.split(" / ")[0]}`}
+              </span>
+            </button>
+          </PopoverTrigger>
+          <PopoverContent className="popover-3d w-64 space-y-1 text-xs">
+            <p className="font-display text-[11px] uppercase tracking-widest">Vision analysis</p>
+            <p className="text-muted-foreground">Eye contact: {vision.eye.text}</p>
+            <p className="text-muted-foreground">Posture: {vision.posture.text}</p>
+          </PopoverContent>
+        </Popover>
+      </div>
+    </div>
+  );
+}
+
+
+function Waveform({ active }: { active: boolean }) {
+  return (
+    <div className="flex items-center justify-center gap-1 h-8">
+      {Array.from({ length: 24 }).map((_, i) => (
+        <span
+          key={i}
+          className="w-0.5 bg-gradient-to-t from-primary to-accent rounded-full"
+          style={{
+            height: active ? `${20 + Math.sin(i) * 60}%` : "20%",
+            animation: active ? `wave ${0.6 + (i % 5) * 0.1}s ease-in-out ${i * 0.04}s infinite` : "none",
+            transformOrigin: "center",
+          }}
+        />
+      ))}
+    </div>
+  );
+}
+
+function AnimatedMicButton({ active, disabled, onClick }: { active: boolean; disabled?: boolean; onClick: () => void }) {
+  return (
+    <button onClick={onClick} disabled={disabled} className="relative group disabled:opacity-50" aria-label="microphone">
+      {active && (
+        <>
+          <span className="absolute inset-0 rounded-full bg-primary/40 animate-pulse-ring" />
+          <span className="absolute inset-0 rounded-full bg-accent/40 animate-pulse-ring" style={{ animationDelay: "0.7s" }} />
+        </>
+      )}
+      <span
+        className={`relative flex items-center justify-center w-16 h-16 rounded-full transition-all ${active ? "glow-primary" : "glow-cyber"}`}
+        style={{ background: "var(--gradient-aurora)" }}
+      >
+        {active ? <MicOff className="w-7 h-7 text-white" /> : <Mic className="w-7 h-7 text-white" />}
+      </span>
+    </button>
+  );
+}
+
+function AIThinkingLoader() {
+  return (
+    <div className="flex items-center gap-1.5 px-4 py-3">
+      {[0, 1, 2].map((i) => (
+        <motion.span
+          key={i}
+          className="w-2 h-2 rounded-full bg-primary"
+          animate={{ y: [0, -6, 0], opacity: [0.4, 1, 0.4] }}
+          transition={{ duration: 0.9, repeat: Infinity, delay: i * 0.15 }}
+        />
+      ))}
+    </div>
+  );
+}
+
+function MessageBubble({ m, mounted }: { m: Message; mounted: boolean }) {
+  const isUser = m.role === "user";
+  return (
+    <div className={`flex ${isUser ? "justify-end" : "justify-start"} animate-message-in`}>
+      <div className={`max-w-[78%] ${isUser ? "items-end" : "items-start"} flex flex-col gap-1`}>
+        <div
+          className={`px-4 py-2.5 rounded-2xl text-sm leading-relaxed ${
+            isUser ? "rounded-br-sm bg-primary/20 border border-primary/40 text-foreground" : "rounded-bl-sm glass text-foreground"
+          }`}
+          style={isUser ? { boxShadow: "0 0 16px var(--shadow-glow)" } : {}}
+        >
+          {m.text}
+        </div>
+        <span className="text-[10px] text-muted-foreground px-2">
+          {mounted ? new Date(m.ts).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : ""}
+        </span>
+      </div>
+    </div>
+  );
+}
+
+function VisionMetrics() {
+  const v = useVisionStatus();
+  const eyeShort = v.eye.text.split(" — ")[0];
+  const postureShort = v.posture.text.split(" / ")[0];
+  const mood =
+    v.eye.level === "good" && v.posture.level === "good"
+      ? { text: "Calm", level: "good" as Level }
+      : v.eye.level === "bad" || v.posture.level === "bad"
+      ? { text: "Tense", level: "bad" as Level }
+      : { text: "Focused", level: "warn" as Level };
+  const peopleText = v.people > 1 ? `${v.people} people` : v.people === 1 ? "1 person" : "No face detected";
+  const phoneText = v.phone ? "Phone detected" : "No phone detected";
+  const items = [
+    { label: "Posture", value: postureShort, level: v.posture.level },
+    { label: "Eye", value: eyeShort, level: v.eye.level },
+    { label: "People", value: peopleText, level: v.people > 1 ? "bad" as Level : "good" as Level },
+    { label: "Phone", value: phoneText, level: v.phone ? "bad" as Level : "good" as Level },
+    { label: "Audio", value: v.audio.text, level: v.audio.level },
+    { label: "Mood", value: mood.text, level: mood.level },
+  ];
+  return (
+    <div className="grid grid-cols-2 gap-2 mt-3">
+      {items.map((m) => (
+        <div key={m.label} className="glass rounded-lg p-2 text-center">
+          <div className="text-[9px] uppercase tracking-widest text-muted-foreground">{m.label}</div>
+          <div className="text-xs font-display mt-0.5 truncate" style={{ color: levelColor(m.level) }}>{m.value}</div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function VisionWarnings() {
+  const { warnings } = useVisionStatus();
+  if (!warnings.length) {
+    return (
+      <div className="glass rounded-2xl p-3 mt-3 text-[11px] text-emerald-100 bg-emerald-500/5 border border-emerald-500/20">
+        No concerns detected — camera, audio and background look clear.
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-2 mt-3">
+      {warnings.map((warning) => (
+        <div
+          key={warning.id}
+          className={`rounded-2xl p-3 text-[11px] ${warning.level === "bad" ? "bg-destructive/10 border border-destructive/20 text-destructive" : "bg-amber-500/10 border border-amber-500/20 text-amber-100"}`}
+        >
+          {warning.message}
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function VideoPanel({ enabled, micEnabled, onToggle }: { enabled: boolean; micEnabled: boolean; onToggle: () => void }) {
+  const videoRef = useRef<HTMLVideoElement>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let stream: MediaStream | null = null;
+    const detector = new VisionDetector();
+    const monitor = new AudioMonitor();
+    if (enabled) {
+  if (!navigator.mediaDevices?.getUserMedia) {
+    setError("Camera and microphone access is not available in this browser.");
+    return;
+  }
+
+  navigator.mediaDevices
+    .getUserMedia({ video: true, audio: micEnabled })
+        .then(async (s) => {
+          stream = s;
+          const el = videoRef.current;
+          if (el) {
+            el.srcObject = s;
+            try { await el.play(); } catch {}
+            void detector.start(el);
+          }
+          if (micEnabled && s.getAudioTracks().length) monitor.start(s);
+          setError(null);
+        })
+        .catch((err) => {
+          console.warn("Camera access failed", err);
+          setError(micEnabled ? "Camera or microphone access denied" : "Camera access denied");
+        });
+    }
+    return () => {
+      detector.stop();
+      monitor.stop();
+      stream?.getTracks().forEach((t) => t.stop());
+    };
+  }, [enabled, micEnabled]);
+
+  return (
+    <div className="relative rounded-2xl overflow-hidden card-3d aspect-video">
+      <div className="absolute top-3 left-3 z-10 flex items-center gap-2 px-2 py-1 rounded-md bg-background/60 backdrop-blur">
+        <span className="w-1.5 h-1.5 rounded-full bg-destructive animate-pulse" />
+        <span className="text-[10px] font-display uppercase tracking-widest text-foreground">{enabled ? "LIVE" : "OFF"}</span>
+      </div>
+      <button onClick={onToggle} className="absolute top-3 right-3 z-10 p-2 rounded-md glass hover:glow-cyber transition-shadow">
+        {enabled ? <Video className="w-4 h-4 text-cyber" /> : <VideoOff className="w-4 h-4 text-muted-foreground" />}
+      </button>
+      {enabled && !error ? (
+        <>
+          <video ref={videoRef} autoPlay playsInline muted className="w-full h-full object-cover" />
+          <div className="absolute inset-0 pointer-events-none">
+            <div className="absolute inset-4 border border-cyber/40 rounded-lg" />
+            <div className="absolute top-4 left-4 w-6 h-6 border-l-2 border-t-2 border-cyber" />
+            <div className="absolute top-4 right-4 w-6 h-6 border-r-2 border-t-2 border-cyber" />
+            <div className="absolute bottom-4 left-4 w-6 h-6 border-l-2 border-b-2 border-cyber" />
+            <div className="absolute bottom-4 right-4 w-6 h-6 border-r-2 border-b-2 border-cyber" />
+          </div>
+        </>
+      ) : (
+        <div className="w-full h-full grid-bg flex flex-col items-center justify-center gap-2">
+          <VideoOff className="w-10 h-10 text-muted-foreground" />
+          <p className="text-xs text-muted-foreground">{error ?? "Camera offline"}</p>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function useSpeech(lang = "en-US", voice: SpeechSynthesisVoice | null = null) {
+  const recognitionRef = useRef<any>(null);
+  const [supported, setSupported] = useState(false);
+
+  useEffect(() => {
+    const SR = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+    if (SR) {
+      const r = new SR();
+      r.continuous = false;
+      r.interimResults = true;
+      r.lang = lang;
+      recognitionRef.current = r;
+      setSupported(true);
+    }
+  }, [lang]);
+
+  useEffect(() => {
+    if (recognitionRef.current) {
+      recognitionRef.current.lang = lang;
+    }
+  }, [lang]);
+
+  const listen = useCallback((onFinal: (t: string) => void, onEnd: () => void, onInterim?: (t: string) => void) => {
+    const r = recognitionRef.current;
+    if (!r) return;
+    r.onresult = (e: any) => {
+      let interim = ""; let finalText = "";
+      for (let i = e.resultIndex; i < e.results.length; i++) {
+        const res = e.results[i];
+        if (res.isFinal) finalText += res[0].transcript;
+        else interim += res[0].transcript;
+      }
+      if (interim && onInterim) onInterim(interim);
+      if (finalText) onFinal(finalText);
+    };
+    r.onend = onEnd;
+    r.onerror = onEnd;
+    try { r.start(); } catch { onEnd(); }
+  }, []);
+
+  const stop = useCallback(() => { try { recognitionRef.current?.stop(); } catch {} }, []);
+
+  const speak = useCallback((text: string, onEnd: () => void) => {
+    if (!("speechSynthesis" in window)) { onEnd(); return; }
+    speechSynthesis.cancel();
+    speakWithVoice(text, voice, { onEnd });
+  }, [voice]);
+
+  return { supported, listen, stop, speak };
+}
+
+export function VisionMentor() {
+  const { resolved, toggle } = useTheme();
+  const navigate = useNavigate();
+  const [status, setStatus] = useState<Status>("idle");
+  const [systemOnline, setSystemOnline] = useState(true);
+  const [interviewerMode, setInterviewerMode] = useState(false);
+  // Turning AI Interviewer Mode on opens the full AI Interviewer experience.
+  // Nova's own structured-interview behaviour is kept intact for when it is off.
+  const handleInterviewerMode = useCallback(
+    (next: boolean) => {
+      setInterviewerMode(next);
+   if (next) navigate({ to: "/interviewer" });
+    },
+    [navigate],
+  );
+
+  const [expression, setExpression] = useState<NovaExpression>("neutral");
+  const [pulse, setPulse] = useState(0);
+  const [settings, setSettings] = useState<SettingsValues>({ cameraEnabled: true, micEnabled: true, voiceReplies: true });
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const { user } = useDemoAuth();
+  const userEmail = user?.email ?? null;
+  const [mounted, setMounted] = useState(false);
+  const [messages, setMessages] = useState<Message[]>([
+    { id: "w", role: "ai", text: "Welcome to Vision Mentor X. I'm Nova, your AI interview coach. Ask me anything about the app, your interview prep — or switch on AI Interviewer Mode and I'll interview you.", ts: Date.now() },
+  ]);
+  const [input, setInput] = useState("");
+  const [interim, setInterim] = useState("");
+  const [booted, setBooted] = useState(false);
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const { active: novaVoice } = useNovaVoice();
+  const { supported, listen, stop, speak } = useSpeech(novaVoice?.lang || "en-US", novaVoice);
+
+  function sanitizeNovaText(text: string) {
+    const cleaned = text
+      .replace(/[\r\n]+/g, " ")
+      .replace(/[^A-Za-z0-9\u00C0-\u017F\s.,?!:;'"()\-\/]+/g, "")
+      .replace(/\s{2,}/g, " ")
+      .trim();
+    return cleaned || text.trim();
+  }
+
+  useEffect(() => { setMounted(true); }, []);
+  useEffect(() => { if (user?.role === "company") navigate({ to: "/dashboard" }); }, [user, navigate]);
+  useEffect(() => { const t = setTimeout(() => setBooted(true), 1600); return () => clearTimeout(t); }, []);
+  useEffect(() => { scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" }); }, [messages, status]);
+
+  const videoOn = systemOnline && settings.cameraEnabled;
+  const micEnabled = systemOnline && settings.micEnabled;
+
+  // When system goes offline, stop everything in flight
+  useEffect(() => {
+    if (!systemOnline) {
+      stop();
+      if (typeof window !== "undefined" && "speechSynthesis" in window) speechSynthesis.cancel();
+      setInterim("");
+      setStatus("offline");
+    } else if (status === "offline") {
+      setStatus("idle");
+    }
+  }, [systemOnline, stop, status]);
+
+  const sendMessage = async (text: string) => {
+    const trimmed = text.trim();
+    if (!trimmed) return;
+    if (!systemOnline) { toast.error("System is offline"); return; }
+
+    const userMsg: Message = { id: crypto.randomUUID(), role: "user", text: trimmed, ts: Date.now() };
+    const history = [...messages, userMsg].map((m) => ({
+      role: m.role === "ai" ? ("assistant" as const) : ("user" as const),
+      text: m.text,
+    }));
+    setMessages((m) => [...m, userMsg]);
+    setInput("");
+    setStatus("thinking");
+    setExpression("thinking");
+
+    const replyId = crypto.randomUUID();
+    let started = false;
+
+    try {
+      const reply = await streamNovaReply({
+        history,
+        interviewerMode,
+        onChunk: (full) => {
+          const sanitized = sanitizeNovaText(full);
+          setPulse((p) => p + 1);
+          if (!started) {
+            started = true;
+            setStatus("speaking");
+            setExpression(interviewerMode ? "thinking" : "happy");
+            setMessages((m) => [...m, { id: replyId, role: "ai", text: sanitized, ts: Date.now() }]);
+            return;
+          }
+          setMessages((m) => m.map((msg) => (msg.id === replyId ? { ...msg, text: sanitized } : msg)));
+        },
+      });
+
+      if (!reply) throw new Error("Nova returned an empty answer.");
+      const sanitizedReply = sanitizeNovaText(reply);
+      if (settings.voiceReplies && systemOnline) {
+        setStatus("speaking");
+        speak(sanitizedReply, () => { setStatus("idle"); setExpression("neutral"); });
+      } else {
+        setStatus("idle");
+        setExpression("neutral");
+      }
+    } catch (error) {
+      setStatus("idle");
+      setExpression("sad");
+      toast.error(error instanceof Error ? error.message : "Nova could not answer right now.");
+    }
+  };
+
+
+  const handleMic = () => {
+    if (!systemOnline) { toast.error("System is offline"); return; }
+    if (!micEnabled) { toast.error("Microphone disabled in settings"); return; }
+    if (!supported) { toast.error("Speech recognition not supported. Try Chrome or Edge."); return; }
+    if (status === "listening") { stop(); setStatus("idle"); setInterim(""); return; }
+    setStatus("listening"); setInterim("");
+    listen(
+      (text) => {
+        setInterim("");
+        setInput((prev) => (prev ? `${prev} ${text}`.trim() : text.trim()));
+      },
+      () => { setInterim(""); setStatus((s) => (s === "listening" ? "idle" : s)); },
+      (t) => setInterim(t),
+    );
+  };
+
+  return (
+    <div className="relative min-h-screen text-foreground">
+      <AnimatePresence>
+        {!booted && (
+          <motion.div exit={{ opacity: 0 }} transition={{ duration: 0.6 }} className="fixed inset-0 z-50 flex flex-col items-center justify-center bg-background">
+            <div className="relative w-32 h-32">
+              <div className="absolute inset-0 rounded-full border-2 border-primary/40 animate-orbit" />
+              <div className="absolute inset-3 rounded-full border-2 border-accent/40 animate-orbit" style={{ animationDirection: "reverse" }} />
+              <div className="absolute inset-0 flex items-center justify-center">
+                <Sparkles className="w-12 h-12 text-cyber animate-pulse" />
+              </div>
+            </div>
+            <h1 className="mt-8 font-display text-3xl text-gradient animate-gradient">VISION MENTOR X</h1>
+            <p className="mt-2 text-xs uppercase tracking-[0.4em] text-muted-foreground">Initializing core systems…</p>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      <div className="fixed inset-0 -z-10">
+        <div className="absolute inset-0" style={{ background: resolved === "dark"
+          ? "radial-gradient(ellipse at top, oklch(0.20 0.10 280) 0%, oklch(0.10 0.04 270) 60%)"
+          : "radial-gradient(ellipse at top, oklch(0.95 0.04 240) 0%, oklch(0.98 0.01 250) 60%)" }} />
+        <div className="absolute inset-0 grid-bg opacity-40" />
+        <Particles />
+        <div className="absolute -top-32 -left-32 w-[500px] h-[500px] rounded-full" style={{ background: "var(--gradient-glow)" }} />
+      </div>
+
+      <header className="flex items-center justify-between px-6 py-4 border-b border-border/50 glass-strong">
+        <div className="flex items-center gap-3">
+          <div className="w-9 h-9 rounded-lg flex items-center justify-center glow-primary" style={{ background: "var(--gradient-aurora)" }}>
+            <Zap className="w-5 h-5 text-white" />
+          </div>
+          <div>
+            <h1 className="font-display text-sm text-gradient">VISION MENTOR X</h1>
+            
+          </div>
+        </div>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={() => setSystemOnline((v) => !v)}
+            className={`hidden md:flex items-center gap-2 px-3 py-1.5 rounded-full chip-3d transition-all ${
+              systemOnline ? "hover:glow-cyber" : "opacity-70 hover:opacity-100"
+            }`}
+            title="Click to toggle system"
+          >
+            <Power className={`w-3 h-3 ${systemOnline ? "text-cyber" : "text-destructive"}`} />
+            <span className={`text-[10px] uppercase tracking-widest ${systemOnline ? "text-cyber" : "text-destructive"}`}>
+              {systemOnline ? "System Online" : "System Offline"}
+            </span>
+          </button>
+
+          <div
+            className={`hidden md:flex items-center gap-2 px-3 py-1.5 rounded-full chip-3d transition-all ${
+              interviewerMode ? "glow-primary" : ""
+            }`}
+          >
+            <Popover>
+              <PopoverTrigger asChild>
+                <button className="flex items-center gap-2" title="About AI Interviewer Mode">
+                  <GraduationCap className={`w-3 h-3 ${interviewerMode ? "text-primary" : "text-muted-foreground"}`} />
+                  <span
+                    className={`text-[10px] uppercase tracking-widest ${interviewerMode ? "text-primary" : "text-muted-foreground"}`}
+                  >
+                    AI Interviewer Mode
+                  </span>
+                </button>
+              </PopoverTrigger>
+              <PopoverContent align="end" className="popover-3d w-72 space-y-2 text-xs">
+                <p className="font-display text-[11px] uppercase tracking-widest">AI Interviewer Mode</p>
+                <p className="text-muted-foreground">
+                  {interviewerMode
+                    ? "On — Nova asks one interview question per turn, scores your answer on structure, clarity and evidence, then continues."
+                    : "Off — Nova acts as a free-form coach and assistant: ask about the app, interviews, or anything else."}
+                </p>
+                <div className="flex items-center justify-between pt-1">
+                  <span className="text-muted-foreground">Structured interview</span>
+                  <Switch checked={interviewerMode} onCheckedChange={handleInterviewerMode} />
+                </div>
+              </PopoverContent>
+            </Popover>
+            <Switch
+              checked={interviewerMode}
+              onCheckedChange={handleInterviewerMode}
+              aria-label="Toggle AI Interviewer Mode"
+              className="scale-75"
+            />
+          </div>
+
+
+          <Link to="/reports" className="p-2 rounded-md chip-3d hover:glow-cyber transition-shadow" aria-label="My reports" title="My reports">
+            <ClipboardList className="w-4 h-4 text-foreground" />
+          </Link>
+          <Link to="/profile" className="p-2 rounded-md chip-3d hover:glow-cyber transition-shadow" aria-label="Profile">
+            <UserCircle className="w-4 h-4 text-foreground" />
+          </Link>
+          <button onClick={toggle} className="p-2 rounded-md chip-3d hover:glow-cyber transition-shadow" aria-label="Toggle theme">
+            {resolved === "dark" ? <Sun className="w-4 h-4 text-foreground" /> : <Moon className="w-4 h-4 text-foreground" />}
+          </button>
+          <button onClick={() => setSettingsOpen(true)} className="p-2 rounded-md chip-3d hover:glow-cyber transition-shadow" aria-label="Settings">
+            <SettingsIcon className="w-4 h-4 text-foreground" />
+          </button>
+        </div>
+      </header>
+
+      <main className="grid grid-cols-1 lg:grid-cols-[320px_1fr_340px] gap-4 p-4 h-[calc(100vh-69px)]">
+        <section className="card-3d rounded-2xl overflow-hidden">
+          <AvatarPanel status={status} expression={expression} pulse={pulse} />
+        </section>
+
+
+        <section className="flex flex-col card-3d rounded-2xl overflow-hidden">
+          <div className="flex items-center justify-between px-5 py-3 border-b border-border/50">
+            <div className="flex items-center gap-2">
+              <Sparkles className="w-4 h-4 text-accent" />
+              <h2 className="font-display text-sm uppercase tracking-widest">Conversation</h2>
+            </div>
+            <span className="text-[10px] text-muted-foreground">{messages.length} messages</span>
+          </div>
+
+          <div ref={scrollRef} className="flex-1 overflow-y-auto px-5 py-4 space-y-4">
+            {messages.map((m) => <MessageBubble key={m.id} m={m} mounted={mounted} />)}
+            {interim && (
+              <div className="flex justify-end animate-message-in">
+                <div className="max-w-[78%] flex flex-col items-end gap-1">
+                  <div className="px-4 py-2.5 rounded-2xl rounded-br-sm text-sm leading-relaxed bg-primary/10 border border-dashed border-primary/40 text-foreground/80 italic">
+                    {interim}
+                    <span className="inline-block w-1 h-3 bg-primary ml-1 animate-pulse align-middle" />
+                  </div>
+                  <span className="text-[10px] text-primary/70 px-2 uppercase tracking-widest">Listening…</span>
+                </div>
+              </div>
+            )}
+            {status === "thinking" && (
+              <div className="flex justify-start animate-message-in">
+                <div className="glass rounded-2xl rounded-bl-sm"><AIThinkingLoader /></div>
+              </div>
+            )}
+          </div>
+
+          <div className="p-4 border-t border-border/50">
+            <div className="card-3d rounded-2xl p-2 flex items-center gap-2">
+              <input
+                value={input}
+                onChange={(e) => setInput(e.target.value)}
+                onKeyDown={(e) => e.key === "Enter" && sendMessage(input)}
+                placeholder={systemOnline ? "Ask anything or press the mic to talk…" : "System is offline"}
+                disabled={!systemOnline}
+                className="flex-1 bg-transparent outline-none px-3 py-2 text-sm placeholder:text-muted-foreground disabled:opacity-50"
+              />
+              <button
+                onClick={() => setSettings((s) => ({ ...s, voiceReplies: !s.voiceReplies }))}
+                className="p-2 rounded-lg hover:bg-foreground/5 transition-colors"
+              >
+                {settings.voiceReplies ? <Volume2 className="w-4 h-4 text-cyber" /> : <VolumeX className="w-4 h-4 text-muted-foreground" />}
+              </button>
+              <button
+                onClick={handleMic}
+                disabled={!systemOnline || !micEnabled}
+                className={`p-2 rounded-lg transition-all disabled:opacity-50 ${status === "listening" ? "bg-primary/30 glow-primary" : "hover:bg-foreground/5"}`}
+              >
+                {status === "listening" ? <MicOff className="w-4 h-4 text-primary" /> : <Mic className="w-4 h-4 text-foreground" />}
+              </button>
+              <button
+                onClick={() => sendMessage(input)}
+                disabled={!systemOnline}
+                className="px-4 py-2 rounded-lg text-sm font-medium text-white glow-primary transition-transform hover:scale-105 disabled:opacity-50"
+                style={{ background: "var(--gradient-aurora)" }}
+              >
+                <Send className="w-4 h-4" />
+              </button>
+            </div>
+            <div className="mt-3"><Waveform active={status === "listening" || status === "speaking"} /></div>
+          </div>
+        </section>
+
+        <section className="flex flex-col gap-4 overflow-y-auto">
+          <div className="card-3d rounded-2xl p-3">
+            <div className="flex items-center justify-between mb-3">
+              <div className="flex items-center gap-2">
+                <Video className="w-4 h-4 text-cyber" />
+                <h3 className="font-display text-xs uppercase tracking-widest">Vision Feed</h3>
+              </div>
+              <span className="text-[10px] text-cyber">{videoOn ? "REAL-TIME" : "OFF"}</span>
+            </div>
+            <VideoPanel
+              enabled={videoOn}
+              micEnabled={micEnabled}
+              onToggle={() => setSettings((s) => ({ ...s, cameraEnabled: !s.cameraEnabled }))}
+            />
+            <VisionMetrics />
+            <VisionWarnings />
+          </div>
+
+          <div className="card-3d rounded-2xl p-4">
+            <div className="flex items-center justify-between mb-3">
+              <div className="flex items-center gap-2">
+                <Mic className="w-4 h-4 text-accent" />
+                <h3 className="font-display text-xs uppercase tracking-widest">Voice Control</h3>
+              </div>
+            </div>
+            <div className="flex flex-col items-center gap-3 py-2">
+              <AnimatedMicButton active={status === "listening"} disabled={!systemOnline || !micEnabled} onClick={handleMic} />
+              <p className="text-[11px] text-muted-foreground text-center">
+                {!systemOnline ? "System offline" : status === "listening" ? "Listening…" : status === "speaking" ? "AI speaking…" : "Tap to talk"}
+              </p>
+              <Waveform active={status === "listening" || status === "speaking"} />
+            </div>
+          </div>
+
+          <div className="card-3d rounded-2xl p-4">
+            <div className="flex items-center gap-2 mb-3">
+              <Cpu className="w-4 h-4 text-primary" />
+              <h3 className="font-display text-xs uppercase tracking-widest">Diagnostics</h3>
+            </div>
+            <div className="space-y-2 text-[11px]">
+              {[
+                ["System", systemOnline ? "Online" : "Offline"],
+                ["Speech API", supported ? "Active" : "Unavailable"],
+                ["Webcam", videoOn ? "Streaming" : "Idle"],
+                ["Mic", micEnabled ? "Ready" : "Disabled"],
+                ["Status", status.toUpperCase()],
+              ].map(([k, v]) => (
+                <div key={k} className="flex justify-between border-b border-border/30 pb-1.5 last:border-0">
+                  <span className="text-muted-foreground">{k}</span>
+                  <span className="text-cyber font-mono">{v}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        </section>
+      </main>
+
+      <SettingsPanel
+        open={settingsOpen}
+        onOpenChange={setSettingsOpen}
+        values={settings}
+        onChange={setSettings}
+        userEmail={userEmail}
+      />
+      <Toaster position="top-right" />
+    </div>
+  );
+}
