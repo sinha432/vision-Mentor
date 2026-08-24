@@ -12,6 +12,7 @@ import { expressionLabel, stateLabel } from "@/lib/nova/expression";
 import { useNovaVoice, voiceLabel } from "@/lib/nova/nova-voice";
 import { Mic2, Radio, Camera } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { CompanyNovaActions } from "@/components/nova/CompanyNovaActions";
 
 /**
  * The full Nova console shown on the company dashboard: a left identity
@@ -135,14 +136,24 @@ export function NovaConsole({ className }: { className?: string }) {
         />
       </div>
 
-      {/* Right column — voice control + diagnostics */}
-      <NovaVoiceControl
-        state={status.state}
-        listening={listening}
-        micSupported={micSupported}
-        micLevel={senses.micLevel}
-        onTapToTalk={handleTapToTalk}
-      />
+          {/* Right column — voice control + company hiring actions */}
+      <div className="flex min-h-0 flex-col gap-5">
+        <NovaVoiceControl
+          state={status.state}
+          listening={listening}
+          micSupported={micSupported}
+          micLevel={senses.micLevel}
+          onTapToTalk={handleTapToTalk}
+        />
+
+        <div className="card-3d rounded-2xl p-4">
+          <CompanyNovaActions
+            onAction={(action) => {
+              console.log("Nova company action:", action);
+            }}
+          />
+        </div>
+      </div>
     </div>
   );
 }
