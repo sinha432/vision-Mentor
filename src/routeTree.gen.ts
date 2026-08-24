@@ -22,6 +22,7 @@ import { Route as AuthenticatedProfileRouteImport } from './routes/_authenticate
 import { Route as AuthenticatedReportsRouteImport } from './routes/_authenticated/reports'
 import { Route as ACodeRouteImport } from './routes/a.$code'
 import { Route as ApiChatRouteImport } from './routes/api/chat'
+import { Route as ApiCompanyGenerateQuestionsRouteImport } from './routes/api/company-generate-questions'
 import { Route as ApiSecurityReportRouteImport } from './routes/api/security-report'
 import { Route as InterviewerIndexRouteImport } from './routes/interviewer/index'
 import { Route as InterviewerDashboardRouteImport } from './routes/interviewer/dashboard'
@@ -39,6 +40,7 @@ import { Route as ApiDbInterviewRouteImport } from './routes/api/db/interview'
 import { Route as ApiDbPingRouteImport } from './routes/api/db/ping'
 import { Route as ApiDbUserRouteImport } from './routes/api/db/user'
 import { Route as ApiDbUserProfileRouteImport } from './routes/api/db/user-profile'
+import { Route as ApiNovaPublishAssessmentRouteImport } from './routes/api/nova/publish-assessment'
 import { Route as InterviewerReportSessionIdRouteImport } from './routes/interviewer/report.$sessionId'
 import { Route as AuthenticatedCompanyAssessmentIdRouteImport } from './routes/_authenticated/company/assessment/$id'
 import { Route as AuthenticatedDashboardAssessmentsIndexRouteImport } from './routes/_authenticated/dashboard/assessments/index'
@@ -109,6 +111,12 @@ const ApiChatRoute = ApiChatRouteImport.update({
   path: '/api/chat',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ApiCompanyGenerateQuestionsRoute =
+  ApiCompanyGenerateQuestionsRouteImport.update({
+    id: '/api/company-generate-questions',
+    path: '/api/company-generate-questions',
+    getParentRoute: () => rootRouteImport,
+  } as any)
 const ApiSecurityReportRoute = ApiSecurityReportRouteImport.update({
   id: '/api/security-report',
   path: '/api/security-report',
@@ -199,6 +207,12 @@ const ApiDbUserProfileRoute = ApiDbUserProfileRouteImport.update({
   path: '/api/db/user-profile',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ApiNovaPublishAssessmentRoute =
+  ApiNovaPublishAssessmentRouteImport.update({
+    id: '/api/nova/publish-assessment',
+    path: '/api/nova/publish-assessment',
+    getParentRoute: () => rootRouteImport,
+  } as any)
 const InterviewerReportSessionIdRoute =
   InterviewerReportSessionIdRouteImport.update({
     id: '/report/$sessionId',
@@ -237,6 +251,7 @@ export interface FileRoutesByFullPath {
   '/reports': typeof AuthenticatedReportsRoute
   '/a/$code': typeof ACodeRoute
   '/api/chat': typeof ApiChatRoute
+  '/api/company-generate-questions': typeof ApiCompanyGenerateQuestionsRoute
   '/api/security-report': typeof ApiSecurityReportRoute
   '/interviewer/dashboard': typeof InterviewerDashboardRoute
   '/interviewer/interview': typeof InterviewerInterviewRoute
@@ -252,6 +267,7 @@ export interface FileRoutesByFullPath {
   '/api/db/ping': typeof ApiDbPingRoute
   '/api/db/user': typeof ApiDbUserRoute
   '/api/db/user-profile': typeof ApiDbUserProfileRoute
+  '/api/nova/publish-assessment': typeof ApiNovaPublishAssessmentRoute
   '/interviewer/report/$sessionId': typeof InterviewerReportSessionIdRoute
   '/company/': typeof AuthenticatedCompanyIndexRoute
   '/dashboard/': typeof AuthenticatedDashboardIndexRoute
@@ -269,6 +285,7 @@ export interface FileRoutesByTo {
   '/reports': typeof AuthenticatedReportsRoute
   '/a/$code': typeof ACodeRoute
   '/api/chat': typeof ApiChatRoute
+  '/api/company-generate-questions': typeof ApiCompanyGenerateQuestionsRoute
   '/api/security-report': typeof ApiSecurityReportRoute
   '/interviewer/dashboard': typeof InterviewerDashboardRoute
   '/interviewer/interview': typeof InterviewerInterviewRoute
@@ -285,6 +302,7 @@ export interface FileRoutesByTo {
   '/api/db/ping': typeof ApiDbPingRoute
   '/api/db/user': typeof ApiDbUserRoute
   '/api/db/user-profile': typeof ApiDbUserProfileRoute
+  '/api/nova/publish-assessment': typeof ApiNovaPublishAssessmentRoute
   '/interviewer/report/$sessionId': typeof InterviewerReportSessionIdRoute
   '/company': typeof AuthenticatedCompanyIndexRoute
   '/dashboard': typeof AuthenticatedDashboardIndexRoute
@@ -306,6 +324,7 @@ export interface FileRoutesById {
   '/_authenticated/reports': typeof AuthenticatedReportsRoute
   '/a/$code': typeof ACodeRoute
   '/api/chat': typeof ApiChatRoute
+  '/api/company-generate-questions': typeof ApiCompanyGenerateQuestionsRoute
   '/api/security-report': typeof ApiSecurityReportRoute
   '/interviewer/dashboard': typeof InterviewerDashboardRoute
   '/interviewer/interview': typeof InterviewerInterviewRoute
@@ -322,6 +341,7 @@ export interface FileRoutesById {
   '/api/db/ping': typeof ApiDbPingRoute
   '/api/db/user': typeof ApiDbUserRoute
   '/api/db/user-profile': typeof ApiDbUserProfileRoute
+  '/api/nova/publish-assessment': typeof ApiNovaPublishAssessmentRoute
   '/interviewer/report/$sessionId': typeof InterviewerReportSessionIdRoute
   '/_authenticated/company/': typeof AuthenticatedCompanyIndexRoute
   '/_authenticated/dashboard/': typeof AuthenticatedDashboardIndexRoute
@@ -344,6 +364,7 @@ export interface FileRouteTypes {
     | '/reports'
     | '/a/$code'
     | '/api/chat'
+    | '/api/company-generate-questions'
     | '/api/security-report'
     | '/interviewer/dashboard'
     | '/interviewer/interview'
@@ -359,6 +380,7 @@ export interface FileRouteTypes {
     | '/api/db/ping'
     | '/api/db/user'
     | '/api/db/user-profile'
+    | '/api/nova/publish-assessment'
     | '/interviewer/report/$sessionId'
     | '/company/'
     | '/dashboard/'
@@ -376,6 +398,7 @@ export interface FileRouteTypes {
     | '/reports'
     | '/a/$code'
     | '/api/chat'
+    | '/api/company-generate-questions'
     | '/api/security-report'
     | '/interviewer/dashboard'
     | '/interviewer/interview'
@@ -392,6 +415,7 @@ export interface FileRouteTypes {
     | '/api/db/ping'
     | '/api/db/user'
     | '/api/db/user-profile'
+    | '/api/nova/publish-assessment'
     | '/interviewer/report/$sessionId'
     | '/company'
     | '/dashboard'
@@ -412,6 +436,7 @@ export interface FileRouteTypes {
     | '/_authenticated/reports'
     | '/a/$code'
     | '/api/chat'
+    | '/api/company-generate-questions'
     | '/api/security-report'
     | '/interviewer/dashboard'
     | '/interviewer/interview'
@@ -428,6 +453,7 @@ export interface FileRouteTypes {
     | '/api/db/ping'
     | '/api/db/user'
     | '/api/db/user-profile'
+    | '/api/nova/publish-assessment'
     | '/interviewer/report/$sessionId'
     | '/_authenticated/company/'
     | '/_authenticated/dashboard/'
@@ -446,12 +472,14 @@ export interface RootRouteChildren {
   WelcomeRoute: typeof WelcomeRoute
   ACodeRoute: typeof ACodeRoute
   ApiChatRoute: typeof ApiChatRoute
+  ApiCompanyGenerateQuestionsRoute: typeof ApiCompanyGenerateQuestionsRoute
   ApiSecurityReportRoute: typeof ApiSecurityReportRoute
   ApiDbAssessmentRoute: typeof ApiDbAssessmentRoute
   ApiDbInterviewRoute: typeof ApiDbInterviewRoute
   ApiDbPingRoute: typeof ApiDbPingRoute
   ApiDbUserRoute: typeof ApiDbUserRoute
   ApiDbUserProfileRoute: typeof ApiDbUserProfileRoute
+  ApiNovaPublishAssessmentRoute: typeof ApiNovaPublishAssessmentRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -545,6 +573,13 @@ declare module '@tanstack/react-router' {
       path: '/api/chat'
       fullPath: '/api/chat'
       preLoaderRoute: typeof ApiChatRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/company-generate-questions': {
+      id: '/api/company-generate-questions'
+      path: '/api/company-generate-questions'
+      fullPath: '/api/company-generate-questions'
+      preLoaderRoute: typeof ApiCompanyGenerateQuestionsRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/api/security-report': {
@@ -666,6 +701,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ApiDbUserProfileRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/api/nova/publish-assessment': {
+      id: '/api/nova/publish-assessment'
+      path: '/api/nova/publish-assessment'
+      fullPath: '/api/nova/publish-assessment'
+      preLoaderRoute: typeof ApiNovaPublishAssessmentRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/interviewer/report/$sessionId': {
       id: '/interviewer/report/$sessionId'
       path: '/report/$sessionId'
@@ -779,12 +821,14 @@ const rootRouteChildren: RootRouteChildren = {
   WelcomeRoute: WelcomeRoute,
   ACodeRoute: ACodeRoute,
   ApiChatRoute: ApiChatRoute,
+  ApiCompanyGenerateQuestionsRoute: ApiCompanyGenerateQuestionsRoute,
   ApiSecurityReportRoute: ApiSecurityReportRoute,
   ApiDbAssessmentRoute: ApiDbAssessmentRoute,
   ApiDbInterviewRoute: ApiDbInterviewRoute,
   ApiDbPingRoute: ApiDbPingRoute,
   ApiDbUserRoute: ApiDbUserRoute,
   ApiDbUserProfileRoute: ApiDbUserProfileRoute,
+  ApiNovaPublishAssessmentRoute: ApiNovaPublishAssessmentRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)
