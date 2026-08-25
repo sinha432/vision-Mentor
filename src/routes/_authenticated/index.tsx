@@ -462,7 +462,11 @@ export function VisionMentor() {
 
   const [expression, setExpression] = useState<NovaExpression>("neutral");
   const [pulse, setPulse] = useState(0);
-  const [settings, setSettings] = useState<SettingsValues>({ cameraEnabled: true, micEnabled: true, voiceReplies: true });
+const [settings, setSettings] = useState<SettingsValues>({
+  cameraEnabled: false,
+  micEnabled: false,
+  voiceReplies: true,
+});
   const [settingsOpen, setSettingsOpen] = useState(false);
   const { user } = useDemoAuth();
   const userEmail = user?.email ?? null;
@@ -487,10 +491,28 @@ export function VisionMentor() {
   }
 
   useEffect(() => { setMounted(true); }, []);
-  useEffect(() => { if (user?.role === "company") navigate({ to: "/dashboard" }); }, [user, navigate]);
-  useEffect(() => { const t = setTimeout(() => setBooted(true), 1600); return () => clearTimeout(t); }, []);
-  useEffect(() => { scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" }); }, [messages, status]);
+  useEffect(() => {
+  sessionStorage.removeItem("vmx_return_to_chatbot");
+}, []);
+useEffect(() => {
+  if (user?.role === "company") {
+    navigate({ to: "/dashboard", replace: true });
+  }
+}, [user, navigate]);
+ useEffect(() => {
+  setBooted(true);
+}, []);
+useEffect(() => {
+  sessionStorage.removeItem("vmx_return_to_chatbot");
+}, []);
+useEffect(() => {
+  const el = scrollRef.current;
+  if (!el) return;
 
+  requestAnimationFrame(() => {
+    el.scrollTop = el.scrollHeight;
+  });
+}, [messages.length, status]);
   const videoOn = systemOnline && settings.cameraEnabled;
   const micEnabled = systemOnline && settings.micEnabled;
 

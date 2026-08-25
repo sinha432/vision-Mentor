@@ -553,15 +553,19 @@ export function NovaConsole({
     ],
   );
 
-  const openSchedulePanel = useCallback(() => {
-    setShowSchedulePanel(true);
-    setShowQuestionGenerator(false);
+  const openSchedulePanel = useCallback(async () => {
+  setShowQuestionGenerator(false);
+  setShowSchedulePanel(false);
 
-    conversationRef.current?.appendAssistantMessage(
-      "Opening the company interview scheduler. Add the candidate, role, date, time and interview duration.",
-      true,
-    );
-  }, []);
+  conversationRef.current?.appendAssistantMessage(
+    "Opening the company interview scheduler.",
+    true,
+  );
+
+  await navigate({
+    to: "/dashboard/schedule",
+  });
+}, [navigate]);
 
   /*
    * ---------------------------------------------------------
@@ -851,26 +855,23 @@ export function NovaConsole({
           return message;
         }
 
-        if (
-          command.type ===
-          "hiring_analytics"
-        ) {
-          const message =
-            "Opening hiring analytics. The company dashboard will show assessment volume, candidates tested and average scores.";
+       if (command.type === "hiring_analytics") {
+  const message =
+    "Opening hiring analytics. The company dashboard will show assessment volume, candidates tested and average scores.";
 
-          toast.info(message);
+  toast.info(message);
 
-          conversationRef.current?.appendAssistantMessage(
-            message,
-            true,
-          );
+  conversationRef.current?.appendAssistantMessage(
+    message,
+    true,
+  );
 
-          await navigate({
-            to: "/dashboard/assessments",
-          });
+  await navigate({
+    to: "/dashboard/analytics",
+  });
 
-          return message;
-        }
+  return message;
+}
 
         return;
       },
@@ -895,95 +896,51 @@ export function NovaConsole({
         label: string;
         description: string;
       }) => {
+        console.log("NOVA COMPANY ACTION", action.type);
+
         if (
-          action.type ===
-          "generate_questions"
+          action.type === "generate_questions" ||
+          action.type === "create_assessment"
         ) {
+          // Close other company tools first.
+          setShowSchedulePanel(false);
+
+          // Always start with a clean generator.
           setGeneratedQuestions([]);
+          setGenerationStatus("idle");
 
-          setGenerationStatus(
-            "idle",
-          );
+          const config: CompanyQuestionGeneratorConfig = {
+            role: "Software Developer",
+            topic: "Programming",
+            difficulty: "Medium",
+            count: 5,
+          };
 
-          setQuestionGeneratorConfig(
-            {},
-          );
-
+          setQuestionGeneratorConfig(config);
           setAssessmentTitle(
-            "Nova AI Interview Assessment",
+            action.type === "create_assessment"
+              ? "Software Developer — Programming AI Assessment"
+              : "Nova AI Interview Assessment",
           );
 
-          setGeneratorInstanceKey(
-            (current) =>
-              current + 1,
-          );
-
-          setShowSchedulePanel(
-            false,
-          );
-
-          setShowQuestionGenerator(
-            true,
-          );
+          // A new key guarantees that the generator's auto-generation
+          // effect runs again, even if the user previously opened it.
+          setGeneratorInstanceKey((current) => current + 1);
+          setShowQuestionGenerator(true);
 
           conversationRef.current?.appendAssistantMessage(
-            "Opening the AI question generator. Configure the role, topic, difficulty and question count.",
+            action.type === "create_assessment"
+              ? "Opening the assessment builder. Nova will prepare 5 questions for a Software Developer role on Programming. You can review, edit and publish them."
+              : "Opening the AI question generator. Nova will prepare 5 Software Developer questions on Programming for you to review.",
             true,
           );
 
           return;
         }
 
-        if (
-          action.type ===
-          "create_assessment"
-        ) {
-          setGeneratedQuestions([]);
-
-          setGenerationStatus(
-            "idle",
-          );
-
-          setQuestionGeneratorConfig(
-            {},
-          );
-
-          setAssessmentTitle(
-            "Nova AI Interview Assessment",
-          );
-
-          setGeneratorInstanceKey(
-            (current) =>
-              current + 1,
-          );
-
-          setShowSchedulePanel(
-            false,
-          );
-
-          setShowQuestionGenerator(
-            true,
-          );
-
-          conversationRef.current?.appendAssistantMessage(
-            "Opening the assessment builder. Generate and review the questions, then publish the assessment when ready.",
-            true,
-          );
-
-          return;
-        }
-
-        if (
-          action.type ===
-          "analyze_candidates"
-        ) {
-          setShowQuestionGenerator(
-            false,
-          );
-
-          setShowSchedulePanel(
-            false,
-          );
+        if (action.type === "analyze_candidates") {
+          setShowQuestionGenerator(false);
+          setShowSchedulePanel(false);
 
           void navigate({
             to: "/dashboard/candidates",
@@ -992,29 +949,25 @@ export function NovaConsole({
           return;
         }
 
-        if (
-          action.type ===
-          "schedule_interview"
-        ) {
+        if (action.type === "schedule_interview") {
           openSchedulePanel();
-
           return;
         }
 
-        if (
-          action.type ===
-          "hiring_analytics"
-        ) {
-          setShowQuestionGenerator(
-            false,
-          );
+        if (action.type === "hiring_analytics") {
+          setShowQuestionGenerator(false);
+          setShowSchedulePanel(false);
 
-          setShowSchedulePanel(
-            false,
+          const message =
+            "Opening hiring analytics. The company dashboard will show assessment volume, candidates tested and average scores.";
+
+          conversationRef.current?.appendAssistantMessage(
+            message,
+            true,
           );
 
           void navigate({
-            to: "/dashboard/assessments",
+            to: "/dashboard/analytics",
           });
 
           return;
@@ -1025,10 +978,7 @@ export function NovaConsole({
           action,
         );
       },
-      [
-        navigate,
-        openSchedulePanel,
-      ],
+      [navigate, openSchedulePanel],
     );
 
   /*
@@ -1344,30 +1294,84 @@ export function NovaConsole({
       {/* =====================================================
           RIGHT — COMPANY HIRING COPILOT
           ===================================================== */}
-      <div className="flex min-h-0 flex-col gap-5">
+      <div className="flex min-h-0 flex-col gap-5 overflow-y-auto pr-1">
         <NovaVoiceControl
-          state={
-            status.state
-          }
-          listening={
-            listening
-          }
-          micSupported={
-            micSupported
-          }
-          micLevel={
-            senses.micLevel
-          }
-          onTapToTalk={
-            handleTapToTalk
-          }
+          state={status.state}
+          listening={listening}
+          micSupported={micSupported}
+          micLevel={senses.micLevel}
+          onTapToTalk={handleTapToTalk}
         />
+
+        {/*
+         * The generator is intentionally rendered BEFORE the action cards.
+         * This prevents the Generate Questions / Create Assessment result
+         * from appearing below the fold and looking like the button failed.
+         */}
+        {showQuestionGenerator && (
+          <div className="card-3d rounded-2xl p-4">
+            <div className="mb-3 flex items-center justify-between gap-3">
+              <div className="min-w-0">
+                <p className="text-xs font-semibold tracking-[0.14em] text-foreground uppercase">
+                  AI Assessment Generator
+                </p>
+
+                <p className="mt-1 text-[10px] text-muted-foreground">
+                  {generationStatus === "generating"
+                    ? "Nova is generating questions..."
+                    : generationStatus === "ready"
+                      ? `${generatedQuestions.length} questions ready`
+                      : generationStatus === "error"
+                        ? "Generation needs attention"
+                        : "Configure and generate an assessment"}
+                </p>
+              </div>
+
+              <button
+                type="button"
+                onClick={() => setShowQuestionGenerator(false)}
+                className="shrink-0 rounded-lg p-1.5 text-muted-foreground transition-colors hover:bg-cyber/10 hover:text-foreground"
+                aria-label="Close AI assessment generator"
+              >
+                <X className="size-4" />
+              </button>
+            </div>
+
+            <CompanyQuestionGenerator
+              key={generatorInstanceKey}
+              companyUserId={companyUserId}
+              initialConfig={questionGeneratorConfig}
+              onClose={() => setShowQuestionGenerator(false)}
+              onSaveDraft={handleSaveDraft}
+              onQuestionsGenerated={handleSaveDraft}
+            />
+
+            {generatedQuestions.length > 0 && (
+              <div className="mt-4 rounded-xl border border-cyber/30 bg-cyber/5 p-3">
+                <p className="text-xs font-medium text-foreground">
+                  {generatedQuestions.length} questions ready
+                </p>
+
+                <p className="mt-1 text-[10px] text-muted-foreground">
+                  Review the questions above, then publish when ready.
+                </p>
+
+                <button
+                  type="button"
+                  disabled={publishing}
+                  onClick={() => void publishGeneratedAssessment()}
+                  className="mt-3 w-full rounded-lg bg-cyber px-3 py-2 text-xs font-medium text-primary-foreground transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  {publishing ? "Publishing..." : "Publish Assessment"}
+                </button>
+              </div>
+            )}
+          </div>
+        )}
 
         <div className="card-3d rounded-2xl p-4">
           <CompanyNovaActions
-            onAction={
-              handleCompanyAction
-            }
+            onAction={handleCompanyAction}
           />
         </div>
 
@@ -1614,103 +1618,6 @@ export function NovaConsole({
           </div>
         )}
 
-        {showQuestionGenerator && (
-          <div className="card-3d rounded-2xl p-4">
-            <div className="mb-3 flex items-center justify-between gap-3">
-              <div>
-                <p className="text-xs font-semibold tracking-[0.14em] text-foreground uppercase">
-                  AI Assessment
-                  Generator
-                </p>
-
-                <p className="mt-1 text-[10px] text-muted-foreground">
-                  {generationStatus ===
-                  "generating"
-                    ? "Nova is generating questions..."
-                    : generationStatus ===
-                        "ready"
-                      ? `${generatedQuestions.length} questions ready`
-                      : generationStatus ===
-                          "error"
-                        ? "Generation needs attention"
-                        : "Configure and generate an assessment"}
-                </p>
-              </div>
-
-              {generationStatus ===
-                "generating" && (
-                <span className="inline-flex items-center gap-1.5 rounded-full border border-cyber/30 bg-cyber/10 px-2 py-1 text-[9px] tracking-widest text-cyber uppercase">
-                  <span className="size-1.5 animate-pulse rounded-full bg-cyber" />
-
-                  Generating
-                </span>
-              )}
-            </div>
-
-            <CompanyQuestionGenerator
-              key={
-                generatorInstanceKey
-              }
-              companyUserId={
-                companyUserId
-              }
-              initialConfig={
-                questionGeneratorConfig
-              }
-              onClose={() =>
-                setShowQuestionGenerator(
-                  false,
-                )
-              }
-              onSaveDraft={
-                handleSaveDraft
-              }
-              onQuestionsGenerated={
-                handleSaveDraft
-              }
-            />
-
-            {generatedQuestions.length >
-              0 && (
-              <div className="mt-4 rounded-xl border border-cyber/30 bg-cyber/5 p-3">
-                <p className="text-xs font-medium text-foreground">
-                  {
-                    generatedQuestions.length
-                  }{" "}
-                  questions ready
-                </p>
-
-                <p className="mt-1 text-[10px] text-muted-foreground">
-                  Say{" "}
-                  <span className="text-cyber">
-                    "publish it"
-                  </span>{" "}
-                  to prepare publishing,
-                  then confirm with{" "}
-                  <span className="ml-1 text-cyber">
-                    "yes, publish it"
-                  </span>
-                  .
-                </p>
-
-                <button
-                  type="button"
-                  disabled={
-                    publishing
-                  }
-                  onClick={() =>
-                    void publishGeneratedAssessment()
-                  }
-                  className="mt-3 w-full rounded-lg bg-cyber px-3 py-2 text-xs font-medium text-primary-foreground transition-opacity hover:opacity-90 disabled:opacity-50"
-                >
-                  {publishing
-                    ? "Publishing..."
-                    : "Publish Assessment"}
-                </button>
-              </div>
-            )}
-          </div>
-        )}
       </div>
     </div>
   );

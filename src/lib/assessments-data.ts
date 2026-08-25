@@ -72,7 +72,7 @@ function currentCompanyUserId(): string {
   if (typeof window === "undefined") return "";
 
   try {
-    const raw = localStorage.getItem("vmx_demo_user");
+   const raw = localStorage.getItem("vmx_user"); 
 
     if (!raw) return "";
 
@@ -93,7 +93,7 @@ function currentCompanyEmail(): string {
   if (typeof window === "undefined") return "";
 
   try {
-    const raw = localStorage.getItem("vmx_demo_user");
+    const raw = localStorage.getItem("vmx_user");
 
     if (!raw) return "";
 
@@ -102,9 +102,11 @@ function currentCompanyEmail(): string {
       role?: string;
     };
 
-    return u.role === "company"
-      ? u.email?.trim().toLowerCase() ?? ""
-      : "";
+    if (u.role !== "company") {
+      return "";
+    }
+
+    return u.email?.trim().toLowerCase() ?? "";
   } catch {
     return "";
   }
@@ -349,10 +351,11 @@ function getLocalCompanyName(): string {
   }
 
   try {
-    const raw =
-      localStorage.getItem("vmx_demo_user");
+    const raw = localStorage.getItem("vmx_user");
 
-    if (!raw) return "Your Company";
+    if (!raw) {
+      return "Your Company";
+    }
 
     const u = JSON.parse(raw) as {
       name?: string;
@@ -360,7 +363,7 @@ function getLocalCompanyName(): string {
     };
 
     return u.role === "company"
-      ? u.name ?? "Your Company"
+      ? u.name?.trim() || "Your Company"
       : "Your Company";
   } catch {
     return "Your Company";
@@ -422,29 +425,28 @@ export async function updateCompanyProfile(
    * currently logged-in company account.
    */
   try {
-    const raw =
-      localStorage.getItem("vmx_demo_user");
+  const raw = localStorage.getItem("vmx_user");
 
-    if (raw) {
-      const user = JSON.parse(raw) as {
-        id?: string;
-        email?: string;
-        name?: string;
-        role?: string;
-      };
+  if (raw) {
+    const user = JSON.parse(raw) as {
+      id?: string;
+      email?: string;
+      name?: string;
+      role?: string;
+    };
 
-      if (user.role === "company") {
-        user.name = input.companyName;
+    if (user.role === "company") {
+      user.name = input.companyName;
 
-        localStorage.setItem(
-          "vmx_demo_user",
-          JSON.stringify(user),
-        );
-      }
+      localStorage.setItem(
+        "vmx_user",
+        JSON.stringify(user),
+      );
     }
-  } catch {
-    // MongoDB save already succeeded.
   }
+} catch {
+  // MongoDB save already succeeded.
+}
 
   return {
     name:

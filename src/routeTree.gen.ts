@@ -31,11 +31,17 @@ import { Route as InterviewerSetupRouteImport } from './routes/interviewer/setup
 import { Route as AuthenticatedCompanyIndexRouteImport } from './routes/_authenticated/company/index'
 import { Route as AuthenticatedCompanyNewRouteImport } from './routes/_authenticated/company/new'
 import { Route as AuthenticatedDashboardIndexRouteImport } from './routes/_authenticated/dashboard/index'
+import { Route as AuthenticatedDashboardAnalyticsRouteImport } from './routes/_authenticated/dashboard/analytics'
 import { Route as AuthenticatedDashboardCandidatesRouteImport } from './routes/_authenticated/dashboard/candidates'
 import { Route as AuthenticatedDashboardProfileRouteImport } from './routes/_authenticated/dashboard/profile'
 import { Route as AuthenticatedDashboardScheduleRouteImport } from './routes/_authenticated/dashboard/schedule'
 import { Route as AuthenticatedDashboardSettingsRouteImport } from './routes/_authenticated/dashboard/settings'
 import { Route as AuthenticatedReportIdRouteImport } from './routes/_authenticated/report/$id'
+import { Route as ApiAuthLoginRouteImport } from './routes/api/auth/login'
+import { Route as ApiAuthResetPasswordRouteImport } from './routes/api/auth/reset-password'
+import { Route as ApiAuthSendCodeRouteImport } from './routes/api/auth/send-code'
+import { Route as ApiAuthSignupRouteImport } from './routes/api/auth/signup'
+import { Route as ApiAuthVerifyCodeRouteImport } from './routes/api/auth/verify-code'
 import { Route as ApiDbAssessmentRouteImport } from './routes/api/db/assessment'
 import { Route as ApiDbInterviewRouteImport } from './routes/api/db/interview'
 import { Route as ApiDbPingRouteImport } from './routes/api/db/ping'
@@ -160,6 +166,12 @@ const AuthenticatedDashboardIndexRoute =
     path: '/',
     getParentRoute: () => AuthenticatedDashboardRouteRoute,
   } as any)
+const AuthenticatedDashboardAnalyticsRoute =
+  AuthenticatedDashboardAnalyticsRouteImport.update({
+    id: '/analytics',
+    path: '/analytics',
+    getParentRoute: () => AuthenticatedDashboardRouteRoute,
+  } as any)
 const AuthenticatedDashboardCandidatesRoute =
   AuthenticatedDashboardCandidatesRouteImport.update({
     id: '/candidates',
@@ -188,6 +200,31 @@ const AuthenticatedReportIdRoute = AuthenticatedReportIdRouteImport.update({
   id: '/report/$id',
   path: '/report/$id',
   getParentRoute: () => AuthenticatedRouteRoute,
+} as any)
+const ApiAuthLoginRoute = ApiAuthLoginRouteImport.update({
+  id: '/api/auth/login',
+  path: '/api/auth/login',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ApiAuthResetPasswordRoute = ApiAuthResetPasswordRouteImport.update({
+  id: '/api/auth/reset-password',
+  path: '/api/auth/reset-password',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ApiAuthSendCodeRoute = ApiAuthSendCodeRouteImport.update({
+  id: '/api/auth/send-code',
+  path: '/api/auth/send-code',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ApiAuthSignupRoute = ApiAuthSignupRouteImport.update({
+  id: '/api/auth/signup',
+  path: '/api/auth/signup',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ApiAuthVerifyCodeRoute = ApiAuthVerifyCodeRouteImport.update({
+  id: '/api/auth/verify-code',
+  path: '/api/auth/verify-code',
+  getParentRoute: () => rootRouteImport,
 } as any)
 const ApiDbAssessmentRoute = ApiDbAssessmentRouteImport.update({
   id: '/api/db/assessment',
@@ -265,11 +302,17 @@ export interface FileRoutesByFullPath {
   '/interviewer/setup': typeof InterviewerSetupRoute
   '/interviewer/': typeof InterviewerIndexRoute
   '/company/new': typeof AuthenticatedCompanyNewRoute
+  '/dashboard/analytics': typeof AuthenticatedDashboardAnalyticsRoute
   '/dashboard/candidates': typeof AuthenticatedDashboardCandidatesRoute
   '/dashboard/profile': typeof AuthenticatedDashboardProfileRoute
   '/dashboard/schedule': typeof AuthenticatedDashboardScheduleRoute
   '/dashboard/settings': typeof AuthenticatedDashboardSettingsRoute
   '/report/$id': typeof AuthenticatedReportIdRoute
+  '/api/auth/login': typeof ApiAuthLoginRoute
+  '/api/auth/reset-password': typeof ApiAuthResetPasswordRoute
+  '/api/auth/send-code': typeof ApiAuthSendCodeRoute
+  '/api/auth/signup': typeof ApiAuthSignupRoute
+  '/api/auth/verify-code': typeof ApiAuthVerifyCodeRoute
   '/api/db/assessment': typeof ApiDbAssessmentRoute
   '/api/db/interview': typeof ApiDbInterviewRoute
   '/api/db/ping': typeof ApiDbPingRoute
@@ -301,11 +344,17 @@ export interface FileRoutesByTo {
   '/': typeof AuthenticatedIndexRoute
   '/interviewer': typeof InterviewerIndexRoute
   '/company/new': typeof AuthenticatedCompanyNewRoute
+  '/dashboard/analytics': typeof AuthenticatedDashboardAnalyticsRoute
   '/dashboard/candidates': typeof AuthenticatedDashboardCandidatesRoute
   '/dashboard/profile': typeof AuthenticatedDashboardProfileRoute
   '/dashboard/schedule': typeof AuthenticatedDashboardScheduleRoute
   '/dashboard/settings': typeof AuthenticatedDashboardSettingsRoute
   '/report/$id': typeof AuthenticatedReportIdRoute
+  '/api/auth/login': typeof ApiAuthLoginRoute
+  '/api/auth/reset-password': typeof ApiAuthResetPasswordRoute
+  '/api/auth/send-code': typeof ApiAuthSendCodeRoute
+  '/api/auth/signup': typeof ApiAuthSignupRoute
+  '/api/auth/verify-code': typeof ApiAuthVerifyCodeRoute
   '/api/db/assessment': typeof ApiDbAssessmentRoute
   '/api/db/interview': typeof ApiDbInterviewRoute
   '/api/db/ping': typeof ApiDbPingRoute
@@ -341,11 +390,17 @@ export interface FileRoutesById {
   '/_authenticated/': typeof AuthenticatedIndexRoute
   '/interviewer/': typeof InterviewerIndexRoute
   '/_authenticated/company/new': typeof AuthenticatedCompanyNewRoute
+  '/_authenticated/dashboard/analytics': typeof AuthenticatedDashboardAnalyticsRoute
   '/_authenticated/dashboard/candidates': typeof AuthenticatedDashboardCandidatesRoute
   '/_authenticated/dashboard/profile': typeof AuthenticatedDashboardProfileRoute
   '/_authenticated/dashboard/schedule': typeof AuthenticatedDashboardScheduleRoute
   '/_authenticated/dashboard/settings': typeof AuthenticatedDashboardSettingsRoute
   '/_authenticated/report/$id': typeof AuthenticatedReportIdRoute
+  '/api/auth/login': typeof ApiAuthLoginRoute
+  '/api/auth/reset-password': typeof ApiAuthResetPasswordRoute
+  '/api/auth/send-code': typeof ApiAuthSendCodeRoute
+  '/api/auth/signup': typeof ApiAuthSignupRoute
+  '/api/auth/verify-code': typeof ApiAuthVerifyCodeRoute
   '/api/db/assessment': typeof ApiDbAssessmentRoute
   '/api/db/interview': typeof ApiDbInterviewRoute
   '/api/db/ping': typeof ApiDbPingRoute
@@ -381,11 +436,17 @@ export interface FileRouteTypes {
     | '/interviewer/setup'
     | '/interviewer/'
     | '/company/new'
+    | '/dashboard/analytics'
     | '/dashboard/candidates'
     | '/dashboard/profile'
     | '/dashboard/schedule'
     | '/dashboard/settings'
     | '/report/$id'
+    | '/api/auth/login'
+    | '/api/auth/reset-password'
+    | '/api/auth/send-code'
+    | '/api/auth/signup'
+    | '/api/auth/verify-code'
     | '/api/db/assessment'
     | '/api/db/interview'
     | '/api/db/ping'
@@ -417,11 +478,17 @@ export interface FileRouteTypes {
     | '/'
     | '/interviewer'
     | '/company/new'
+    | '/dashboard/analytics'
     | '/dashboard/candidates'
     | '/dashboard/profile'
     | '/dashboard/schedule'
     | '/dashboard/settings'
     | '/report/$id'
+    | '/api/auth/login'
+    | '/api/auth/reset-password'
+    | '/api/auth/send-code'
+    | '/api/auth/signup'
+    | '/api/auth/verify-code'
     | '/api/db/assessment'
     | '/api/db/interview'
     | '/api/db/ping'
@@ -456,11 +523,17 @@ export interface FileRouteTypes {
     | '/_authenticated/'
     | '/interviewer/'
     | '/_authenticated/company/new'
+    | '/_authenticated/dashboard/analytics'
     | '/_authenticated/dashboard/candidates'
     | '/_authenticated/dashboard/profile'
     | '/_authenticated/dashboard/schedule'
     | '/_authenticated/dashboard/settings'
     | '/_authenticated/report/$id'
+    | '/api/auth/login'
+    | '/api/auth/reset-password'
+    | '/api/auth/send-code'
+    | '/api/auth/signup'
+    | '/api/auth/verify-code'
     | '/api/db/assessment'
     | '/api/db/interview'
     | '/api/db/ping'
@@ -487,6 +560,11 @@ export interface RootRouteChildren {
   ApiChatRoute: typeof ApiChatRoute
   ApiCompanyGenerateQuestionsRoute: typeof ApiCompanyGenerateQuestionsRoute
   ApiSecurityReportRoute: typeof ApiSecurityReportRoute
+  ApiAuthLoginRoute: typeof ApiAuthLoginRoute
+  ApiAuthResetPasswordRoute: typeof ApiAuthResetPasswordRoute
+  ApiAuthSendCodeRoute: typeof ApiAuthSendCodeRoute
+  ApiAuthSignupRoute: typeof ApiAuthSignupRoute
+  ApiAuthVerifyCodeRoute: typeof ApiAuthVerifyCodeRoute
   ApiDbAssessmentRoute: typeof ApiDbAssessmentRoute
   ApiDbInterviewRoute: typeof ApiDbInterviewRoute
   ApiDbPingRoute: typeof ApiDbPingRoute
@@ -651,6 +729,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AuthenticatedDashboardIndexRouteImport
       parentRoute: typeof AuthenticatedDashboardRouteRoute
     }
+    '/_authenticated/dashboard/analytics': {
+      id: '/_authenticated/dashboard/analytics'
+      path: '/analytics'
+      fullPath: '/dashboard/analytics'
+      preLoaderRoute: typeof AuthenticatedDashboardAnalyticsRouteImport
+      parentRoute: typeof AuthenticatedDashboardRouteRoute
+    }
     '/_authenticated/dashboard/candidates': {
       id: '/_authenticated/dashboard/candidates'
       path: '/candidates'
@@ -685,6 +770,41 @@ declare module '@tanstack/react-router' {
       fullPath: '/report/$id'
       preLoaderRoute: typeof AuthenticatedReportIdRouteImport
       parentRoute: typeof AuthenticatedRouteRoute
+    }
+    '/api/auth/login': {
+      id: '/api/auth/login'
+      path: '/api/auth/login'
+      fullPath: '/api/auth/login'
+      preLoaderRoute: typeof ApiAuthLoginRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/auth/reset-password': {
+      id: '/api/auth/reset-password'
+      path: '/api/auth/reset-password'
+      fullPath: '/api/auth/reset-password'
+      preLoaderRoute: typeof ApiAuthResetPasswordRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/auth/send-code': {
+      id: '/api/auth/send-code'
+      path: '/api/auth/send-code'
+      fullPath: '/api/auth/send-code'
+      preLoaderRoute: typeof ApiAuthSendCodeRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/auth/signup': {
+      id: '/api/auth/signup'
+      path: '/api/auth/signup'
+      fullPath: '/api/auth/signup'
+      preLoaderRoute: typeof ApiAuthSignupRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/auth/verify-code': {
+      id: '/api/auth/verify-code'
+      path: '/api/auth/verify-code'
+      fullPath: '/api/auth/verify-code'
+      preLoaderRoute: typeof ApiAuthVerifyCodeRouteImport
+      parentRoute: typeof rootRouteImport
     }
     '/api/db/assessment': {
       id: '/api/db/assessment'
@@ -760,6 +880,7 @@ declare module '@tanstack/react-router' {
 }
 
 interface AuthenticatedDashboardRouteRouteChildren {
+  AuthenticatedDashboardAnalyticsRoute: typeof AuthenticatedDashboardAnalyticsRoute
   AuthenticatedDashboardCandidatesRoute: typeof AuthenticatedDashboardCandidatesRoute
   AuthenticatedDashboardProfileRoute: typeof AuthenticatedDashboardProfileRoute
   AuthenticatedDashboardScheduleRoute: typeof AuthenticatedDashboardScheduleRoute
@@ -771,6 +892,7 @@ interface AuthenticatedDashboardRouteRouteChildren {
 
 const AuthenticatedDashboardRouteRouteChildren: AuthenticatedDashboardRouteRouteChildren =
   {
+    AuthenticatedDashboardAnalyticsRoute: AuthenticatedDashboardAnalyticsRoute,
     AuthenticatedDashboardCandidatesRoute:
       AuthenticatedDashboardCandidatesRoute,
     AuthenticatedDashboardProfileRoute: AuthenticatedDashboardProfileRoute,
@@ -845,6 +967,11 @@ const rootRouteChildren: RootRouteChildren = {
   ApiChatRoute: ApiChatRoute,
   ApiCompanyGenerateQuestionsRoute: ApiCompanyGenerateQuestionsRoute,
   ApiSecurityReportRoute: ApiSecurityReportRoute,
+  ApiAuthLoginRoute: ApiAuthLoginRoute,
+  ApiAuthResetPasswordRoute: ApiAuthResetPasswordRoute,
+  ApiAuthSendCodeRoute: ApiAuthSendCodeRoute,
+  ApiAuthSignupRoute: ApiAuthSignupRoute,
+  ApiAuthVerifyCodeRoute: ApiAuthVerifyCodeRoute,
   ApiDbAssessmentRoute: ApiDbAssessmentRoute,
   ApiDbInterviewRoute: ApiDbInterviewRoute,
   ApiDbPingRoute: ApiDbPingRoute,

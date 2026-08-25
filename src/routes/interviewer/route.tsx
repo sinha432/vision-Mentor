@@ -33,7 +33,10 @@ function InterviewerLayout() {
           </span>
           <Switch
             checked
-    onCheckedChange={() => navigate({ to: "/chatbot", replace: true })}
+   onCheckedChange={() => {
+  sessionStorage.setItem("vmx_return_to_chatbot", "1");
+  navigate({ to: "/" });
+}}
             aria-label="Exit AI Interviewer Mode"
             className="scale-75"
           />

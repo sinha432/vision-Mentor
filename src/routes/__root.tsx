@@ -72,10 +72,21 @@ function ErrorComponent({ error, reset }: { error: Error; reset: () => void }) {
 
 export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()({
   beforeLoad: ({ location }) => {
-    const returningFromAuth =
-      typeof window !== "undefined" && window.sessionStorage.getItem("vmx_auth_redirect") === "1";
-    if (returningFromAuth) window.sessionStorage.removeItem("vmx_auth_redirect");
-    if (location.pathname === "/" && !returningFromAuth) throw redirect({ to: "/welcome" });
+ const returningFromAuth =
+  typeof window !== "undefined" &&
+  sessionStorage.getItem("vmx_auth_redirect") === "1";
+
+const returningToChatbot =
+  typeof window !== "undefined" &&
+  sessionStorage.getItem("vmx_return_to_chatbot") === "1";
+
+if (
+  location.pathname === "/" &&
+  !returningFromAuth &&
+  !returningToChatbot
+) {
+  throw redirect({ to: "/welcome" });
+}
   },
   head: () => ({
     meta: [

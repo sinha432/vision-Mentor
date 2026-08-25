@@ -1,4 +1,9 @@
-import { createFileRoute } from "@tanstack/react-router";
+import {
+  createFileRoute,
+  redirect,
+  useNavigate,
+} from "@tanstack/react-router";
+import { useEffect } from "react";
 
 import { NovaConsole } from "@/components/nova/NovaConsole";
 import { useDemoAuth } from "@/contexts/DemoAuthContext";
@@ -18,9 +23,24 @@ export const Route = createFileRoute("/_authenticated/dashboard/")({
 });
 
 function OverviewPage() {
-  const { user } = useDemoAuth();
+  const { user, ready } = useDemoAuth();
+  const navigate = useNavigate();
 
-  if (!user) {
+  useEffect(() => {
+    if (!ready) return;
+
+    if (!user) {
+      navigate({ to: "/auth", replace: true });
+      return;
+    }
+
+    if (user.role === "individual") {
+      sessionStorage.setItem("vmx_auth_redirect", "1");
+      navigate({ to: "/", replace: true });
+    }
+  }, [ready, user, navigate]);
+
+  if (!ready || !user) {
     return (
       <div className="flex h-[calc(100vh-6rem)] w-full items-center justify-center">
         <p className="text-sm text-muted-foreground">
@@ -31,13 +51,7 @@ function OverviewPage() {
   }
 
   if (user.role !== "company") {
-    return (
-      <div className="flex h-[calc(100vh-6rem)] w-full items-center justify-center">
-        <p className="text-sm text-muted-foreground">
-          This dashboard is available for company accounts.
-        </p>
-      </div>
-    );
+    return null;
   }
 
   return (
