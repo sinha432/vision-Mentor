@@ -33,6 +33,7 @@ import { Route as AuthenticatedCompanyNewRouteImport } from './routes/_authentic
 import { Route as AuthenticatedDashboardIndexRouteImport } from './routes/_authenticated/dashboard/index'
 import { Route as AuthenticatedDashboardCandidatesRouteImport } from './routes/_authenticated/dashboard/candidates'
 import { Route as AuthenticatedDashboardProfileRouteImport } from './routes/_authenticated/dashboard/profile'
+import { Route as AuthenticatedDashboardScheduleRouteImport } from './routes/_authenticated/dashboard/schedule'
 import { Route as AuthenticatedDashboardSettingsRouteImport } from './routes/_authenticated/dashboard/settings'
 import { Route as AuthenticatedReportIdRouteImport } from './routes/_authenticated/report/$id'
 import { Route as ApiDbAssessmentRouteImport } from './routes/api/db/assessment'
@@ -171,6 +172,12 @@ const AuthenticatedDashboardProfileRoute =
     path: '/profile',
     getParentRoute: () => AuthenticatedDashboardRouteRoute,
   } as any)
+const AuthenticatedDashboardScheduleRoute =
+  AuthenticatedDashboardScheduleRouteImport.update({
+    id: '/schedule',
+    path: '/schedule',
+    getParentRoute: () => AuthenticatedDashboardRouteRoute,
+  } as any)
 const AuthenticatedDashboardSettingsRoute =
   AuthenticatedDashboardSettingsRouteImport.update({
     id: '/settings',
@@ -260,6 +267,7 @@ export interface FileRoutesByFullPath {
   '/company/new': typeof AuthenticatedCompanyNewRoute
   '/dashboard/candidates': typeof AuthenticatedDashboardCandidatesRoute
   '/dashboard/profile': typeof AuthenticatedDashboardProfileRoute
+  '/dashboard/schedule': typeof AuthenticatedDashboardScheduleRoute
   '/dashboard/settings': typeof AuthenticatedDashboardSettingsRoute
   '/report/$id': typeof AuthenticatedReportIdRoute
   '/api/db/assessment': typeof ApiDbAssessmentRoute
@@ -295,6 +303,7 @@ export interface FileRoutesByTo {
   '/company/new': typeof AuthenticatedCompanyNewRoute
   '/dashboard/candidates': typeof AuthenticatedDashboardCandidatesRoute
   '/dashboard/profile': typeof AuthenticatedDashboardProfileRoute
+  '/dashboard/schedule': typeof AuthenticatedDashboardScheduleRoute
   '/dashboard/settings': typeof AuthenticatedDashboardSettingsRoute
   '/report/$id': typeof AuthenticatedReportIdRoute
   '/api/db/assessment': typeof ApiDbAssessmentRoute
@@ -334,6 +343,7 @@ export interface FileRoutesById {
   '/_authenticated/company/new': typeof AuthenticatedCompanyNewRoute
   '/_authenticated/dashboard/candidates': typeof AuthenticatedDashboardCandidatesRoute
   '/_authenticated/dashboard/profile': typeof AuthenticatedDashboardProfileRoute
+  '/_authenticated/dashboard/schedule': typeof AuthenticatedDashboardScheduleRoute
   '/_authenticated/dashboard/settings': typeof AuthenticatedDashboardSettingsRoute
   '/_authenticated/report/$id': typeof AuthenticatedReportIdRoute
   '/api/db/assessment': typeof ApiDbAssessmentRoute
@@ -373,6 +383,7 @@ export interface FileRouteTypes {
     | '/company/new'
     | '/dashboard/candidates'
     | '/dashboard/profile'
+    | '/dashboard/schedule'
     | '/dashboard/settings'
     | '/report/$id'
     | '/api/db/assessment'
@@ -408,6 +419,7 @@ export interface FileRouteTypes {
     | '/company/new'
     | '/dashboard/candidates'
     | '/dashboard/profile'
+    | '/dashboard/schedule'
     | '/dashboard/settings'
     | '/report/$id'
     | '/api/db/assessment'
@@ -446,6 +458,7 @@ export interface FileRouteTypes {
     | '/_authenticated/company/new'
     | '/_authenticated/dashboard/candidates'
     | '/_authenticated/dashboard/profile'
+    | '/_authenticated/dashboard/schedule'
     | '/_authenticated/dashboard/settings'
     | '/_authenticated/report/$id'
     | '/api/db/assessment'
@@ -652,6 +665,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AuthenticatedDashboardProfileRouteImport
       parentRoute: typeof AuthenticatedDashboardRouteRoute
     }
+    '/_authenticated/dashboard/schedule': {
+      id: '/_authenticated/dashboard/schedule'
+      path: '/schedule'
+      fullPath: '/dashboard/schedule'
+      preLoaderRoute: typeof AuthenticatedDashboardScheduleRouteImport
+      parentRoute: typeof AuthenticatedDashboardRouteRoute
+    }
     '/_authenticated/dashboard/settings': {
       id: '/_authenticated/dashboard/settings'
       path: '/settings'
@@ -742,6 +762,7 @@ declare module '@tanstack/react-router' {
 interface AuthenticatedDashboardRouteRouteChildren {
   AuthenticatedDashboardCandidatesRoute: typeof AuthenticatedDashboardCandidatesRoute
   AuthenticatedDashboardProfileRoute: typeof AuthenticatedDashboardProfileRoute
+  AuthenticatedDashboardScheduleRoute: typeof AuthenticatedDashboardScheduleRoute
   AuthenticatedDashboardSettingsRoute: typeof AuthenticatedDashboardSettingsRoute
   AuthenticatedDashboardIndexRoute: typeof AuthenticatedDashboardIndexRoute
   AuthenticatedDashboardAssessmentsCodeRoute: typeof AuthenticatedDashboardAssessmentsCodeRoute
@@ -753,6 +774,7 @@ const AuthenticatedDashboardRouteRouteChildren: AuthenticatedDashboardRouteRoute
     AuthenticatedDashboardCandidatesRoute:
       AuthenticatedDashboardCandidatesRoute,
     AuthenticatedDashboardProfileRoute: AuthenticatedDashboardProfileRoute,
+    AuthenticatedDashboardScheduleRoute: AuthenticatedDashboardScheduleRoute,
     AuthenticatedDashboardSettingsRoute: AuthenticatedDashboardSettingsRoute,
     AuthenticatedDashboardIndexRoute: AuthenticatedDashboardIndexRoute,
     AuthenticatedDashboardAssessmentsCodeRoute:

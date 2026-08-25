@@ -78,30 +78,41 @@ export function detectCompanyCommand(
     return { type: "unknown" };
   }
 
-  // Publish/release/activate an assessment.
-  // Examples:
-  // "publish it"
-  // "publish assessment"
-  // "yes publish it"
-  // "confirm publish"
-  // "go ahead and publish"
+  /*
+   * ---------------------------------------------------------
+   * PUBLISH / RELEASE ASSESSMENT
+   * ---------------------------------------------------------
+   *
+   * "publish it" => publish_assessment, confirmed: false
+   *
+   * "yes publish it"
+   * "confirm publish"
+   * "go ahead and publish"
+   * => publish_assessment, confirmed: true
+   */
+
   const publishIntent =
     /\b(publish|release|launch|activate|make\s+(?:it\s+)?live|go\s+live)\b/.test(
       value,
     );
 
   if (publishIntent) {
-    // A direct company command such as "publish it" is an explicit
-    // action request. Do not require a second chatbot confirmation.
-    // Only explicit negative language cancels the publish command.
-    const cancelled =
-      /\b(don't|do not|dont|cancel|stop|never)\b/.test(value);
+    const confirmed =
+      /\b(yes|yeah|yep|confirm|confirmed|go ahead|do it|proceed|approve|approved)\b/.test(
+        value,
+      );
 
     return {
       type: "publish_assessment",
-      confirmed: !cancelled,
+      confirmed,
     };
   }
+
+  /*
+   * ---------------------------------------------------------
+   * ANALYZE CANDIDATES
+   * ---------------------------------------------------------
+   */
 
   if (
     /\b(analyze|analyse|review|evaluate)\b/.test(value) &&
@@ -112,6 +123,12 @@ export function detectCompanyCommand(
     };
   }
 
+  /*
+   * ---------------------------------------------------------
+   * HIRING ANALYTICS
+   * ---------------------------------------------------------
+   */
+
   if (
     /\b(hiring|recruitment|recruiting)\b/.test(value) &&
     /\b(analytics|statistics|stats|metrics|performance)\b/.test(value)
@@ -121,6 +138,12 @@ export function detectCompanyCommand(
     };
   }
 
+  /*
+   * ---------------------------------------------------------
+   * SCHEDULE INTERVIEW
+   * ---------------------------------------------------------
+   */
+
   if (
     /\b(schedule|book|plan|arrange)\b/.test(value) &&
     /\b(interview|meeting|call)\b/.test(value)
@@ -129,6 +152,12 @@ export function detectCompanyCommand(
       type: "schedule_interview",
     };
   }
+
+  /*
+   * ---------------------------------------------------------
+   * GENERATE / CREATE QUESTIONS
+   * ---------------------------------------------------------
+   */
 
   if (
     /\b(create|generate|make|build|prepare|design)\b/.test(value) &&

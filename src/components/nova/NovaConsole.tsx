@@ -1,35 +1,54 @@
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useRef, useState, type FormEvent } from "react";
+import { useNavigate } from "@tanstack/react-router";
 import { useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
+
 import { Companion } from "@/components/nova/Companion";
 import { NovaDemoPanel } from "@/components/nova/NovaDemoPanel";
+
 import {
   NovaConversationPanel,
   type NovaConversationHandle,
   type NovaConversationStatus,
 } from "@/components/nova/NovaConversationPanel";
+
 import { NovaVoiceControl } from "@/components/nova/NovaVoiceControl";
 import { CompanyNovaActions } from "@/components/nova/CompanyNovaActions";
+
 import {
   CompanyQuestionGenerator,
   type CompanyQuestionGeneratorConfig,
 } from "@/components/nova/CompanyQuestionGenerator";
+
 import type { CompanyNovaCommand } from "@/lib/nova/company-command";
+
 import { createAssessment } from "@/lib/assessments.functions";
+
 import { useNovaSenses } from "@/hooks/use-nova-senses";
+
 import {
   expressionLabel,
   stateLabel,
 } from "@/lib/nova/expression";
+
 import {
   useNovaVoice,
   voiceLabel,
 } from "@/lib/nova/nova-voice";
+
 import {
   Mic2,
   Radio,
   Camera,
+  CalendarDays,
+  Clock3,
+  Mail,
+  UserRound,
+  BriefcaseBusiness,
+  CheckCircle2,
+  X,
 } from "lucide-react";
+
 import { cn } from "@/lib/utils";
 
 interface GeneratedQuestion {
@@ -39,17 +58,36 @@ interface GeneratedQuestion {
   weight: number;
   keywords: string[];
   maxLength?: number | null;
+
   choices?: {
     id: string;
     text: string;
   }[];
+
   correctChoiceId?: string;
+
   starterCode?: string;
+
   testCases?: {
     input: string;
     expectedStdout: string;
   }[];
 }
+
+interface ScheduledInterview {
+  id: string;
+  candidateName: string;
+  candidateEmail: string;
+  role: string;
+  date: string;
+  time: string;
+  duration: string;
+  notes: string;
+  createdAt: number;
+}
+
+const SCHEDULED_INTERVIEWS_KEY_PREFIX =
+  "vmx_company_scheduled_interviews";
 
 export function NovaConsole({
   className,
@@ -58,6 +96,7 @@ export function NovaConsole({
   className?: string;
   companyUserId: string;
 }) {
+  const navigate = useNavigate();
   const queryClient = useQueryClient();
 
   const [status, setStatus] =
@@ -79,6 +118,21 @@ export function NovaConsole({
   const [questionGeneratorConfig, setQuestionGeneratorConfig] =
     useState<CompanyQuestionGeneratorConfig>({});
 
+  /*
+   * Every new Nova generation command gets
+   * a fresh generator instance.
+   */
+  const [generatorInstanceKey, setGeneratorInstanceKey] =
+    useState(0);
+
+  const [generationStatus, setGenerationStatus] =
+    useState<
+      "idle" |
+      "generating" |
+      "ready" |
+      "error"
+    >("idle");
+
   const [generatedQuestions, setGeneratedQuestions] =
     useState<GeneratedQuestion[]>([]);
 
@@ -88,11 +142,73 @@ export function NovaConsole({
   const [publishing, setPublishing] =
     useState(false);
 
+  /*
+   * Company HR interview scheduling state.
+   *
+   * The current project does not expose a calendar/interview
+   * persistence function, so scheduled interviews are kept in
+   * localStorage for now. This makes the HR workflow functional
+   * immediately without pretending a calendar backend exists.
+   */
+  const [showSchedulePanel, setShowSchedulePanel] =
+    useState(false);
+
+  const [scheduledInterviews, setScheduledInterviews] =
+    useState<ScheduledInterview[]>(() => {
+      if (typeof window === "undefined") {
+        return [];
+      }
+
+      try {
+        const storageKey =
+          `${SCHEDULED_INTERVIEWS_KEY_PREFIX}:${companyUserId.trim()}`;
+
+        const stored = window.localStorage.getItem(
+          storageKey,
+        );
+
+        if (!stored) {
+          return [];
+        }
+
+        const parsed = JSON.parse(stored);
+
+        return Array.isArray(parsed)
+          ? parsed
+          : [];
+      } catch {
+        return [];
+      }
+    });
+
+  const [candidateName, setCandidateName] =
+    useState("");
+
+  const [candidateEmail, setCandidateEmail] =
+    useState("");
+
+  const [interviewRole, setInterviewRole] =
+    useState("");
+
+  const [interviewDate, setInterviewDate] =
+    useState("");
+
+  const [interviewTime, setInterviewTime] =
+    useState("");
+
+  const [interviewDuration, setInterviewDuration] =
+    useState("30");
+
+  const [interviewNotes, setInterviewNotes] =
+    useState("");
+
   const conversationRef =
     useRef<NovaConversationHandle>(null);
 
   const senses = useNovaSenses();
-  const { status: visionStatus } = senses;
+
+  const { status: visionStatus } =
+    senses;
 
   const {
     voices: novaVoices,
@@ -102,157 +218,443 @@ export function NovaConsole({
   } = useNovaVoice();
 
   const sensing =
-    senses.cameraOn || senses.micOn;
+    senses.cameraOn ||
+    senses.micOn;
 
-  const handleTapToTalk = useCallback(() => {
-    conversationRef.current?.toggleMic();
-  }, []);
+  const handleTapToTalk =
+    useCallback(() => {
+      conversationRef.current?.toggleMic();
+    }, []);
 
-  /**
-   * Publish the questions already generated by Nova.
+  /*
+   * ---------------------------------------------------------
+   * PUBLISH GENERATED ASSESSMENT
+   * ---------------------------------------------------------
    *
-   * IMPORTANT:
-   * This does NOT call the AI.
-   * It only calls createAssessment().
+   * This function does NOT generate questions.
+   *
+   * It takes the questions already generated by Nova,
+   * validates them and creates the real assessment.
    */
   const publishGeneratedAssessment =
-    useCallback(async () => {
-      if (publishing) return;
+    useCallback(
+      async (): Promise<string> => {
+        if (publishing) {
+          return "Publishing is already in progress.";
+        }
 
-      if (!companyUserId) {
-        toast.error(
-          "Company account could not be identified.",
-        );
-        return;
-      }
+        if (!companyUserId?.trim()) {
+          const message =
+            "Company account could not be identified.";
 
-      if (!generatedQuestions.length) {
-        toast.error(
-          "No generated questions are ready.",
-        );
-        setShowQuestionGenerator(true);
-        return;
-      }
+          toast.error(message);
 
-      setPublishing(true);
+          return message;
+        }
 
-      try {
-        const questions =
-          generatedQuestions.map((question) => ({
-            type: question.type,
-            text: question.text,
-            weight: question.weight,
-            keywords:
-              question.keywords ?? [],
-            maxLength:
-              question.maxLength ?? null,
-            choices:
-              question.choices,
-            correctChoiceId:
-              question.correctChoiceId,
-            starterCode:
-              question.starterCode,
-            testCases:
-              question.testCases,
-          }));
+        if (!generatedQuestions.length) {
+          const message =
+            "No generated questions are ready. Generate the assessment questions first.";
 
-        const assessment =
-          await createAssessment({
-            data: {
-              companyUserId,
-              title:
-                assessmentTitle.trim() ||
-                "Nova AI Interview Assessment",
-              questions,
+          toast.error(message);
+
+          setShowQuestionGenerator(true);
+
+          return message;
+        }
+
+        setPublishing(true);
+
+        try {
+          /*
+           * Convert generator questions into the exact
+           * structure expected by createAssessment().
+           */
+          const questions =
+            generatedQuestions
+              .filter(
+                (question) =>
+                  typeof question.text ===
+                    "string" &&
+                  question.text
+                    .trim()
+                    .length >= 3,
+              )
+              .map((question) => ({
+                type: question.type,
+
+                text:
+                  question.text.trim(),
+
+                weight:
+                  Number.isFinite(
+                    question.weight,
+                  ) &&
+                  question.weight > 0
+                    ? question.weight
+                    : 10,
+
+                keywords:
+                  Array.isArray(
+                    question.keywords,
+                  )
+                    ? question.keywords
+                    : [],
+
+                maxLength:
+                  question.maxLength ??
+                  null,
+
+                choices:
+                  question.choices,
+
+                correctChoiceId:
+                  question.correctChoiceId,
+
+                starterCode:
+                  question.starterCode,
+
+                testCases:
+                  question.testCases,
+              }));
+
+          if (!questions.length) {
+            throw new Error(
+              "The generated assessment contains no valid questions.",
+            );
+          }
+
+          /*
+           * REAL DATABASE CREATION
+           */
+          const assessment =
+            await createAssessment({
+              data: {
+                companyUserId:
+                  companyUserId.trim(),
+
+                title:
+                  assessmentTitle.trim() ||
+                  "Nova AI Interview Assessment",
+
+                questions,
+              },
+            });
+
+          console.log(
+            "NOVA ASSESSMENT PUBLISHED",
+            {
+              id: assessment._id,
+              code: assessment.code,
+              companyUserId:
+                assessment.companyUserId,
+              title: assessment.title,
+              questionCount:
+                assessment.questions.length,
             },
+          );
+
+          /*
+           * Refresh the exact query used by
+           * the company Assessments page.
+           */
+          await queryClient.invalidateQueries({
+            queryKey: [
+              "company-assessments",
+            ],
           });
 
-        /*
-         * IMPORTANT:
-         * The Assessments section reads from the React Query cache
-         * using ["company-assessments"]. Refresh that query immediately
-         * after publishing so the newly-created assessment appears
-         * without requiring a manual page refresh.
-         */
-        await queryClient.invalidateQueries({
-          queryKey: ["company-assessments"],
-        });
+          await queryClient.refetchQueries({
+            queryKey: [
+              "company-assessments",
+            ],
+            type: "all",
+          });
 
-        await queryClient.refetchQueries({
-          queryKey: ["company-assessments"],
-          type: "all",
-        });
+          const successMessage =
+            `Assessment published successfully. ` +
+            `${questions.length} question${
+              questions.length === 1
+                ? ""
+                : "s"
+            } are now in Assessments. ` +
+            `Code: ${assessment.code}.`;
 
-        console.log(
-          "Nova published assessment:",
-          assessment,
+          /*
+           * Tell Nova about the successful
+           * publication.
+           */
+          conversationRef.current?.appendAssistantMessage(
+            successMessage,
+            true,
+          );
+
+          /*
+           * Clear the temporary generator state.
+           */
+          setGeneratedQuestions([]);
+
+          setGenerationStatus(
+            "idle",
+          );
+
+          setShowQuestionGenerator(
+            false,
+          );
+
+          toast.success(
+            `Assessment published successfully. Code: ${assessment.code}`,
+          );
+
+          /*
+           * Go to the actual company assessment list.
+           */
+          await navigate({
+            to: "/dashboard/assessments",
+          });
+
+          return successMessage;
+        } catch (error) {
+          console.error(
+            "NOVA ASSESSMENT PUBLISH FAILED",
+            error,
+          );
+
+          const message =
+            error instanceof Error
+              ? error.message
+              : "Failed to publish assessment.";
+
+          toast.error(message);
+
+          setGenerationStatus(
+            "error",
+          );
+
+          const failureMessage =
+            `I could not publish the assessment: ${message}`;
+
+          conversationRef.current?.appendAssistantMessage(
+            failureMessage,
+            true,
+          );
+
+          return failureMessage;
+        } finally {
+          setPublishing(false);
+        }
+      },
+      [
+        companyUserId,
+        generatedQuestions,
+        assessmentTitle,
+        publishing,
+        queryClient,
+        navigate,
+      ],
+    );
+
+  /*
+   * ---------------------------------------------------------
+   * COMPANY HR INTERVIEW SCHEDULER
+   * ---------------------------------------------------------
+   */
+  const handleScheduleInterview = useCallback(
+    (event: FormEvent<HTMLFormElement>) => {
+      event.preventDefault();
+
+      const name = candidateName.trim();
+      const email = candidateEmail.trim();
+      const role = interviewRole.trim();
+
+      if (!name) {
+        toast.error("Candidate name is required.");
+        return;
+      }
+
+      if (!email) {
+        toast.error("Candidate email is required.");
+        return;
+      }
+
+      if (!role) {
+        toast.error("Job role is required.");
+        return;
+      }
+
+      if (!interviewDate || !interviewTime) {
+        toast.error(
+          "Select the interview date and time.",
         );
+        return;
+      }
 
-        toast.success(
-          "Assessment published successfully and is now visible in Assessments.",
+      const interview: ScheduledInterview = {
+        id: `interview-${Date.now()}`,
+        candidateName: name,
+        candidateEmail: email,
+        role,
+        date: interviewDate,
+        time: interviewTime,
+        duration: interviewDuration,
+        notes: interviewNotes.trim(),
+        createdAt: Date.now(),
+      };
+
+      const next = [
+        interview,
+        ...scheduledInterviews,
+      ];
+
+      setScheduledInterviews(next);
+
+      try {
+        const storageKey =
+          `${SCHEDULED_INTERVIEWS_KEY_PREFIX}:${companyUserId.trim()}`;
+
+        window.localStorage.setItem(
+          storageKey,
+          JSON.stringify(next),
         );
-
-        setGeneratedQuestions([]);
-        setShowQuestionGenerator(false);
-
       } catch (error) {
-        console.error(
-          "Nova assessment publish failed:",
+        console.warn(
+          "Could not persist scheduled interview locally.",
           error,
         );
-
-        toast.error(
-          error instanceof Error
-            ? error.message
-            : "Failed to publish assessment.",
-        );
-      } finally {
-        setPublishing(false);
       }
-    }, [
-      companyUserId,
-      generatedQuestions,
-      assessmentTitle,
-      publishing,
-      queryClient,
-    ]);
 
-  /**
-   * Handle commands coming directly from Nova.
+      toast.success(
+        `Interview scheduled for ${name}.`,
+      );
+
+      conversationRef.current?.appendAssistantMessage(
+        `Interview scheduled for ${name} (${role}) on ${interviewDate} at ${interviewTime}.`,
+        true,
+      );
+
+      setCandidateName("");
+      setCandidateEmail("");
+      setInterviewRole("");
+      setInterviewDate("");
+      setInterviewTime("");
+      setInterviewDuration("30");
+      setInterviewNotes("");
+      setShowSchedulePanel(false);
+    },
+    [
+      candidateName,
+      candidateEmail,
+      interviewRole,
+      interviewDate,
+      interviewTime,
+      interviewDuration,
+      interviewNotes,
+      scheduledInterviews,
+    ],
+  );
+
+  const openSchedulePanel = useCallback(() => {
+    setShowSchedulePanel(true);
+    setShowQuestionGenerator(false);
+
+    conversationRef.current?.appendAssistantMessage(
+      "Opening the company interview scheduler. Add the candidate, role, date, time and interview duration.",
+      true,
+    );
+  }, []);
+
+  /*
+   * ---------------------------------------------------------
+   * COMPANY NOVA COMMAND HANDLER
+   * ---------------------------------------------------------
    */
   const handleCompanyCommand =
     useCallback(
-      (command: CompanyNovaCommand) => {
+      async (
+        command: CompanyNovaCommand,
+      ): Promise<string | void> => {
         console.log(
           "Nova company command:",
           command,
         );
 
+        /*
+         * ---------------------------------------------------
+         * GENERATE / CREATE ASSESSMENT
+         * ---------------------------------------------------
+         */
         if (
           command.type ===
             "generate_questions" ||
           command.type ===
             "create_assessment"
         ) {
-          const config: CompanyQuestionGeneratorConfig =
+          /*
+           * Always provide safe defaults.
+           *
+           * This prevents an incomplete voice/text
+           * command from producing an empty generator.
+           */
+          const role =
+            command.role?.trim() ||
+            "Software Developer";
+
+          const topic =
+            command.topic?.trim() ||
+            "Programming";
+
+          const difficulty =
+            command.difficulty ??
+            "Medium";
+
+          const count = Math.max(
+            1,
+            Math.min(
+              20,
+              Number(command.count) ||
+                5,
+            ),
+          );
+
+          const config:
+            CompanyQuestionGeneratorConfig =
             {
-              role: command.role,
-              topic: command.topic,
-              difficulty:
-                command.difficulty,
-              count: command.count,
+              role,
+              topic,
+              difficulty,
+              count,
             };
+
+          /*
+           * Remove previous questions so
+           * an old assessment cannot accidentally
+           * be published.
+           */
+          setGeneratedQuestions([]);
+
+          setGenerationStatus(
+            "generating",
+          );
 
           setQuestionGeneratorConfig(
             config,
           );
 
-          const role =
-            command.role?.trim();
+          /*
+           * Force CompanyQuestionGenerator
+           * to mount again.
+           *
+           * This is important when Nova receives
+           * multiple commands during the same session.
+           */
+          setGeneratorInstanceKey(
+            (current) =>
+              current + 1,
+          );
 
-          const topic =
-            command.topic?.trim();
-
+          /*
+           * Generate a useful assessment title.
+           */
           if (role && topic) {
             setAssessmentTitle(
               `${role} — ${topic} AI Assessment`,
@@ -271,89 +673,220 @@ export function NovaConsole({
             );
           }
 
-          setShowQuestionGenerator(true);
+          /*
+           * Display the generator.
+           */
+          setShowQuestionGenerator(
+            true,
+          );
 
-          return;
+          console.log(
+            "NOVA GENERATION REQUEST",
+            {
+              role,
+              topic,
+              difficulty,
+              count,
+            },
+          );
+
+          const message =
+            `I'm generating ${count} ${role} question${
+              count === 1
+                ? ""
+                : "s"
+            } on ${topic}. ` +
+            `I'll show you when they're ready.`;
+
+          /*
+           * IMPORTANT:
+           * Put Nova's command acknowledgement
+           * into the actual conversation.
+           */
+          conversationRef.current?.appendAssistantMessage(
+            message,
+            true,
+          );
+
+          return message;
         }
 
-        /**
-         * Publish flow.
+        /*
+         * ---------------------------------------------------
+         * PUBLISH ASSESSMENT
+         * ---------------------------------------------------
          *
-         * "publish it"
-         *      ↓
-         * confirmation
+         * First:
          *
-         * "yes, publish it"
-         *      ↓
-         * actual publishing
+         *   "publish it"
+         *
+         * gives a confirmation request.
+         *
+         * Then:
+         *
+         *   "yes publish it"
+         *
+         * actually creates the database assessment.
          */
         if (
           command.type ===
           "publish_assessment"
         ) {
-          if (!generatedQuestions.length) {
-            toast.error(
-              "No generated questions are ready. Generate questions first.",
+          /*
+           * Do not allow publishing while
+           * generation is still running.
+           */
+          if (
+            generationStatus ===
+              "generating" &&
+            !generatedQuestions.length
+          ) {
+            const message =
+              "The assessment questions are still being generated. Please wait until Nova says they are ready, then say \"publish it\".";
+
+            toast.info(message);
+
+            conversationRef.current?.appendAssistantMessage(
+              message,
+              true,
             );
 
-            setShowQuestionGenerator(true);
-
-            return;
+            return message;
           }
 
-          if (command.confirmed) {
-            void publishGeneratedAssessment();
-            return;
+          /*
+           * No questions available.
+           */
+          if (
+            !generatedQuestions.length
+          ) {
+            const message =
+              "I don't have generated questions ready yet. Ask me to generate the assessment questions first.";
+
+            toast.info(message);
+
+            setShowQuestionGenerator(
+              true,
+            );
+
+            conversationRef.current?.appendAssistantMessage(
+              message,
+              true,
+            );
+
+            return message;
           }
 
-          toast.info(
-            `I have ${generatedQuestions.length} generated question${
-              generatedQuestions.length === 1
+          /*
+           * CONFIRMED publish.
+           *
+           * Only this branch calls createAssessment().
+           */
+          if (
+            command.confirmed
+          ) {
+            const result =
+              await publishGeneratedAssessment();
+
+            return result;
+          }
+
+          /*
+           * UNCONFIRMED publish.
+           */
+          const confirmationMessage =
+            `I have ${generatedQuestions.length} ` +
+            `question${
+              generatedQuestions.length ===
+              1
                 ? ""
                 : "s"
-            } ready. Say "yes, publish it" to publish.`,
+            } ready. ` +
+            `Say "yes, publish it" to publish the assessment.`;
+
+          toast.info(
+            confirmationMessage,
           );
 
-          return;
+          conversationRef.current?.appendAssistantMessage(
+            confirmationMessage,
+            true,
+          );
+
+          return confirmationMessage;
         }
 
+        /*
+         * ---------------------------------------------------
+         * COMPANY HR WORKFLOWS
+         * ---------------------------------------------------
+         */
         if (
           command.type ===
           "schedule_interview"
         ) {
-          toast.info(
-            "Interview scheduling will be connected to the calendar next.",
-          );
-          return;
+          openSchedulePanel();
+
+          return "Opening the company interview scheduler.";
         }
 
         if (
           command.type ===
           "analyze_candidates"
         ) {
-          toast.info(
-            "Candidate analysis command received.",
+          const message =
+            "Opening the company candidate pipeline so you can review candidate performance, scores and attempt history.";
+
+          toast.info(message);
+
+          conversationRef.current?.appendAssistantMessage(
+            message,
+            true,
           );
-          return;
+
+          await navigate({
+            to: "/dashboard/candidates",
+          });
+
+          return message;
         }
 
         if (
           command.type ===
           "hiring_analytics"
         ) {
-          toast.info(
-            "Hiring analytics command received.",
+          const message =
+            "Opening hiring analytics. The company dashboard will show assessment volume, candidates tested and average scores.";
+
+          toast.info(message);
+
+          conversationRef.current?.appendAssistantMessage(
+            message,
+            true,
           );
+
+          await navigate({
+            to: "/dashboard/assessments",
+          });
+
+          return message;
         }
+
+        return;
       },
       [
         generatedQuestions,
+        generationStatus,
         publishGeneratedAssessment,
+        openSchedulePanel,
+        navigate,
       ],
     );
 
-  /**
-   * Handle right-side hiring buttons.
+  /*
+   * ---------------------------------------------------------
+   * RIGHT-SIDE COMPANY ACTION BUTTONS
+   * ---------------------------------------------------------
    */
   const handleCompanyAction =
     useCallback(
@@ -366,11 +899,38 @@ export function NovaConsole({
           action.type ===
           "generate_questions"
         ) {
-          setQuestionGeneratorConfig({});
+          setGeneratedQuestions([]);
+
+          setGenerationStatus(
+            "idle",
+          );
+
+          setQuestionGeneratorConfig(
+            {},
+          );
+
           setAssessmentTitle(
             "Nova AI Interview Assessment",
           );
-          setShowQuestionGenerator(true);
+
+          setGeneratorInstanceKey(
+            (current) =>
+              current + 1,
+          );
+
+          setShowSchedulePanel(
+            false,
+          );
+
+          setShowQuestionGenerator(
+            true,
+          );
+
+          conversationRef.current?.appendAssistantMessage(
+            "Opening the AI question generator. Configure the role, topic, difficulty and question count.",
+            true,
+          );
+
           return;
         }
 
@@ -378,36 +938,123 @@ export function NovaConsole({
           action.type ===
           "create_assessment"
         ) {
-          setQuestionGeneratorConfig({});
+          setGeneratedQuestions([]);
+
+          setGenerationStatus(
+            "idle",
+          );
+
+          setQuestionGeneratorConfig(
+            {},
+          );
+
           setAssessmentTitle(
             "Nova AI Interview Assessment",
           );
-          setShowQuestionGenerator(true);
+
+          setGeneratorInstanceKey(
+            (current) =>
+              current + 1,
+          );
+
+          setShowSchedulePanel(
+            false,
+          );
+
+          setShowQuestionGenerator(
+            true,
+          );
+
+          conversationRef.current?.appendAssistantMessage(
+            "Opening the assessment builder. Generate and review the questions, then publish the assessment when ready.",
+            true,
+          );
+
           return;
         }
 
-        console.log(
-          "Nova company action:",
+        if (
+          action.type ===
+          "analyze_candidates"
+        ) {
+          setShowQuestionGenerator(
+            false,
+          );
+
+          setShowSchedulePanel(
+            false,
+          );
+
+          void navigate({
+            to: "/dashboard/candidates",
+          });
+
+          return;
+        }
+
+        if (
+          action.type ===
+          "schedule_interview"
+        ) {
+          openSchedulePanel();
+
+          return;
+        }
+
+        if (
+          action.type ===
+          "hiring_analytics"
+        ) {
+          setShowQuestionGenerator(
+            false,
+          );
+
+          setShowSchedulePanel(
+            false,
+          );
+
+          void navigate({
+            to: "/dashboard/assessments",
+          });
+
+          return;
+        }
+
+        console.warn(
+          "Unknown Nova company action:",
           action,
         );
       },
-      [],
+      [
+        navigate,
+        openSchedulePanel,
+      ],
     );
 
-  /**
-   * Store generated questions immediately.
+  /*
+   * ---------------------------------------------------------
+   * GENERATOR → NOVA CONSOLE STATE BRIDGE
+   * ---------------------------------------------------------
    *
-   * This is the important state bridge:
-   *
-   * Generator → NovaConsole → Publish
+   * CompanyQuestionGenerator calls this after
+   * successful AI generation.
    */
   const handleSaveDraft =
     useCallback(
       (questions: unknown) => {
-        if (!Array.isArray(questions)) {
+        if (
+          !Array.isArray(
+            questions,
+          )
+        ) {
           toast.error(
             "Invalid assessment questions.",
           );
+
+          setGenerationStatus(
+            "error",
+          );
+
           return;
         }
 
@@ -424,26 +1071,72 @@ export function NovaConsole({
                 question as {
                   text?: unknown;
                 }
-              ).text === "string",
+              ).text ===
+                "string",
           );
 
         if (!normalized.length) {
           toast.error(
             "No valid questions were generated.",
           );
+
+          setGenerationStatus(
+            "error",
+          );
+
           return;
         }
 
+        /*
+         * Store the generated questions.
+         *
+         * These are the questions that will
+         * eventually be sent to createAssessment().
+         */
         setGeneratedQuestions(
           normalized,
         );
 
+        setGenerationStatus(
+          "ready",
+        );
+
+        console.log(
+          "NOVA GENERATED QUESTIONS READY",
+          {
+            count:
+              normalized.length,
+            questions:
+              normalized,
+          },
+        );
+
+        const readyMessage =
+          `${normalized.length} assessment question${
+            normalized.length ===
+            1
+              ? ""
+              : "s"
+          } are ready. ` +
+          `Review them in the generator, then say "publish it" when you're ready.`;
+
         toast.success(
           `${normalized.length} question${
-            normalized.length === 1
+            normalized.length ===
+            1
               ? ""
               : "s"
           } ready for publishing.`,
+        );
+
+        /*
+         * IMPORTANT:
+         * Show the generation result in Nova's
+         * actual conversation.
+         */
+        conversationRef.current?.appendAssistantMessage(
+          readyMessage,
+          true,
         );
       },
       [],
@@ -457,17 +1150,22 @@ export function NovaConsole({
         className,
       )}
     >
-      {/* LEFT — NOVA */}
+      {/* =====================================================
+          LEFT — NOVA
+          ===================================================== */}
       <div className="card-3d flex flex-col items-center gap-5 rounded-2xl p-5">
-
         <div className="w-full max-w-[14rem]">
           <Companion
-            expression={status.expression}
+            expression={
+              status.expression
+            }
             talking={
               status.state ===
               "speaking"
             }
-            pulse={status.pulse}
+            pulse={
+              status.pulse
+            }
           />
         </div>
 
@@ -499,20 +1197,23 @@ export function NovaConsole({
           </span>
         </span>
 
-        {novaVoices.length > 0 && (
+        {novaVoices.length >
+          0 && (
           <div className="w-full space-y-1">
             <label
               htmlFor="nova-console-voice-select"
               className="flex items-center gap-1.5 text-[9px] tracking-[0.18em] text-muted-foreground uppercase"
             >
               <Mic2 className="size-3" />
+
               Nova's voice
             </label>
 
             <select
               id="nova-console-voice-select"
               value={
-                activeVoice?.voiceURI ??
+                activeVoice
+                  ?.voiceURI ??
                 ""
               }
               onChange={(event) =>
@@ -549,7 +1250,8 @@ export function NovaConsole({
                   ? voiceLabel(
                       activeVoice,
                     )
-                  : "the browser default"}.
+                  : "the browser default"}
+                .
               </p>
             )}
           </div>
@@ -565,7 +1267,8 @@ export function NovaConsole({
 
             <span className="text-[10px] text-muted-foreground">
               {senses.micOn
-                ? visionStatus.audio.text
+                ? visionStatus.audio
+                    .text
                 : "OFFLINE"}
             </span>
           </div>
@@ -579,7 +1282,9 @@ export function NovaConsole({
 
             <span className="text-center text-[10px] leading-tight text-muted-foreground">
               {senses.cameraOn
-                ? visionStatus.posture.text
+                ? visionStatus
+                    .posture
+                    .text
                 : "OFFLINE"}
             </span>
           </div>
@@ -615,11 +1320,15 @@ export function NovaConsole({
         <NovaDemoPanel />
       </div>
 
-      {/* CENTRE — CONVERSATION */}
+      {/* =====================================================
+          CENTRE — NOVA CONVERSATION
+          ===================================================== */}
       <div className="card-3d flex min-h-[28rem] flex-col rounded-2xl p-5 lg:min-h-0">
         <NovaConversationPanel
           ref={conversationRef}
-          onStatusChange={setStatus}
+          onStatusChange={
+            setStatus
+          }
           onListeningChange={
             setListening
           }
@@ -632,12 +1341,17 @@ export function NovaConsole({
         />
       </div>
 
-      {/* RIGHT — HIRING COPILOT */}
+      {/* =====================================================
+          RIGHT — COMPANY HIRING COPILOT
+          ===================================================== */}
       <div className="flex min-h-0 flex-col gap-5">
-
         <NovaVoiceControl
-          state={status.state}
-          listening={listening}
+          state={
+            status.state
+          }
+          listening={
+            listening
+          }
           micSupported={
             micSupported
           }
@@ -657,9 +1371,286 @@ export function NovaConsole({
           />
         </div>
 
+        {showSchedulePanel && (
+          <div className="card-3d rounded-2xl p-4">
+            <div className="mb-4 flex items-start justify-between gap-3">
+              <div>
+                <div className="flex items-center gap-2">
+                  <CalendarDays className="size-4 text-cyber" />
+                  <p className="text-xs font-semibold tracking-[0.14em] text-foreground uppercase">
+                    Interview Scheduler
+                  </p>
+                </div>
+
+                <p className="mt-1 text-[10px] text-muted-foreground">
+                  Schedule and keep track of candidate interviews from the HR workspace.
+                </p>
+              </div>
+
+              <button
+                type="button"
+                onClick={() =>
+                  setShowSchedulePanel(false)
+                }
+                className="rounded-lg p-1.5 text-muted-foreground transition-colors hover:bg-cyber/10 hover:text-foreground"
+                aria-label="Close interview scheduler"
+              >
+                <X className="size-4" />
+              </button>
+            </div>
+
+            <form
+              onSubmit={handleScheduleInterview}
+              className="space-y-3"
+            >
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                <label className="space-y-1">
+                  <span className="flex items-center gap-1 text-[9px] tracking-[0.12em] text-muted-foreground uppercase">
+                    <UserRound className="size-3" />
+                    Candidate
+                  </span>
+
+                  <input
+                    value={candidateName}
+                    onChange={(event) =>
+                      setCandidateName(
+                        event.target.value,
+                      )
+                    }
+                    placeholder="Candidate name"
+                    className="w-full rounded-lg border border-border/60 bg-background/50 px-3 py-2 text-xs outline-none transition-colors focus:border-cyber/60"
+                  />
+                </label>
+
+                <label className="space-y-1">
+                  <span className="flex items-center gap-1 text-[9px] tracking-[0.12em] text-muted-foreground uppercase">
+                    <Mail className="size-3" />
+                    Email
+                  </span>
+
+                  <input
+                    type="email"
+                    value={candidateEmail}
+                    onChange={(event) =>
+                      setCandidateEmail(
+                        event.target.value,
+                      )
+                    }
+                    placeholder="candidate@company.com"
+                    className="w-full rounded-lg border border-border/60 bg-background/50 px-3 py-2 text-xs outline-none transition-colors focus:border-cyber/60"
+                  />
+                </label>
+              </div>
+
+              <label className="space-y-1">
+                <span className="flex items-center gap-1 text-[9px] tracking-[0.12em] text-muted-foreground uppercase">
+                  <BriefcaseBusiness className="size-3" />
+                  Role
+                </span>
+
+                <input
+                  value={interviewRole}
+                  onChange={(event) =>
+                    setInterviewRole(
+                      event.target.value,
+                    )
+                  }
+                  placeholder="Frontend Developer"
+                  className="w-full rounded-lg border border-border/60 bg-background/50 px-3 py-2 text-xs outline-none transition-colors focus:border-cyber/60"
+                />
+              </label>
+
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+                <label className="space-y-1">
+                  <span className="text-[9px] tracking-[0.12em] text-muted-foreground uppercase">
+                    Date
+                  </span>
+
+                  <input
+                    type="date"
+                    value={interviewDate}
+                    onChange={(event) =>
+                      setInterviewDate(
+                        event.target.value,
+                      )
+                    }
+                    className="w-full rounded-lg border border-border/60 bg-background/50 px-3 py-2 text-xs outline-none transition-colors focus:border-cyber/60"
+                  />
+                </label>
+
+                <label className="space-y-1">
+                  <span className="flex items-center gap-1 text-[9px] tracking-[0.12em] text-muted-foreground uppercase">
+                    <Clock3 className="size-3" />
+                    Time
+                  </span>
+
+                  <input
+                    type="time"
+                    value={interviewTime}
+                    onChange={(event) =>
+                      setInterviewTime(
+                        event.target.value,
+                      )
+                    }
+                    className="w-full rounded-lg border border-border/60 bg-background/50 px-3 py-2 text-xs outline-none transition-colors focus:border-cyber/60"
+                  />
+                </label>
+
+                <label className="space-y-1">
+                  <span className="text-[9px] tracking-[0.12em] text-muted-foreground uppercase">
+                    Duration
+                  </span>
+
+                  <select
+                    value={interviewDuration}
+                    onChange={(event) =>
+                      setInterviewDuration(
+                        event.target.value,
+                      )
+                    }
+                    className="w-full rounded-lg border border-border/60 bg-background/50 px-3 py-2 text-xs outline-none transition-colors focus:border-cyber/60"
+                  >
+                    <option value="15">
+                      15 min
+                    </option>
+                    <option value="30">
+                      30 min
+                    </option>
+                    <option value="45">
+                      45 min
+                    </option>
+                    <option value="60">
+                      60 min
+                    </option>
+                    <option value="90">
+                      90 min
+                    </option>
+                  </select>
+                </label>
+              </div>
+
+              <label className="space-y-1">
+                <span className="text-[9px] tracking-[0.12em] text-muted-foreground uppercase">
+                  Interview notes
+                </span>
+
+                <textarea
+                  value={interviewNotes}
+                  onChange={(event) =>
+                    setInterviewNotes(
+                      event.target.value,
+                    )
+                  }
+                  rows={3}
+                  placeholder="Panel members, interview focus, notes..."
+                  className="w-full resize-none rounded-lg border border-border/60 bg-background/50 px-3 py-2 text-xs outline-none transition-colors focus:border-cyber/60"
+                />
+              </label>
+
+              <button
+                type="submit"
+                className="inline-flex w-full items-center justify-center gap-2 rounded-lg bg-cyber px-3 py-2.5 text-xs font-semibold text-primary-foreground transition-opacity hover:opacity-90"
+              >
+                <CalendarDays className="size-3.5" />
+                Schedule Interview
+              </button>
+            </form>
+
+            {scheduledInterviews.length >
+              0 && (
+              <div className="mt-4 border-t border-border/60 pt-4">
+                <div className="mb-2 flex items-center justify-between">
+                  <p className="text-[10px] font-semibold tracking-[0.12em] text-foreground uppercase">
+                    Scheduled
+                  </p>
+
+                  <span className="rounded-full bg-cyber/10 px-2 py-0.5 text-[9px] text-cyber">
+                    {scheduledInterviews.length}
+                  </span>
+                </div>
+
+                <div className="max-h-56 space-y-2 overflow-y-auto pr-1">
+                  {scheduledInterviews.map(
+                    (interview) => (
+                      <div
+                        key={interview.id}
+                        className="rounded-lg border border-border/60 bg-background/40 p-3"
+                      >
+                        <div className="flex items-start justify-between gap-2">
+                          <div className="min-w-0">
+                            <p className="truncate text-xs font-medium">
+                              {
+                                interview.candidateName
+                              }
+                            </p>
+
+                            <p className="mt-0.5 truncate text-[10px] text-muted-foreground">
+                              {interview.role}
+                            </p>
+                          </div>
+
+                          <CheckCircle2 className="size-3.5 shrink-0 text-emerald" />
+                        </div>
+
+                        <div className="mt-2 flex flex-wrap gap-1.5">
+                          <span className="rounded-full bg-cyber/10 px-2 py-0.5 text-[9px] text-cyber">
+                            {interview.date}
+                          </span>
+
+                          <span className="rounded-full bg-cyber/10 px-2 py-0.5 text-[9px] text-cyber">
+                            {interview.time}
+                          </span>
+
+                          <span className="rounded-full bg-muted px-2 py-0.5 text-[9px] text-muted-foreground">
+                            {interview.duration} min
+                          </span>
+                        </div>
+                      </div>
+                    ),
+                  )}
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+
         {showQuestionGenerator && (
           <div className="card-3d rounded-2xl p-4">
+            <div className="mb-3 flex items-center justify-between gap-3">
+              <div>
+                <p className="text-xs font-semibold tracking-[0.14em] text-foreground uppercase">
+                  AI Assessment
+                  Generator
+                </p>
+
+                <p className="mt-1 text-[10px] text-muted-foreground">
+                  {generationStatus ===
+                  "generating"
+                    ? "Nova is generating questions..."
+                    : generationStatus ===
+                        "ready"
+                      ? `${generatedQuestions.length} questions ready`
+                      : generationStatus ===
+                          "error"
+                        ? "Generation needs attention"
+                        : "Configure and generate an assessment"}
+                </p>
+              </div>
+
+              {generationStatus ===
+                "generating" && (
+                <span className="inline-flex items-center gap-1.5 rounded-full border border-cyber/30 bg-cyber/10 px-2 py-1 text-[9px] tracking-widest text-cyber uppercase">
+                  <span className="size-1.5 animate-pulse rounded-full bg-cyber" />
+
+                  Generating
+                </span>
+              )}
+            </div>
+
             <CompanyQuestionGenerator
+              key={
+                generatorInstanceKey
+              }
               companyUserId={
                 companyUserId
               }
@@ -674,12 +1665,14 @@ export function NovaConsole({
               onSaveDraft={
                 handleSaveDraft
               }
+              onQuestionsGenerated={
+                handleSaveDraft
+              }
             />
 
             {generatedQuestions.length >
               0 && (
               <div className="mt-4 rounded-xl border border-cyber/30 bg-cyber/5 p-3">
-
                 <p className="text-xs font-medium text-foreground">
                   {
                     generatedQuestions.length
@@ -692,8 +1685,12 @@ export function NovaConsole({
                   <span className="text-cyber">
                     "publish it"
                   </span>{" "}
-                  to publish this
-                  assessment.
+                  to prepare publishing,
+                  then confirm with{" "}
+                  <span className="ml-1 text-cyber">
+                    "yes, publish it"
+                  </span>
+                  .
                 </p>
 
                 <button

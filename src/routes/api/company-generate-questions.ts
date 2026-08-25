@@ -20,179 +20,393 @@ interface GeneratedQuestion {
   keywords: string[];
 }
 
-function cleanString(value: unknown, fallback: string): string {
-  return typeof value === "string" && value.trim() ? value.trim() : fallback;
+function cleanString(
+  value: unknown,
+  fallback: string,
+): string {
+  return typeof value === "string" &&
+    value.trim()
+    ? value.trim()
+    : fallback;
 }
 
-function cleanCount(value: unknown): number {
+function cleanCount(
+  value: unknown,
+): number {
   const count = Number(value);
 
-  if (!Number.isFinite(count)) return 5;
+  if (!Number.isFinite(count)) {
+    return 5;
+  }
 
-  return Math.min(Math.max(Math.floor(count), 1), 20);
+  return Math.min(
+    Math.max(Math.floor(count), 1),
+    20,
+  );
 }
 
-function parseQuestions(text: string): GeneratedQuestion[] {
+function parseQuestions(
+  text: string,
+): GeneratedQuestion[] {
   try {
-    const cleaned = text
+    let cleaned = text.trim();
+
+    /*
+     * Remove markdown fences if the model
+     * accidentally adds them.
+     */
+    cleaned = cleaned
       .replace(/^```json\s*/i, "")
       .replace(/^```\s*/i, "")
       .replace(/\s*```$/i, "")
       .trim();
 
-    const parsed: unknown = JSON.parse(cleaned);
+    /*
+     * If the model adds text before/after
+     * the JSON array, extract the array.
+     */
+    const firstBracket =
+      cleaned.indexOf("[");
 
-    if (!Array.isArray(parsed)) return [];
+    const lastBracket =
+      cleaned.lastIndexOf("]");
+
+    if (
+      firstBracket >= 0 &&
+      lastBracket > firstBracket
+    ) {
+      cleaned = cleaned.slice(
+        firstBracket,
+        lastBracket + 1,
+      );
+    }
+
+    const parsed: unknown =
+      JSON.parse(cleaned);
+
+    if (!Array.isArray(parsed)) {
+      return [];
+    }
 
     return parsed
       .filter(
-        (item): item is Record<string, unknown> =>
-          Boolean(item) && typeof item === "object",
+        (
+          item,
+        ): item is Record<
+          string,
+          unknown
+        > =>
+          Boolean(item) &&
+          typeof item === "object",
       )
-      .map((item, index) => ({
-        id:
-          typeof item.id === "string" && item.id.trim()
-            ? item.id
-            : `ai-question-${Date.now()}-${index}`,
-        type:
-          item.type === "mcq" || item.type === "code"
-            ? item.type
-            : "text",
-        text:
-          typeof item.text === "string" && item.text.trim()
-            ? item.text.trim()
-            : `Question ${index + 1}`,
-        weight:
-          typeof item.weight === "number" && Number.isFinite(item.weight)
-            ? Math.max(1, Math.min(100, item.weight))
-            : 10,
-        keywords: Array.isArray(item.keywords)
-          ? item.keywords.filter(
-              (keyword): keyword is string => typeof keyword === "string",
+      .map(
+        (
+          item,
+          index,
+        ) => {
+          const textValue =
+            typeof item.text ===
+              "string" &&
+            item.text.trim()
+              ? item.text.trim()
+              : "";
+
+         const type: GeneratedQuestion["type"] =
+  item.type === "mcq"
+    ? "mcq"
+    : item.type === "code"
+      ? "code"
+      : "text";
+          const weight =
+            typeof item.weight ===
+              "number" &&
+            Number.isFinite(
+              item.weight,
             )
-          : [],
-      }));
+              ? Math.max(
+                  1,
+                  Math.min(
+                    100,
+                    item.weight,
+                  ),
+                )
+              : 10;
+
+          const keywords =
+            Array.isArray(
+              item.keywords,
+            )
+              ? item.keywords.filter(
+                  (
+                    keyword,
+                  ): keyword is string =>
+                    typeof keyword ===
+                    "string",
+                )
+              : [];
+
+          return {
+            id:
+              typeof item.id ===
+                "string" &&
+              item.id.trim()
+                ? item.id
+                : `ai-question-${Date.now()}-${index}`,
+
+            type,
+
+            text:
+              textValue ||
+              `Question ${
+                index + 1
+              }`,
+
+            weight,
+
+            keywords,
+          };
+        },
+      )
+      .filter(
+        (question) =>
+          question.text.length >= 3,
+      );
   } catch {
     return [];
   }
 }
 
-export const Route = createFileRoute("/api/company-generate-questions")({
+export const Route = createFileRoute(
+  "/api/company-generate-questions",
+)({
   server: {
     handlers: {
-      POST: async ({ request }) => {
+      POST: async ({
+        request,
+      }) => {
+        const startedAt =
+          Date.now();
+
         try {
-          const body = (await request.json()) as GenerateQuestionRequest;
+          const body =
+            (await request.json()) as GenerateQuestionRequest;
 
-          const role = cleanString(body.role, "Software Developer");
-          const topic = cleanString(body.topic, "General Programming");
-          const difficulty = cleanString(body.difficulty, "Medium");
-          const count = cleanCount(body.count);
+          const role = cleanString(
+            body.role,
+            "Software Developer",
+          );
 
+          const topic = cleanString(
+            body.topic,
+            "General Programming",
+          );
+
+          const difficulty =
+            cleanString(
+              body.difficulty,
+              "Medium",
+            );
+
+          const count =
+            cleanCount(body.count);
+
+          /*
+           * Keep company assessment generation
+           * deliberately small and fast.
+           */
           const key =
-            process.env["OPENAI_API_KEY"]?.trim() ||
-            process.env["GROQ_API_KEY"]?.trim();
+            process.env[
+              "OPENAI_API_KEY"
+            ]?.trim() ||
+            process.env[
+              "GROQ_API_KEY"
+            ]?.trim();
 
           if (!key) {
             return Response.json(
               {
-                error: "Missing OPENAI_API_KEY or GROQ_API_KEY",
+                error:
+                  "Missing OPENAI_API_KEY or GROQ_API_KEY",
               },
-              { status: 500 },
+              {
+                status: 500,
+              },
             );
           }
 
           const baseURL =
-            process.env["OPENAI_BASE_URL"]?.trim() ||
-            process.env["GROQ_BASE_URL"]?.trim() ||
+            process.env[
+              "OPENAI_BASE_URL"
+            ]?.trim() ||
+            process.env[
+              "GROQ_BASE_URL"
+            ]?.trim() ||
             "https://api.groq.com/openai/v1";
 
+          /*
+           * IMPORTANT:
+           *
+           * Use an environment override when one
+           * exists.
+           *
+           * Otherwise use a smaller/faster model
+           * instead of the previous 120B default.
+           *
+           * You can change AI_FAST_MODEL in .env
+           * without touching this file.
+           */
           const modelId =
-            process.env["AI_MODEL"]?.trim() ||
-            process.env["GROQ_MODEL"]?.trim() ||
-            "openai/gpt-oss-120b";
+            process.env[
+              "AI_FAST_MODEL"
+            ]?.trim() ||
+            process.env[
+              "GROQ_FAST_MODEL"
+            ]?.trim() ||
+            "llama-3.1-8b-instant";
 
-          const runId = getAiGatewayRunId(request);
+          const runId =
+            getAiGatewayRunId(
+              request,
+            );
 
-          const gateway = createAiGatewayProvider(
-            key,
-            runId,
-            undefined,
-            baseURL,
-          );
+          const gateway =
+            createAiGatewayProvider(
+              key,
+              runId,
+              undefined,
+              baseURL,
+            );
 
-          const result = await generateText({
-            model: gateway(modelId),
-            system: `
-You are Nova, an AI hiring copilot for Vision Mentor X.
+          /*
+           * Keep the prompt intentionally short.
+           *
+           * Long system prompts increase latency
+           * and token usage without helping this
+           * structured generation task much.
+           */
+          const result =
+            await generateText({
+              model:
+                gateway(modelId),
 
-Generate high-quality assessment questions for recruiters.
+              system:
+                "You are Nova, an AI hiring copilot. Generate practical interview assessment questions. Return ONLY a valid JSON array. No markdown. No explanations. No answers.",
 
-Requirements:
-- Match the requested role.
-- Match the requested topic.
-- Match the requested difficulty.
-- Avoid duplicate questions.
-- Questions must be clear and practical.
-- Do not include answers.
-- Do not include explanations outside the JSON.
-- Return ONLY valid JSON.
-- Return exactly the requested number of questions.
+              prompt: [
+                `Role: ${role}`,
+                `Topic: ${topic}`,
+                `Difficulty: ${difficulty}`,
+                `Count: ${count}`,
+                "",
+                "Return exactly this structure:",
+                "[",
+                '  {"id":"question-1","type":"text","text":"Question","weight":10,"keywords":["keyword"]}',
+                "]",
+                "",
+                'Allowed type values: "text", "mcq", "code".',
+                "Use code only for coding tasks.",
+                "Use mcq only when multiple choice is appropriate.",
+                "Otherwise use text.",
+                "Do not include answers.",
+                "Do not include explanations.",
+                "Do not duplicate questions.",
+              ].join("\n"),
 
-Use this JSON format:
+              /*
+               * Prevent the model from generating
+               * unnecessarily long output.
+               */
+              maxOutputTokens:
+                Math.max(
+                  500,
+                  count * 100,
+                ),
+            });
 
-[
-  {
-    "id": "question-1",
-    "type": "text",
-    "text": "Question text",
-    "weight": 10,
-    "keywords": ["keyword1", "keyword2"]
-  }
-]
-
-Allowed type values:
-"text", "mcq", "code"
-
-Use "code" only when the question requires the candidate to write code.
-Use "mcq" only when the question is naturally multiple choice.
-Otherwise use "text".
-`,
-            prompt: `
-Role: ${role}
-Topic: ${topic}
-Difficulty: ${difficulty}
-Number of questions: ${count}
-
-Generate the assessment questions now.
-`,
-          });
-
-          const questions = parseQuestions(result.text);
+          const questions =
+            parseQuestions(
+              result.text,
+            ).slice(0, count);
 
           if (!questions.length) {
+            console.error(
+              "Nova returned invalid questions:",
+              result.text,
+            );
+
             return Response.json(
               {
-                error: "AI returned an invalid question format.",
+                error:
+                  "AI returned an invalid question format.",
               },
-              { status: 502 },
+              {
+                status: 502,
+              },
             );
           }
 
-          return Response.json({
-            questions: questions.slice(0, count),
-            role,
-            topic,
-            difficulty,
-          });
-        } catch (error) {
-          console.error("Company question generation failed:", error);
+          /*
+           * Do not fail just because the model
+           * returned slightly fewer questions.
+           *
+           * The frontend can still display the
+           * valid questions immediately.
+           */
+          console.log(
+            `Nova generated ${questions.length}/${count} questions in ${
+              Date.now() -
+              startedAt
+            }ms using ${modelId}`,
+          );
 
           return Response.json(
             {
-              error: "Unable to generate questions right now.",
+              questions,
+              role,
+              topic,
+              difficulty,
+
+              /*
+               * Useful for debugging performance.
+               */
+              generationTimeMs:
+                Date.now() -
+                startedAt,
+
+              model:
+                modelId,
             },
-            { status: 500 },
+            {
+              status: 200,
+              headers: {
+                "Content-Type":
+                  "application/json",
+
+                /*
+                 * Do not cache generated
+                 * assessment questions.
+                 */
+                "Cache-Control":
+                  "no-store",
+              },
+            },
+          );
+        } catch (error) {
+          console.error(
+            "Company question generation failed:",
+            error,
+          );
+
+          return Response.json(
+            {
+              error:
+                error instanceof Error
+                  ? error.message
+                  : "Unable to generate questions right now.",
+            },
+            {
+              status: 500,
+            },
           );
         }
       },

@@ -54,21 +54,6 @@ export interface NovaConversationStatus {
 
 export interface NovaConversationHandle {
   toggleMic: () => void;
-
-  /**
-   * Allows NovaConsole to inject an assistant message
-   * directly into the Nova conversation.
-   *
-   * Used for:
-   * - generated assessment questions
-   * - generation status
-   * - publish status
-   * - company assessment results
-   */
-  appendAssistantMessage: (
-    text: string,
-    speak?: boolean,
-  ) => void;
 }
 
 export interface NovaConversationPanelProps {
@@ -143,20 +128,18 @@ export const NovaConversationPanel = forwardRef<
     useNovaVoice();
 
   /*
-   * Keep the conversation scrolled to
-   * the newest message.
+   * Automatically keep the newest message visible.
    */
   useEffect(() => {
-    const el = listRef.current;
+    const element = listRef.current;
 
-    if (!el) return;
+    if (!element) return;
 
-    el.scrollTop = el.scrollHeight;
+    element.scrollTop = element.scrollHeight;
   }, [messages, busy]);
 
   /*
-   * Stop any Nova speech when this
-   * component is unmounted.
+   * Stop Nova speech when the component unmounts.
    */
   useEffect(() => {
     return () => {
@@ -182,125 +165,22 @@ export const NovaConversationPanel = forwardRef<
     });
   }
 
-  /**
-   * Add an assistant message directly
-   * into Nova's visible conversation.
+  /*
+   * ============================================================
+   * SEND MESSAGE
+   * ============================================================
    *
-   * This is the bridge used by NovaConsole:
+   * There are two paths:
    *
-   * AI Assessment Generator
-   *          ↓
-   * generatedQuestions
-   *          ↓
-   * appendAssistantMessage()
-   *          ↓
-   * Nova conversation
-   */
-  function appendAssistantMessage(
-    text: string,
-    speak = true,
-  ) {
-    const clean = text.trim();
-
-    if (!clean) return;
-
-    /*
-     * First add the message to the visible
-     * Nova conversation.
-     */
-    setMessages((previous) => [
-      ...previous,
-      {
-        id: nextId(),
-        role: "assistant",
-        text: clean,
-        at: Date.now(),
-      },
-    ]);
-
-    /*
-     * Determine Nova's expression from
-     * the message content.
-     */
-    const expression =
-      analyzeExpression(
-        clean,
-        "neutral",
-      );
-
-    /*
-     * Respect the mute setting and make sure
-     * browser APIs are available.
-     */
-    const shouldSpeak =
-      speak &&
-      !muted &&
-      typeof window !== "undefined";
-
-    if (!shouldSpeak) {
-      report(
-        "idle",
-        expression,
-      );
-
-      return;
-    }
-
-    /*
-     * Stop any previous speech before
-     * Nova speaks the new message.
-     *
-     * This prevents overlapping voice output
-     * when generation/publishing messages arrive
-     * quickly.
-     */
-    if ("speechSynthesis" in window) {
-      window.speechSynthesis.cancel();
-    }
-
-    report(
-      "speaking",
-      "happy",
-    );
-
-    /*
-     * Speak the assistant message using
-     * Nova's configured voice.
-     */
-    speakWithVoice(
-      speechText(clean),
-      novaVoice,
-      {
-        onBoundary: () =>
-          report(
-            "speaking",
-            "happy",
-          ),
-
-        onEnd: () =>
-          report(
-            "idle",
-            expression,
-          ),
-      },
-    );
-  }
-
-  /**
-   * Expose the microphone controller and
-   * assistant-message injection API to
-   * NovaConsole.
-   */
-  useImperativeHandle(
-    ref,
-    () => ({
-      toggleMic,
-      appendAssistantMessage,
-    }),
-  );
-
-  /**
-   * Send a message to Nova.
+   * 1. Company command
+   *    "generate 5 React questions"
+   *    "create assessment"
+   *    "publish it"
+   *
+   *    These are intercepted locally and sent to NovaConsole.
+   *
+   * 2. Normal conversation
+   *    Everything else goes to /api/chat.
    */
   async function send(raw: string) {
     const text = raw.trim();
@@ -310,32 +190,19 @@ export const NovaConversationPanel = forwardRef<
     }
 
     /*
-     * -------------------------------------------------------
-     * COMPANY COMMAND DETECTION
-     * -------------------------------------------------------
-     *
-     * Examples:
-     *
-     * Generate 5 React questions
-     * Create a frontend assessment
-     * Publish it
-     * Yes publish it
-     *
-     * These commands are handled by NovaConsole.
+     * ----------------------------------------------------------
+     * COMPANY COMMAND
+     * ----------------------------------------------------------
      */
     const companyCommand =
       detectCompanyCommand(text);
 
-    if (
-      companyCommand.type !==
-      "unknown"
-    ) {
+    if (companyCommand.type !== "unknown") {
+      /*
+       * Show the command in the conversation immediately.
+       */
       setInput("");
 
-      /*
-       * Show the user's company command
-       * inside the Nova conversation.
-       */
       setMessages((previous) => [
         ...previous,
         {
@@ -347,41 +214,82 @@ export const NovaConversationPanel = forwardRef<
       ]);
 
       /*
-       * Pass the command to NovaConsole.
-       *
-       * NovaConsole is responsible for:
-       *
-       * command
-       *    ↓
-       * assessment generator
-       *    ↓
-       * generated questions
-       *    ↓
-       * publish
+       * Send command to NovaConsole.
        */
       onCompanyCommand?.(
         companyCommand,
       );
 
       /*
-       * Company commands must NOT be sent
-       * through the normal Nova AI endpoint.
+       * Give Nova a small local acknowledgement.
+       *
+       * This avoids making another AI request just to say
+       * "I'll do that".
+       */
+      const acknowledgement =
+        getCommandAcknowledgement(
+          companyCommand,
+        );
+
+      if (acknowledgement) {
+        const replyId = nextId();
+
+        setMessages((previous) => [
+          ...previous,
+          {
+            id: replyId,
+            role: "assistant",
+            text: acknowledgement,
+            at: Date.now(),
+          },
+        ]);
+
+        if (!muted) {
+          report(
+            "speaking",
+            "happy",
+          );
+
+          speakWithVoice(
+            speechText(acknowledgement),
+            novaVoice,
+            {
+              onBoundary: () =>
+                report(
+                  "speaking",
+                  "happy",
+                ),
+
+              onEnd: () =>
+                report(
+                  "idle",
+                  "happy",
+                ),
+            },
+          );
+        } else {
+          report(
+            "idle",
+            "happy",
+          );
+        }
+      }
+
+      /*
+       * IMPORTANT:
+       * Do not send company commands to /api/chat.
        */
       return;
     }
 
     /*
-     * -------------------------------------------------------
+     * ----------------------------------------------------------
      * NORMAL NOVA CHAT
-     * -------------------------------------------------------
+     * ----------------------------------------------------------
      */
 
     setInput("");
 
-    /*
-     * Build the conversation history for
-     * the normal Nova AI response.
-     */
     const history: NovaTurn[] = [
       ...messages.map((message) => ({
         role: message.role,
@@ -393,9 +301,6 @@ export const NovaConversationPanel = forwardRef<
       },
     ];
 
-    /*
-     * Immediately display the user's message.
-     */
     setMessages((previous) => [
       ...previous,
       {
@@ -418,72 +323,51 @@ export const NovaConversationPanel = forwardRef<
     let started = false;
 
     try {
-      /*
-       * Stream the normal Nova response.
-       */
       const full =
         await streamNovaReply({
           history,
           interviewerMode: false,
 
           onChunk: (fullText) => {
-            /*
-             * First chunk creates the assistant
-             * message.
-             */
             if (!started) {
               started = true;
 
-              setMessages(
-                (previous) => [
-                  ...previous,
-                  {
-                    id: replyId,
-                    role: "assistant",
-                    text: fullText,
-                    at: Date.now(),
-                  },
-                ],
-              );
+              setMessages((previous) => [
+                ...previous,
+                {
+                  id: replyId,
+                  role: "assistant",
+                  text: fullText,
+                  at: Date.now(),
+                },
+              ]);
 
               report(
                 "speaking",
                 "happy",
               );
             } else {
-              /*
-               * Following chunks update the
-               * existing assistant message.
-               */
-              setMessages(
-                (previous) =>
-                  previous.map(
-                    (message) =>
-                      message.id ===
-                      replyId
-                        ? {
-                            ...message,
-                            text: fullText,
-                          }
-                        : message,
-                  ),
+              setMessages((previous) =>
+                previous.map(
+                  (message) =>
+                    message.id === replyId
+                      ? {
+                          ...message,
+                          text: fullText,
+                        }
+                      : message,
+                ),
               );
             }
           },
         });
 
-      /*
-       * Analyze Nova's final expression.
-       */
       const expression =
         analyzeExpression(
           full,
           "neutral",
         );
 
-      /*
-       * Speak the normal Nova response.
-       */
       if (!muted && full) {
         report(
           "speaking",
@@ -514,10 +398,6 @@ export const NovaConversationPanel = forwardRef<
         );
       }
     } catch (error) {
-      /*
-       * Display normal Nova errors
-       * inside the conversation.
-       */
       setMessages((previous) => [
         ...previous,
         {
@@ -541,7 +421,7 @@ export const NovaConversationPanel = forwardRef<
   }
 
   /*
-   * Speech recognition / microphone.
+   * Speech recognition.
    */
   const {
     supported: micSupported,
@@ -559,10 +439,6 @@ export const NovaConversationPanel = forwardRef<
       "en-GB",
   });
 
-  /*
-   * Report microphone listening state
-   * to NovaConsole.
-   */
   useEffect(() => {
     onListeningChange?.(
       listening,
@@ -574,12 +450,9 @@ export const NovaConversationPanel = forwardRef<
         "neutral",
       );
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [listening]);
 
-  /*
-   * Report microphone support state
-   * to NovaConsole.
-   */
   useEffect(() => {
     onMicSupportedChange?.(
       micSupported,
@@ -589,21 +462,13 @@ export const NovaConversationPanel = forwardRef<
     onMicSupportedChange,
   ]);
 
-  /*
-   * Toggle microphone.
-   */
   function toggleMic() {
     if (listening) {
       cancelListening();
       setInput("");
-
       return;
     }
 
-    /*
-     * Stop current Nova speech before
-     * starting microphone input.
-     */
     if (
       typeof window !== "undefined"
     ) {
@@ -615,9 +480,13 @@ export const NovaConversationPanel = forwardRef<
     startListening();
   }
 
-  /*
-   * Submit text input.
-   */
+  useImperativeHandle(
+    ref,
+    () => ({
+      toggleMic,
+    }),
+  );
+
   function handleSubmit(
     event: React.FormEvent,
   ) {
@@ -633,7 +502,7 @@ export const NovaConversationPanel = forwardRef<
         className,
       )}
     >
-      {/* Conversation header */}
+      {/* Header */}
       <div className="mb-3 flex items-center gap-2 border-b border-border/60 pb-3">
         <MessageSquareText className="size-4 text-cyber" />
 
@@ -678,7 +547,7 @@ export const NovaConversationPanel = forwardRef<
           ),
         )}
 
-        {/* Normal Nova thinking indicator */}
+        {/* AI thinking indicator */}
         {busy &&
           messages[
             messages.length - 1
@@ -740,9 +609,7 @@ export const NovaConversationPanel = forwardRef<
           <button
             type="button"
             onClick={toggleMic}
-            aria-pressed={
-              listening
-            }
+            aria-pressed={listening}
             title={
               listening
                 ? "Stop listening"
@@ -774,3 +641,38 @@ export const NovaConversationPanel = forwardRef<
     </div>
   );
 });
+
+/*
+ * ============================================================
+ * LOCAL COMPANY COMMAND ACKNOWLEDGEMENTS
+ * ============================================================
+ *
+ * These do NOT call the AI API.
+ * They make command execution feel immediate.
+ */
+function getCommandAcknowledgement(
+  command: CompanyNovaCommand,
+): string {
+  switch (command.type) {
+    case "generate_questions":
+      return "Got it. I'm preparing the assessment questions.";
+
+    case "create_assessment":
+      return "Got it. I'm preparing the assessment.";
+
+    case "publish_assessment":
+      return "Confirmed. I'm publishing the assessment now.";
+
+    case "schedule_interview":
+      return "Got it. I'll prepare the interview scheduling action.";
+
+    case "analyze_candidates":
+      return "Got it. I'll prepare the candidate analysis.";
+
+    case "hiring_analytics":
+      return "Got it. I'll prepare the hiring analytics.";
+
+    default:
+      return "";
+  }
+}
