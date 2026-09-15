@@ -73,6 +73,7 @@ type AssessmentData = {
   code: string;
   title: string;
   status: "active" | "closed";
+  requireMedia?: boolean;
   questions: AssessmentQuestion[];
 };
 
@@ -200,7 +201,11 @@ function AssessmentPage() {
    */
 
   useEffect(() => {
-    if (!assessment || assessment.status === "closed") {
+    if (
+      !assessment ||
+      assessment.status === "closed" ||
+      !assessment.requireMedia
+    ) {
       return;
     }
 

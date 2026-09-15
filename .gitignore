@@ -10,3 +10,5 @@ data/reports.json
 
 .npm-cache/
 .env
+
+.vscode/

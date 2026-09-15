@@ -119,6 +119,7 @@ export interface StoredAssessment {
   title: string;
   code: string;
   description?: string;
+  requireMedia?: boolean;
 
   status: "active" | "archived";
 
@@ -184,6 +185,15 @@ export interface StoredUserProfile {
 
   preferences?: {
     notifications?: boolean;
+    assessmentDefaults?: {
+      requireMedia?: boolean;
+      questionWeight?: number;
+    };
+    notificationPreferences?: {
+      scheduleEmails?: boolean;
+      browserReminders?: boolean;
+      assessmentSubmissions?: boolean;
+    };
     publicProfile?: boolean;
     language?: string;
   };

@@ -42,6 +42,7 @@ export type StoredAssessment = {
   title: string;
   code: string;
   status: "active" | "closed";
+  requireMedia?: boolean;
   questions: StoredQuestion[];
   createdAt: string;
 };

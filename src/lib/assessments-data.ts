@@ -39,6 +39,20 @@ export interface CompanyProfile {
   bio: string;
   contactEmail: string;
   phone: string;
+  preferences: CompanyPreferences;
+}
+
+export interface CompanyPreferences {
+  assessmentDefaults: {
+    requireMedia: boolean;
+    questionWeight: number;
+  };
+  notifications: {
+    enabled: boolean;
+    scheduleEmails: boolean;
+    browserReminders: boolean;
+    assessmentSubmissions: boolean;
+  };
 }
 
 export interface UpdateCompanyProfileInput {
@@ -48,6 +62,7 @@ export interface UpdateCompanyProfileInput {
   bio: string;
   contactEmail: string;
   phone: string;
+  preferences?: CompanyPreferences;
 }
 
 const emptyCompanyProfile: CompanyProfile = {
@@ -57,6 +72,18 @@ const emptyCompanyProfile: CompanyProfile = {
   bio: "",
   contactEmail: "",
   phone: "",
+  preferences: {
+    assessmentDefaults: {
+      requireMedia: false,
+      questionWeight: 1,
+    },
+    notifications: {
+      enabled: true,
+      scheduleEmails: true,
+      browserReminders: true,
+      assessmentSubmissions: true,
+    },
+  },
 };
 
 export function shareLink(code: string): string {
@@ -300,6 +327,18 @@ export async function getCompanyProfile(): Promise<CompanyProfile> {
       bio?: string;
       contactEmail?: string;
       phone?: string;
+      preferences?: {
+        notifications?: boolean;
+        assessmentDefaults?: {
+          requireMedia?: boolean;
+          questionWeight?: number;
+        };
+        notificationPreferences?: {
+          scheduleEmails?: boolean;
+          browserReminders?: boolean;
+          assessmentSubmissions?: boolean;
+        };
+      };
     } | null;
 
     if (!profile) {
@@ -330,6 +369,34 @@ export async function getCompanyProfile(): Promise<CompanyProfile> {
 
       phone:
         profile.phone ?? "",
+      preferences: {
+        assessmentDefaults: {
+          requireMedia:
+            profile.preferences?.assessmentDefaults?.requireMedia ??
+            false,
+          questionWeight: Math.min(
+            100,
+            Math.max(
+              1,
+              profile.preferences?.assessmentDefaults?.questionWeight ??
+                1,
+            ),
+          ),
+        },
+        notifications: {
+          enabled:
+            profile.preferences?.notifications ?? true,
+          scheduleEmails:
+            profile.preferences?.notificationPreferences?.scheduleEmails ??
+            true,
+          browserReminders:
+            profile.preferences?.notificationPreferences?.browserReminders ??
+            true,
+          assessmentSubmissions:
+            profile.preferences?.notificationPreferences?.assessmentSubmissions ??
+            true,
+        },
+      },
     };
   } catch (error) {
     console.error(
@@ -398,6 +465,20 @@ export async function updateCompanyProfile(
         bio: input.bio,
         contactEmail: input.contactEmail,
         phone: input.phone,
+        preferences: input.preferences
+          ? {
+              notifications: input.preferences.notifications.enabled,
+              assessmentDefaults: input.preferences.assessmentDefaults,
+              notificationPreferences: {
+                scheduleEmails:
+                  input.preferences.notifications.scheduleEmails,
+                browserReminders:
+                  input.preferences.notifications.browserReminders,
+                assessmentSubmissions:
+                  input.preferences.notifications.assessmentSubmissions,
+              },
+            }
+          : undefined,
       }),
     },
   );
@@ -411,6 +492,7 @@ export async function updateCompanyProfile(
     bio?: string;
     contactEmail?: string;
     phone?: string;
+    preferences?: CompanyPreferences;
   };
 
   if (!response.ok) {
@@ -473,5 +555,10 @@ export async function updateCompanyProfile(
     phone:
       result.phone ??
       input.phone,
+
+    preferences:
+      result.preferences ??
+      input.preferences ??
+      emptyCompanyProfile.preferences,
   };
 }

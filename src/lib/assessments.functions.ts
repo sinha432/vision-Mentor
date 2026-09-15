@@ -43,6 +43,7 @@ const questionInput = z.object({
 const createSchema = z.object({
   companyUserId: z.string().min(1),
   title: z.string().trim().min(2).max(120),
+  requireMedia: z.boolean().default(false),
   questions: z.array(questionInput).min(1).max(30),
 });
 
@@ -91,6 +92,7 @@ export async function createAssessment({ data }: { data: unknown }) {
   return insertAssessment({
     companyUserId: input.companyUserId,
     title: input.title,
+    requireMedia: input.requireMedia,
     questions: input.questions.map((q) => ({ id: newId(), ...q })),
   });
 }

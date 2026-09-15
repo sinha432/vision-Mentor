@@ -19,6 +19,7 @@ import {
   UserRound,
 } from "lucide-react";
 import { toast } from "sonner";
+import { getCompanyProfile } from "@/lib/assessments-data";
 
 export const Route = createFileRoute(
   "/_authenticated/dashboard/schedule",
@@ -418,6 +419,15 @@ function ScheduleInterviewPage() {
   const [isSending, setIsSending] =
     useState(false);
 
+  const [notificationsEnabled, setNotificationsEnabled] =
+    useState(true);
+
+  const [scheduleEmailsEnabled, setScheduleEmailsEnabled] =
+    useState(true);
+
+  const [browserRemindersEnabled, setBrowserRemindersEnabled] =
+    useState(true);
+
   const [scheduled, setScheduled] =
     useState<ScheduledInterview[]>(
       [],
@@ -455,13 +465,25 @@ function ScheduleInterviewPage() {
   }, []);
 
   useEffect(() => {
+    void getCompanyProfile().then((profile) => {
+      setNotificationsEnabled(profile.preferences.notifications.enabled);
+      setScheduleEmailsEnabled(
+        profile.preferences.notifications.scheduleEmails,
+      );
+      setBrowserRemindersEnabled(
+        profile.preferences.notifications.browserReminders,
+      );
+    });
+
     const loaded =
       readInterviews();
 
     setScheduled(loaded);
 
-    requestBrowserNotificationPermission();
-  }, []);
+    if (browserRemindersEnabled) {
+      requestBrowserNotificationPermission();
+    }
+  }, [browserRemindersEnabled]);
 
   /*
    * Check scheduled interviews every
@@ -495,11 +517,13 @@ function ScheduleInterviewPage() {
                 scheduledTime <=
                 Date.now()
               ) {
+                if (!notificationsEnabled || !browserRemindersEnabled) {
+                  return interview;
+                }
+
                 changed = true;
 
-                notifyInterview(
-                  interview,
-                );
+                notifyInterview(interview);
 
                 return {
                   ...interview,
@@ -532,7 +556,7 @@ function ScheduleInterviewPage() {
       window.clearInterval(
         interval,
       );
-  }, [notificationTick]);
+  }, [browserRemindersEnabled, notificationTick, notificationsEnabled]);
 
   /*
    * When the selected date changes,
@@ -915,7 +939,9 @@ function ScheduleInterviewPage() {
     saveInterviews(updated);
     setScheduled(updated);
 
-    requestBrowserNotificationPermission();
+    if (notificationsEnabled && browserRemindersEnabled) {
+      requestBrowserNotificationPermission();
+    }
 
     toast.success(
       `Interview scheduled for ${formatDisplayDate(
@@ -927,6 +953,17 @@ function ScheduleInterviewPage() {
         duration: 7000,
       },
     );
+
+    if (!notificationsEnabled || !scheduleEmailsEnabled) {
+      setCandidateName("");
+      setCandidateEmail("");
+      setRole("");
+      setDate("");
+      setTime("");
+      setDuration("30");
+      setNotes("");
+      return;
+    }
 
     setIsSending(true);
 
