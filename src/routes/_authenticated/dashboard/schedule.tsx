@@ -47,6 +47,7 @@ interface ScheduledInterview {
   time: string;
   duration: string;
   notes: string;
+  timeZone?: string;
   createdAt: number;
   notified?: boolean;
 }
@@ -86,6 +87,7 @@ function getCompanyStorageKey(): string {
 
   try {
     const raw =
+      localStorage.getItem("vmx_user") ||
       localStorage.getItem("vmx_demo_user");
 
     if (!raw) {
@@ -412,6 +414,9 @@ function ScheduleInterviewPage() {
 
   const [notes, setNotes] =
     useState("");
+
+  const [isSending, setIsSending] =
+    useState(false);
 
   const [scheduled, setScheduled] =
     useState<ScheduledInterview[]>(
@@ -813,7 +818,7 @@ function ScheduleInterviewPage() {
     setTime(value);
   }
 
-  function scheduleInterview(
+  async function scheduleInterview(
     event: FormEvent<HTMLFormElement>,
   ) {
     event.preventDefault();
@@ -884,6 +889,9 @@ function ScheduleInterviewPage() {
         duration,
         notes:
           notes.trim(),
+        timeZone:
+          Intl.DateTimeFormat().resolvedOptions().timeZone ||
+          "UTC",
         createdAt:
           Date.now(),
         notified: false,
@@ -919,6 +927,46 @@ function ScheduleInterviewPage() {
         duration: 7000,
       },
     );
+
+    setIsSending(true);
+
+    try {
+      const response = await fetch(
+        "/api/company-schedule/notify",
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify(interview),
+        },
+      );
+
+      if (!response.ok) {
+        const result = (await response.json().catch(() => null)) as {
+          error?: string;
+        } | null;
+
+        throw new Error(
+          result?.error ||
+            "The confirmation email could not be sent.",
+        );
+      }
+
+      toast.success(
+        `Confirmation email sent to ${interview.candidateEmail}.`,
+        { duration: 7000 },
+      );
+    } catch (error) {
+      toast.warning(
+        error instanceof Error
+          ? error.message
+          : "The interview was saved, but the confirmation email could not be sent.",
+        { duration: 9000 },
+      );
+    } finally {
+      setIsSending(false);
+    }
 
     setCandidateName("");
     setCandidateEmail("");
@@ -1469,10 +1517,11 @@ function ScheduleInterviewPage() {
           {/* SUBMIT */}
           <button
             type="submit"
+            disabled={isSending}
             className="inline-flex w-full items-center justify-center gap-2 rounded-xl bg-cyber px-4 py-3 text-sm font-semibold text-primary-foreground transition hover:opacity-90"
           >
             <CalendarDays className="size-4" />
-            Schedule Interview
+            {isSending ? "Sending confirmation..." : "Schedule Interview"}
           </button>
 
           <div className="flex items-center justify-center gap-2 text-[10px] text-muted-foreground">

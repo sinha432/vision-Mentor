@@ -42,6 +42,7 @@ import { Route as ApiAuthResetPasswordRouteImport } from './routes/api/auth/rese
 import { Route as ApiAuthSendCodeRouteImport } from './routes/api/auth/send-code'
 import { Route as ApiAuthSignupRouteImport } from './routes/api/auth/signup'
 import { Route as ApiAuthVerifyCodeRouteImport } from './routes/api/auth/verify-code'
+import { Route as ApiCompanyScheduleNotifyRouteImport } from './routes/api/company-schedule/notify'
 import { Route as ApiDbAssessmentRouteImport } from './routes/api/db/assessment'
 import { Route as ApiDbInterviewRouteImport } from './routes/api/db/interview'
 import { Route as ApiDbPingRouteImport } from './routes/api/db/ping'
@@ -226,6 +227,12 @@ const ApiAuthVerifyCodeRoute = ApiAuthVerifyCodeRouteImport.update({
   path: '/api/auth/verify-code',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ApiCompanyScheduleNotifyRoute =
+  ApiCompanyScheduleNotifyRouteImport.update({
+    id: '/api/company-schedule/notify',
+    path: '/api/company-schedule/notify',
+    getParentRoute: () => rootRouteImport,
+  } as any)
 const ApiDbAssessmentRoute = ApiDbAssessmentRouteImport.update({
   id: '/api/db/assessment',
   path: '/api/db/assessment',
@@ -313,6 +320,7 @@ export interface FileRoutesByFullPath {
   '/api/auth/send-code': typeof ApiAuthSendCodeRoute
   '/api/auth/signup': typeof ApiAuthSignupRoute
   '/api/auth/verify-code': typeof ApiAuthVerifyCodeRoute
+  '/api/company-schedule/notify': typeof ApiCompanyScheduleNotifyRoute
   '/api/db/assessment': typeof ApiDbAssessmentRoute
   '/api/db/interview': typeof ApiDbInterviewRoute
   '/api/db/ping': typeof ApiDbPingRoute
@@ -355,6 +363,7 @@ export interface FileRoutesByTo {
   '/api/auth/send-code': typeof ApiAuthSendCodeRoute
   '/api/auth/signup': typeof ApiAuthSignupRoute
   '/api/auth/verify-code': typeof ApiAuthVerifyCodeRoute
+  '/api/company-schedule/notify': typeof ApiCompanyScheduleNotifyRoute
   '/api/db/assessment': typeof ApiDbAssessmentRoute
   '/api/db/interview': typeof ApiDbInterviewRoute
   '/api/db/ping': typeof ApiDbPingRoute
@@ -401,6 +410,7 @@ export interface FileRoutesById {
   '/api/auth/send-code': typeof ApiAuthSendCodeRoute
   '/api/auth/signup': typeof ApiAuthSignupRoute
   '/api/auth/verify-code': typeof ApiAuthVerifyCodeRoute
+  '/api/company-schedule/notify': typeof ApiCompanyScheduleNotifyRoute
   '/api/db/assessment': typeof ApiDbAssessmentRoute
   '/api/db/interview': typeof ApiDbInterviewRoute
   '/api/db/ping': typeof ApiDbPingRoute
@@ -447,6 +457,7 @@ export interface FileRouteTypes {
     | '/api/auth/send-code'
     | '/api/auth/signup'
     | '/api/auth/verify-code'
+    | '/api/company-schedule/notify'
     | '/api/db/assessment'
     | '/api/db/interview'
     | '/api/db/ping'
@@ -489,6 +500,7 @@ export interface FileRouteTypes {
     | '/api/auth/send-code'
     | '/api/auth/signup'
     | '/api/auth/verify-code'
+    | '/api/company-schedule/notify'
     | '/api/db/assessment'
     | '/api/db/interview'
     | '/api/db/ping'
@@ -534,6 +546,7 @@ export interface FileRouteTypes {
     | '/api/auth/send-code'
     | '/api/auth/signup'
     | '/api/auth/verify-code'
+    | '/api/company-schedule/notify'
     | '/api/db/assessment'
     | '/api/db/interview'
     | '/api/db/ping'
@@ -565,6 +578,7 @@ export interface RootRouteChildren {
   ApiAuthSendCodeRoute: typeof ApiAuthSendCodeRoute
   ApiAuthSignupRoute: typeof ApiAuthSignupRoute
   ApiAuthVerifyCodeRoute: typeof ApiAuthVerifyCodeRoute
+  ApiCompanyScheduleNotifyRoute: typeof ApiCompanyScheduleNotifyRoute
   ApiDbAssessmentRoute: typeof ApiDbAssessmentRoute
   ApiDbInterviewRoute: typeof ApiDbInterviewRoute
   ApiDbPingRoute: typeof ApiDbPingRoute
@@ -806,6 +820,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ApiAuthVerifyCodeRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/api/company-schedule/notify': {
+      id: '/api/company-schedule/notify'
+      path: '/api/company-schedule/notify'
+      fullPath: '/api/company-schedule/notify'
+      preLoaderRoute: typeof ApiCompanyScheduleNotifyRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/api/db/assessment': {
       id: '/api/db/assessment'
       path: '/api/db/assessment'
@@ -972,6 +993,7 @@ const rootRouteChildren: RootRouteChildren = {
   ApiAuthSendCodeRoute: ApiAuthSendCodeRoute,
   ApiAuthSignupRoute: ApiAuthSignupRoute,
   ApiAuthVerifyCodeRoute: ApiAuthVerifyCodeRoute,
+  ApiCompanyScheduleNotifyRoute: ApiCompanyScheduleNotifyRoute,
   ApiDbAssessmentRoute: ApiDbAssessmentRoute,
   ApiDbInterviewRoute: ApiDbInterviewRoute,
   ApiDbPingRoute: ApiDbPingRoute,
