@@ -76,21 +76,28 @@ export function voiceLabel(voice: SpeechSynthesisVoice): string {
   return `${voice.name} — ${voice.lang}`;
 }
 
-/** Convert assistant formatting into text that browser speech can read naturally. */
-export function speechText(text: string): string {
+/** Convert assistant output into natural words for browser speech. */
+export function toSpeechText(text: string): string {
   return text
-    .replace(/```[\s\S]*?```/g, (block) => block.replace(/```/g, ""))
+    .replace(/```[\s\S]*?```/g, " ")
     .replace(/!\[([^\]]*)\]\([^)]*\)/g, "$1")
     .replace(/\[([^\]]+)\]\([^)]*\)/g, "$1")
-    .replace(/https?:\/\/\S+/gi, "")
+    .replace(/https?:\/\/\S+/gi, " ")
+    .replace(/<[^>]+>/g, " ")
+    .replace(/&(?:amp|lt|gt|quot|#39|nbsp);/gi, " ")
     .replace(/^\s*#{1,6}\s*/gm, "")
-    .replace(/^\s*[-*+]\s+/gm, "")
+    .replace(/(?:^|\s)(?:[-*+]\s+|\d+[.)]\s+)/gm, " ")
     .replace(/[*_`~]/g, "")
     .replace(/&/g, " and ")
     .replace(/@/g, " at ")
+    .replace(/[\u{1F000}-\u{1FAFF}\u{200D}\u{FE0F}]/gu, "")
+    .replace(/[^\p{L}\p{N}\s.,?!:'();]/gu, " ")
     .replace(/\s+/g, " ")
     .trim();
 }
+
+/** Backward-compatible name for callers that need speech-only text. */
+export const speechText = toSpeechText;
 
 /**
  * React hook that exposes the browser's English voice list (best-ranked
@@ -162,10 +169,12 @@ export function speakWithVoice(
     onBoundary?: () => void;
   },
 ) {
+  const spokenText = toSpeechText(text);
+
   if (
     typeof window === "undefined" ||
     !("speechSynthesis" in window) ||
-    !text.trim()
+    !spokenText
   ) {
     handlers?.onEnd?.();
     return () => {};
@@ -177,7 +186,7 @@ export function speakWithVoice(
   // Stop previous speech immediately.
   synth.cancel();
 
-  const utterance = new SpeechSynthesisUtterance(text);
+  const utterance = new SpeechSynthesisUtterance(spokenText);
 
   if (voice) {
     utterance.voice = voice;

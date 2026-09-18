@@ -1,9 +1,14 @@
-import { useState } from "react";
+import { lazy, Suspense, useState } from "react";
 import { MessageCircle, Sparkles } from "lucide-react";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { NovaPanel } from "@/components/nova/NovaPanel";
-import { NovaChat, type NovaChatStatus } from "@/components/nova/NovaChat";
+import type { NovaChatStatus } from "@/components/nova/NovaChat";
 import { stateLabel } from "@/lib/nova/expression";
+
+const NovaChat = lazy(async () => {
+  const module = await import("@/components/nova/NovaChat");
+  return { default: module.NovaChat };
+});
 
 export function HeroAvatar() {
   const [nova, setNova] = useState<NovaChatStatus>({
@@ -53,11 +58,13 @@ export function HeroAvatar() {
                 {stateLabel(nova.state)}
               </span>
             </div>
-            <NovaChat
-              onStatusChange={setNova}
-              emptyTitle="Hi, I'm Nova"
-              emptyDescription="Ask me about Vision Mentor X — or anything else."
-            />
+            <Suspense fallback={<div className="grid flex-1 place-items-center text-sm text-muted-foreground">Loading Nova...</div>}>
+              <NovaChat
+                onStatusChange={setNova}
+                emptyTitle="Hi, I'm Nova"
+                emptyDescription="Ask me about Vision Mentor X — or anything else."
+              />
+            </Suspense>
           </PopoverContent>
         </Popover>
       </div>

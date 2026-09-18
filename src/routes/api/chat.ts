@@ -1,7 +1,6 @@
 import { createFileRoute } from "@tanstack/react-router";
 import {
   convertToModelMessages,
-  generateText,
   streamText,
   type UIMessage,
 } from "ai";
@@ -116,130 +115,6 @@ function normalizeMessages(raw: unknown): UIMessage[] {
     );
 }
 
-function extractTextValue(value: unknown): string | null {
-  if (
-    typeof value === "string" &&
-    value.trim()
-  ) {
-    return value.trim();
-  }
-
-  if (Array.isArray(value)) {
-    for (const item of value) {
-      const nested = extractTextValue(item);
-
-      if (nested) {
-        return nested;
-      }
-    }
-  }
-
-  if (
-    value &&
-    typeof value === "object"
-  ) {
-    for (const key of [
-      "text",
-      "output",
-      "correctedText",
-      "corrected",
-      "result",
-      "message",
-      "content",
-    ]) {
-      const candidate =
-        (value as Record<string, unknown>)[key];
-
-      const extracted =
-        extractTextValue(candidate);
-
-      if (extracted) {
-        return extracted;
-      }
-    }
-  }
-
-  return null;
-}
-
-async function tryQuillBotGrammarFix(
-  text: string,
-): Promise<string | null> {
-  const endpoint =
-    process.env["QUILLBOT_API_URL"]?.trim();
-
-  const apiKey =
-    process.env["QUILLBOT_API_KEY"]?.trim();
-
-  if (!endpoint || !apiKey) {
-    return null;
-  }
-
-  try {
-    const response = await fetch(endpoint, {
-      method: "POST",
-
-      headers: {
-        Authorization: `Bearer ${apiKey}`,
-        "Content-Type": "application/json",
-      },
-
-      body: JSON.stringify({
-        text,
-        mode: "grammar",
-        tone: "natural",
-      }),
-    });
-
-    if (!response.ok) {
-      return null;
-    }
-
-    const payload = await response.json();
-
-    const corrected =
-      extractTextValue(payload);
-
-    return corrected && corrected.trim()
-      ? corrected.trim()
-      : null;
-  } catch {
-    return null;
-  }
-}
-
-async function correctGrammarForChat(
-  text: string,
-  gateway: ReturnType<
-    typeof createAiGatewayProvider
-  >,
-  modelId: string,
-): Promise<string> {
-  const trimmed = text.trim();
-
-  if (!trimmed) {
-    return text;
-  }
-
-  const quillBotText =
-    await tryQuillBotGrammarFix(trimmed);
-
-  if (quillBotText) {
-    return quillBotText;
-  }
-
-  const result = await generateText({
-    model: gateway(modelId),
-
-    system:
-      "Correct the grammar, punctuation, capitalization, and awkward phrasing in the user's message while preserving the original intent, meaning, and tone. Return only the corrected sentence or paragraph. No explanations.",
-
-    prompt: trimmed,
-  });
-
-  return result.text.trim() || trimmed;
-}
-
 export const Route = createFileRoute("/api/chat")({
   server: {
     handlers: {
@@ -280,7 +155,7 @@ export const Route = createFileRoute("/api/chat")({
         const modelId =
           process.env["AI_MODEL"]?.trim() ||
           process.env["GROQ_MODEL"]?.trim() ||
-          "openai/gpt-oss-120b";
+          "groq/compound-mini";
 
         const initialRunId =
           getAiGatewayRunId(request);
@@ -293,51 +168,6 @@ export const Route = createFileRoute("/api/chat")({
             baseURL,
           );
 
-        /*
-         * Correct only user messages before sending
-         * them to the AI model.
-         */
-        const correctedMessages =
-          await Promise.all(
-            normalizedMessages.map(
-              async (message) => {
-                if (message.role !== "user") {
-                  return message;
-                }
-
-                /*
-                 * UIMessagePart is a union.
-                 * Only text parts have a .text property.
-                 */
-                const firstPart =
-                  message.parts[0];
-
-                const messageText =
-                  firstPart?.type === "text"
-                    ? firstPart.text
-                    : "";
-
-                const nextText =
-                  await correctGrammarForChat(
-                    messageText,
-                    gateway,
-                    modelId,
-                  );
-
-                return {
-                  ...message,
-
-                  parts: [
-                    {
-                      type: "text",
-                      text: nextText,
-                    },
-                  ],
-                } as UIMessage;
-              },
-            ),
-          );
-
         const result = streamText({
           model: gateway(modelId),
 
@@ -347,10 +177,10 @@ export const Route = createFileRoute("/api/chat")({
 
           messages:
             await convertToModelMessages(
-              correctedMessages,
+              normalizedMessages,
             ),
 
-          temperature: 0.8,
+          temperature: 0.7,
         });
 
         const headers =
@@ -373,7 +203,7 @@ export const Route = createFileRoute("/api/chat")({
               })
             : result.toUIMessageStreamResponse({
                 originalMessages:
-                  correctedMessages,
+                  normalizedMessages,
                 headers,
               });
 
