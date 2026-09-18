@@ -40,6 +40,7 @@ export interface QuestionSpec {
 }
 
 export interface ResumeInsights {
+  resumeText?: string;
   name: string;
   headline: string;
   skills: string[];

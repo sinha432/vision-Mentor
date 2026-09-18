@@ -153,6 +153,7 @@ export const Route = createFileRoute("/api/chat")({
           "https://api.groq.com/openai/v1";
 
         const modelId =
+          process.env["CHAT_MODEL"]?.trim() ||
           process.env["AI_MODEL"]?.trim() ||
           process.env["GROQ_MODEL"]?.trim() ||
           "groq/compound-mini";

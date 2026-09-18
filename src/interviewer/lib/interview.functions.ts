@@ -163,10 +163,14 @@ export const analyzeResume = createServerFn({ method: "POST" })
     const text = data.text?.trim()
       ? data.text
       : await extractResumeContent(data.dataUrl ?? "", data.mimeType ?? "", data.fileName ?? "");
+    if (text.trim().length < 60) {
+      throw new Error("We could not extract enough readable text from this resume. Paste the resume text instead.");
+    }
     const { analyzeResumeText, classifyResumeDocument } = await import("./interview-engine.server");
     const check = classifyResumeDocument(text ?? "");
     if (check.verdict !== "resume") throw new Error(check.reason);
-    return analyzeResumeText(text);
+    const insights = await analyzeResumeText(text);
+    return { ...insights, resumeText: text };
   });
 
 export const analyzeResumeFit = createServerFn({ method: "POST" })

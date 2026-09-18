@@ -95,6 +95,7 @@ async function structured<T>(options: {
   system: string;
   prompt: string;
   fallback: T;
+  throwOnError?: boolean;
 }): Promise<T> {
   const result = await runStructured({
     schema: options.schema,
@@ -102,6 +103,11 @@ async function structured<T>(options: {
     prompt: options.prompt,
     fallback: options.fallback,
   });
+
+  if (options.throwOnError && result.error) {
+    throw new Error(`${result.error.title}: ${result.error.fix}`);
+  }
+
   return result.value;
 }
 
@@ -922,6 +928,7 @@ export async function analyzeResumeText(text: string): Promise<ResumePayload> {
       "You extract structured data from resumes for an interview platform. Never invent facts that are not in the resume. atsScore is an integer 0-100 for how well-structured and keyword-ready the resume is. Keep each list to at most 10 items.",
     prompt: `Resume content:\n\n${text.slice(0, 24000)}`,
     fallback,
+    throwOnError: true,
   });
 
   return {

@@ -301,10 +301,11 @@ function SetupPage() {
         reader.onerror = () => reject(new Error("Could not read file"));
         reader.readAsDataURL(file);
       });
-      const insights = await analyzeResume({
+      const insights = (await analyzeResume({
         data: { fileName: file.name, mimeType: file.type, dataUrl },
-      });
-      setResume(insights as ResumeInsights);
+      })) as ResumeInsights;
+      setResumeText(insights.resumeText ?? "");
+      setResume(insights);
       toast.success("Resume analysed");
     } catch (error) {
       const message = error instanceof Error ? error.message : "Resume analysis failed";
@@ -324,8 +325,9 @@ function SetupPage() {
     setAnalyzing(true);
     try {
       setResumeError(null);
-      const insights = await analyzeResume({ data: { text: resumeText } });
-      setResume(insights as ResumeInsights);
+      const insights = (await analyzeResume({ data: { text: resumeText } })) as ResumeInsights;
+      setResumeText(insights.resumeText ?? resumeText);
+      setResume(insights);
       toast.success("Resume analysed");
     } catch (error) {
       const message = error instanceof Error ? error.message : "Resume analysis failed";

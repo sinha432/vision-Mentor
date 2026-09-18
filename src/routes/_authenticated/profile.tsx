@@ -292,6 +292,17 @@ function ProfilePage() {
     e.target.value = "";
   };
 
+  const removePhoto = () => {
+    setPhotoName("");
+    setPhotoPreview("");
+
+    if (photoInput.current) {
+      photoInput.current.value = "";
+    }
+
+    toast.success("Profile photo removed. Save your profile to apply it.");
+  };
+
   const onResume = (e: ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
 
@@ -572,9 +583,21 @@ function ProfilePage() {
                     <Upload className="w-3 h-3 shrink-0" />
 
                     <span className="truncate">
-                      {photoName || "Upload image"}
+                      {photoName ? "Edit photo" : "Upload image"}
                     </span>
                   </button>
+
+                  {photoPreview && (
+                    <button
+                      type="button"
+                      onClick={removePhoto}
+                      aria-label="Remove profile photo"
+                      title="Remove profile photo"
+                      className="ml-auto inline-flex size-7 shrink-0 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-destructive/10 hover:text-destructive"
+                    >
+                      <X className="size-3.5" />
+                    </button>
+                  )}
 
                   <input
                     ref={photoInput}

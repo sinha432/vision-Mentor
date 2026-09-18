@@ -90,6 +90,9 @@ export function maskKey(key: string): string {
 
 export function modelFor(spec: ProviderSpec, vision: boolean): string {
   if (vision) return process.env[`${spec.modelEnv}_VISION`]?.trim() || spec.visionModel;
+  if (spec.id === "groq") {
+    return process.env.GROQ_STRUCTURED_MODEL?.trim() || process.env[spec.modelEnv]?.trim() || spec.textModel;
+  }
   return process.env[spec.modelEnv]?.trim() || spec.textModel;
 }
 
@@ -184,7 +187,10 @@ export function classifyAiError(error: unknown): AiStatusInfo {
       return statusInfo("model_unavailable");
     }
     if (status >= 500) return statusInfo("network_error", `provider returned ${status}`);
-    return statusInfo("unknown_error", `HTTP ${status}`);
+    const providerMessage = error.responseBody
+      ?.match(/"message"\s*:\s*"([^"]+)"/)?.[1]
+      ?.slice(0, 180);
+    return statusInfo("unknown_error", providerMessage || `HTTP ${status}`);
   }
   const message = error instanceof Error ? error.message : String(error);
   if (/fetch failed|network|ENOTFOUND|ECONNREFUSED|timeout|aborted/i.test(message)) {
