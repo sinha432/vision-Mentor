@@ -53,6 +53,8 @@ export type StoredAttempt = {
   _id: string;
   assessmentId: string;
   individualUserId: string;
+  candidateName?: string;
+  candidateEmail?: string;
   answers: Record<string, TypedAnswer>;
   vision: VisionStats;
   status: "submitted";

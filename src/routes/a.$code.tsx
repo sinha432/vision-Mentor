@@ -639,8 +639,12 @@ function AssessmentPage() {
          * usable during local testing.
          */
         const individualUserId = candidate?.id;
-        if (!individualUserId || candidate?.email !== user?.email) {
+        if (!individualUserId) {
           throw new Error("Your individual account could not be verified for this assessment.");
+        }
+
+        if (user && candidate.email.toLowerCase() !== user.email.toLowerCase()) {
+          throw new Error("This assessment is locked to the verified individual account you used to enter it.");
         }
 
         const vision = buildVisionSummary();
@@ -910,6 +914,22 @@ function AssessmentPage() {
             {entryBusy ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
             {entryBusy ? "Verifying…" : "Verify and enter assessment"}
           </Button>
+
+          <div className="mt-4 text-center text-sm text-muted-foreground">
+            New individual candidate?{" "}
+            <button
+              type="button"
+              className="font-medium text-primary underline-offset-4 hover:underline"
+              onClick={() =>
+                navigate({
+                  to: "/auth",
+                  search: { redirect: `/a/${code}` },
+                })
+              }
+            >
+              Create your account and continue
+            </button>
+          </div>
         </form>
       </div>
     );

@@ -213,6 +213,8 @@ export async function submitAttempt({ data }: { data: unknown }) {
   const attempt = insertAttempt({
     assessmentId: assessment._id,
     individualUserId: input.individualUserId,
+    candidateName: candidate?.name ?? "Candidate",
+    candidateEmail: input.candidateEmail,
     answers: input.answers,
     vision: input.vision,
     terminationReason: input.terminationReason ?? null,
@@ -354,8 +356,8 @@ export async function listAssessmentAttempts({ data }: { data: unknown }) {
       return {
         attemptId: t._id,
         individualUserId: t.individualUserId,
-        candidateName: candidate.name,
-        candidateEmail: candidate.email,
+        candidateName: t.candidateName?.trim() || candidate.name || "Unknown candidate",
+        candidateEmail: t.candidateEmail?.trim() || candidate.email || "",
         submittedAt: t.submittedAt,
         reportId: r?._id ?? null,
         overallScore: r?.overallScore ?? 0,
@@ -382,14 +384,17 @@ export async function listCompanyCandidates({ data }: { data: unknown }) {
   return [...byCandidate.entries()]
     .map(([userId, list]) => {
       const identity = identityFor(userId);
+      const sorted = [...list].sort((a, b) => b.submittedAt.localeCompare(a.submittedAt));
+      const latestAttempt = sorted[0];
+      const candidateName = latestAttempt?.candidateName?.trim() || identity.name || "Unknown candidate";
+      const candidateEmail = latestAttempt?.candidateEmail?.trim() || identity.email || "";
       const scores = list
         .map((t) => reports.find((r) => r.attemptId === t._id)?.overallScore)
         .filter((s): s is number => typeof s === "number");
-      const sorted = [...list].sort((a, b) => b.submittedAt.localeCompare(a.submittedAt));
       return {
         individualUserId: userId,
-        candidateName: identity.name,
-        candidateEmail: identity.email,
+        candidateName,
+        candidateEmail,
         attemptCount: list.length,
         avgScore: scores.length ? Math.round(scores.reduce((s, x) => s + x, 0) / scores.length) : null,
         bestScore: scores.length ? Math.max(...scores) : null,
