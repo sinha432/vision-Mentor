@@ -1101,7 +1101,7 @@ export async function analyzeAppearance(
     `Judge ONLY two things from the webcam frame: (1) clothing — formality for this company, fit, tidiness, wrinkles, collar, colour suitability on camera; (2) hair — whether it looks groomed and interview-ready, or grown out, uncombed, or falling over the face.`,
     `Never comment on the person's body, weight, skin, age, gender, ethnicity, attractiveness, or anything unrelated to clothing and hair grooming. Never guess identity.`,
     `${company.name}'s interview style is ${company.interviewStyle} — set the dress expectation accordingly (formal shirt for conservative firms, clean smart-casual for product companies).`,
-    `Set assessed=false with a short reason if the frame is too dark, too blurry, or no person is visible; in that case leave notes empty and fixes empty.`,
+    `Set assessed=false only when no person is visible at all, the image is completely blank, or the frame is unusable. Normal Mac webcam compression, mild blur, ordinary indoor lighting, or a partially visible outfit are still assessable; judge only what is visible and mention limitations in the notes.`,
     `dressNote and hairNote are one short second-person sentence each, concrete about what you see and what to change. fixes = 2-4 short actionable items for the next interview. If everything already looks right, say so plainly and keep fixes to light polish.`,
   ].join("\n");
 
@@ -1111,6 +1111,16 @@ export async function analyzeAppearance(
       system,
       prompt: `Review this candidate's dress and hair for a ${company.name} ${role} interview.`,
       images: [dataUrl],
+      vision: true,
+      fallback: {
+        assessed: false,
+        reason: "The appearance service could not analyse this camera frame. Try reviewing the frame again.",
+        dressVerdict: "acceptable",
+        dressNote: "",
+        hairVerdict: "neat",
+        hairNote: "",
+        fixes: [],
+      },
     });
     const parsed = appearanceSchema.safeParse(output);
     if (!parsed.success) return notAssessed;
@@ -1257,7 +1267,7 @@ export async function coachPresence(
     `Look at the webcam frame and judge ONLY: posture (slouching, leaning into the lens, sideways body), gaze/eye contact (looking away from the camera, down at notes), hair (grown out, uncombed, falling over the face), facial grooming (unkempt beard/stubble, needs a trim), and framing/lighting (too close, too low, backlit, cut off).`,
     `Never comment on the person's body, weight, skin, age, gender, ethnicity, attractiveness, clothing brand, or anything unrelated to those five areas. Never guess identity.`,
     `${company.name}'s interview style is ${company.interviewStyle}; keep the bar professional for that.`,
-    `For each area: if it already looks correct, return an EMPTY STRING for the instruction and 0 for the confidence. Only write an instruction when there is something to fix.`,
+    `Assess every area on every frame. If it already looks correct, return an EMPTY STRING for the instruction and 0 for the confidence. Only write an instruction when there is something to fix.`,
     `When you do write an instruction, use one short second-person sentence in professional language, max 16 words, e.g. "Sit back and square your shoulders to the camera."`,
     `Each <area>Reason must state the visual evidence you actually saw, max 18 words, e.g. "Shoulders rolled forward and head about 20cm from the lens."`,
     `Each <area>Confidence is an integer 0-100: how certain you are the problem is really present. Use below 55 only when unsure.`,

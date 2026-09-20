@@ -185,7 +185,7 @@ function ReportPage() {
   useEffect(() => {
     const stored = getSession(sessionId);
     if (!stored) return;
-    if (stored.appearance) {
+    if (stored.appearance?.assessed) {
       setAppearance(normalizeAppearance(stored.appearance));
       return;
     }
@@ -205,8 +205,13 @@ function ReportPage() {
         const normalized = normalizeAppearance(result);
         setAppearance(normalized);
         const latest = getSession(sessionId) ?? stored;
-        // Drop the frame — the written feedback is all we keep.
-        saveSession({ ...latest, appearance: normalized, snapshot: null });
+        // Keep the frame when the model could not assess it so the report can
+        // retry instead of permanently losing the only appearance sample.
+        saveSession({
+          ...latest,
+          appearance: normalized.assessed ? normalized : undefined,
+          snapshot: normalized.assessed ? null : latest.snapshot,
+        });
       } catch {
         /* appearance review is optional — never block the report */
       } finally {
@@ -689,9 +694,44 @@ function ReportPage() {
                   feedback.
                 </p>
               ) : !appearance.assessed ? (
-                <p className="mt-3 text-sm text-muted-foreground">
-                  {appearance.reason || "Appearance not assessed."}
-                </p>
+                <div className="mt-3 space-y-3">
+                  <p className="text-sm text-muted-foreground">
+                    {appearance.reason || "Appearance not assessed."}
+                  </p>
+                  {session?.snapshot && (
+                    <Button
+                      size="sm"
+                      variant="secondary"
+                      onClick={() => {
+                        const current = getSession(sessionId);
+                        if (current) {
+                          setAppearance(null);
+                          setAppearanceLoading(true);
+                          void reviewAppearance({
+                            data: {
+                              dataUrl: current.snapshot!,
+                              companyId: current.config.companyId,
+                              role: current.config.role,
+                            },
+                          })
+                            .then((result) => {
+                              const normalized = normalizeAppearance(result);
+                              setAppearance(normalized);
+                              const latest = getSession(sessionId) ?? current;
+                              saveSession({
+                                ...latest,
+                                appearance: normalized.assessed ? normalized : undefined,
+                                snapshot: normalized.assessed ? null : latest.snapshot,
+                              });
+                            })
+                            .finally(() => setAppearanceLoading(false));
+                        }
+                      }}
+                    >
+                      Review camera frame again
+                    </Button>
+                  )}
+                </div>
               ) : (
                 <div className="mt-4 space-y-4">
                   <div className="grid gap-4 sm:grid-cols-2">

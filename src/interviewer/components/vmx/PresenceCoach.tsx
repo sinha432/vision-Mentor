@@ -35,11 +35,13 @@ export function PresenceCoach({
   events,
   checking,
   enabled,
+  lastCaptureAt,
   className,
 }: {
   events: CoachingEvent[];
   checking: boolean;
   enabled: boolean;
+  lastCaptureAt?: number | null;
   className?: string;
 }) {
   // Most urgent first so the biggest fix is always on top.
@@ -49,7 +51,11 @@ export function PresenceCoach({
     <section className={cn("rounded-2xl glass p-4", className)}>
       <div className="flex items-center justify-between gap-2">
         <h2 className="font-display text-sm font-semibold">Presence coach</h2>
-        {checking && <Loader2 className="h-3.5 w-3.5 animate-spin text-primary" />}
+        {checking ? (
+          <Loader2 className="h-3.5 w-3.5 animate-spin text-primary" />
+        ) : enabled && lastCaptureAt ? (
+          <span className="text-[10px] text-success">Live frame captured</span>
+        ) : null}
       </div>
 
       {!enabled ? (

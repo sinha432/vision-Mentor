@@ -137,8 +137,9 @@ export function useVisionMetrics(
         if (a.timeline.length > 120) a.timeline.shift();
       }
 
-      // ~10s, ~40s and ~2min in: keep the best frame for the appearance review.
-      if (a.frames === 20 || a.frames === 80 || a.frames === 240) {
+      // Keep the best frame continuously so short interviews and report-time
+      // appearance checks never depend on reaching a fixed checkpoint.
+      if (a.frames <= 20 || a.frames % 20 === 0) {
         captureSnapshot(framing, centre);
       }
     }, 500);

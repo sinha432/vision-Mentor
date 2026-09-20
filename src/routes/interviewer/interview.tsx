@@ -118,6 +118,7 @@ function InterviewRoom() {
   const [lastAudioResult, setLastAudioResult] = useState<ProctoringAudioResult | null>(null);
   const [endReason, setEndReason] = useState<string | null>(null);
   const [liveStream, setLiveStream] = useState<MediaStream | null>(null);
+  const [lastPresenceCaptureAt, setLastPresenceCaptureAt] = useState<number | null>(null);
   const phoneBannerTimeoutRef = useRef<number | null>(null);
   const multiPeopleTimeoutRef = useRef<number | null>(null);
   const strikesRef = useRef<Record<StrikeKind, number>>({
@@ -475,6 +476,7 @@ function InterviewRoom() {
       if (state.busy || cancelled) return;
       const frame = vision.grabFrame();
       if (!frame) return;
+      setLastPresenceCaptureAt(Date.now());
       state.busy = true;
       setCoachChecking(true);
       try {
@@ -1146,7 +1148,12 @@ function InterviewRoom() {
 
         {/* Right: transcript + live metrics */}
         <aside className="flex min-w-0 flex-col gap-5">
-          <PresenceCoach events={coaching} checking={coachChecking} enabled={camOn} />
+          <PresenceCoach
+            events={coaching}
+            checking={coachChecking}
+            enabled={camOn}
+            lastCaptureAt={lastPresenceCaptureAt}
+          />
 
           <AnswerScoreCard turns={turns} />
 

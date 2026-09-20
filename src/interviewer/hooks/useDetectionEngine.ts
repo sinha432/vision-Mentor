@@ -129,6 +129,7 @@ export function useDetectionEngine({ videoRef, stream, active, getElapsed, onEve
     if (!AudioCtx) return;
 
     ctx = new AudioCtx();
+    void ctx.resume().catch(() => undefined);
     const source = ctx.createMediaStreamSource(stream);
     const analyser = ctx.createAnalyser();
     analyser.fftSize = 2048;
@@ -139,6 +140,8 @@ export function useDetectionEngine({ videoRef, stream, active, getElapsed, onEve
     const binHz = ctx.sampleRate / analyser.fftSize;
 
     let noiseFloor = 0.004;
+    let calibratedNoise = 0.004;
+    let calibrationMs = 0;
     let silentSince = Date.now();
     let voicedMs = 0;
     let pauses = 0;
@@ -172,7 +175,12 @@ export function useDetectionEngine({ videoRef, stream, active, getElapsed, onEve
       }
       const speechEnergy = speechBins ? speechBand / speechBins : 0;
 
-      const speaking = rms > Math.max(0.012, noiseFloor * 3.2);
+      if (calibrationMs < 1800) {
+        calibratedNoise = calibratedNoise * 0.9 + rms * 0.1;
+        calibrationMs += dt;
+      }
+      const baseline = Math.max(0.003, calibratedNoise);
+      const speaking = rms > Math.max(0.012, baseline * 2.8);
       if (speaking) {
         voicedMs += dt;
         const gap = now - silentSince;
@@ -184,10 +192,13 @@ export function useDetectionEngine({ videoRef, stream, active, getElapsed, onEve
       } else {
         // Only quiet frames update the noise floor, so the room is measured
         // while the candidate is not talking.
-        noiseFloor = noiseFloor * 0.95 + rms * 0.05;
+        // Track only slow changes below the speech threshold. Do not absorb a
+        // sustained fan, TV, or room conversation into the baseline.
+        if (rms < baseline * 1.35) noiseFloor = noiseFloor * 0.995 + rms * 0.005;
       }
 
-      const noiseLevel = clamp(Math.round(noiseFloor * 4000));
+      const ambientRatio = rms / Math.max(0.003, noiseFloor);
+      const noiseLevel = clamp(Math.round((ambientRatio - 1) * 38));
       const voiceLevel = clamp(Math.round(rms * 1600));
       // Speech-shaped energy while the candidate is silent = someone else.
       const backgroundVoice = !speaking && speechEnergy > 0.28 && rms > Math.max(0.01, noiseFloor * 1.5);
@@ -201,7 +212,7 @@ export function useDetectionEngine({ videoRef, stream, active, getElapsed, onEve
           confidence: clamp(Math.round(speechEnergy * 140)),
         });
       }
-      if (!speaking && noiseLevel > 28 && now - lastNoiseEvent > 15_000) {
+      if (!speaking && noiseLevel > 22 && now - lastNoiseEvent > 15_000) {
         lastNoiseEvent = now;
         eventRef.current?.({
           kind: "background_noise",
