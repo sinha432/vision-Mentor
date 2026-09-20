@@ -43,6 +43,8 @@ export type StoredAssessment = {
   code: string;
   status: "active" | "closed";
   requireMedia?: boolean;
+  /** Candidate time limit in seconds; older assessments default to 30 minutes. */
+  timeLimitSeconds?: number;
   questions: StoredQuestion[];
   createdAt: string;
 };
@@ -55,6 +57,8 @@ export type StoredAttempt = {
   vision: VisionStats;
   status: "submitted";
   submittedAt: string;
+  terminationReason?: string | null;
+  integrityEvents?: { kind: string; detail: string; confidence: number; t: number }[];
 };
 
 export type StoredReport = {

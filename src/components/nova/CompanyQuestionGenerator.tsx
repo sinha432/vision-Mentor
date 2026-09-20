@@ -83,6 +83,7 @@ export function CompanyQuestionGenerator({
     useState(false);
 
   const [title, setTitle] = useState("");
+  const [timeLimitMinutes, setTimeLimitMinutes] = useState(30);
 
   /*
    * Keep NovaConsole synchronized with the latest questions.
@@ -464,6 +465,7 @@ export function CompanyQuestionGenerator({
           data: {
             companyUserId,
             title: title.trim(),
+            timeLimitSeconds: timeLimitMinutes * 60,
             questions: cleanedQuestions,
           },
         });
@@ -552,6 +554,20 @@ export function CompanyQuestionGenerator({
             }
             className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm outline-none focus:border-cyber"
             placeholder="Frontend Developer Assessment"
+          />
+        </label>
+
+        <label className="block space-y-1.5">
+          <span className="text-xs text-muted-foreground">Time limit (minutes)</span>
+          <input
+            type="number"
+            min={1}
+            max={1440}
+            value={timeLimitMinutes}
+            onChange={(event) =>
+              setTimeLimitMinutes(Math.max(1, Number(event.target.value) || 1))
+            }
+            className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm outline-none focus:border-cyber"
           />
         </label>
 

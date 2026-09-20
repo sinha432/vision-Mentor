@@ -11,6 +11,7 @@ import {
   UserRound,
 } from "lucide-react";
 import { toast } from "sonner";
+import { readMicEnabled } from "@/interviewer/lib/media-settings";
 import { SiteHeader } from "@/interviewer/components/vmx/SiteHeader";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -288,7 +289,7 @@ function SetupPage() {
           height: { ideal: 720 },
           frameRate: { ideal: 30, min: 15 },
         },
-        audio: true,
+        audio: readMicEnabled(),
       });
       streamRef.current = stream;
       if (videoRef.current) {
@@ -634,8 +635,9 @@ function SetupPage() {
                 {camOk || micOk ? "Re-check devices" : "Allow camera & microphone"}
               </Button>
               <p className="mt-3 text-xs text-muted-foreground">
-                Camera powers presence analytics. Without it you can still speak or type your
-                answers.
+                Camera powers presence analytics. We prefer the Mac front-facing camera so your
+                face, posture and gestures stay visible. Without it you can still speak or type
+                your answers.
               </p>
             </section>
 

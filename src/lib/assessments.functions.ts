@@ -21,6 +21,8 @@ import {
 } from "./local-db";
 import { gradeTextAnswers } from "./grading.functions";
 import { scoreAnswerTyped, weightedOverall } from "./scoring";
+import { fetchAssessmentFromMongoDB } from "./mongodb-sync";
+import { fetchUserFromMongoDB } from "./mongodb-sync";
 
 const choiceSchema = z.object({ id: z.string().min(1), text: z.string().trim().min(1).max(300) });
 const testCaseSchema = z.object({
@@ -44,6 +46,7 @@ const createSchema = z.object({
   companyUserId: z.string().min(1),
   title: z.string().trim().min(2).max(120),
   requireMedia: z.boolean().default(false),
+  timeLimitSeconds: z.number().int().min(60).max(86_400).default(1_800),
   questions: z.array(questionInput).min(1).max(30),
 });
 
@@ -93,6 +96,7 @@ export async function createAssessment({ data }: { data: unknown }) {
     companyUserId: input.companyUserId,
     title: input.title,
     requireMedia: input.requireMedia,
+    timeLimitSeconds: input.timeLimitSeconds,
     questions: input.questions.map((q) => ({ id: newId(), ...q })),
   });
 }
@@ -114,7 +118,27 @@ export async function listCompanyAssessments({ data }: { data: unknown }) {
 
 export async function getAssessmentByCode({ data }: { data: unknown }) {
   const { code } = z.object({ code: z.string().trim().min(1) }).parse(data);
-  return readAssessments().find((a) => a.code.toUpperCase() === code.toUpperCase()) ?? null;
+  const local = readAssessments().find((a) => a.code.toUpperCase() === code.toUpperCase());
+  if (local) return local;
+
+  const shared = await fetchAssessmentFromMongoDB(code.toUpperCase());
+  if (!shared) return null;
+
+  return {
+    ...shared,
+    status: shared.status === "archived" ? "closed" : shared.status,
+  };
+}
+
+export async function hasIndividualAttempt({ data }: { data: unknown }) {
+  const input = z
+    .object({ assessmentId: z.string().min(1), individualUserId: z.string().min(1) })
+    .parse(data);
+  return readAttempts().some(
+    (attempt) =>
+      attempt.assessmentId === input.assessmentId &&
+      attempt.individualUserId === input.individualUserId,
+  );
 }
 
 export async function setAssessmentStatus({ data }: { data: unknown }) {
@@ -145,8 +169,14 @@ export async function submitAttempt({ data }: { data: unknown }) {
     .object({
       code: z.string().trim().min(1),
       individualUserId: z.string().min(1),
+      candidateEmail: z.string().email(),
       answers: z.record(z.string(), typedAnswerSchema),
       vision: visionSchema.default(null),
+      terminationReason: z.string().max(200).nullable().optional(),
+      integrityEvents: z
+        .array(z.object({ kind: z.string(), detail: z.string(), confidence: z.number(), t: z.number() }))
+        .max(100)
+        .optional(),
     })
     .parse(data);
 
@@ -155,12 +185,22 @@ export async function submitAttempt({ data }: { data: unknown }) {
   if (assessment.status === "closed") {
     throw new Error("This assessment is closed and no longer accepting submissions.");
   }
+  const localCandidate = findUserById(input.individualUserId);
+  const candidate = localCandidate ?? (await fetchUserFromMongoDB(input.candidateEmail));
+  if (!candidate || candidate.role !== "individual" || String(candidate._id ?? candidate.id ?? candidate.email) !== input.individualUserId) {
+    throw new Error("Only a registered individual user can submit this assessment.");
+  }
+  if (readAttempts().some((attempt) => attempt.assessmentId === assessment._id && attempt.individualUserId === input.individualUserId)) {
+    throw new Error("You have already submitted this assessment.");
+  }
 
   const attempt = insertAttempt({
     assessmentId: assessment._id,
     individualUserId: input.individualUserId,
     answers: input.answers,
     vision: input.vision,
+    terminationReason: input.terminationReason ?? null,
+    integrityEvents: input.integrityEvents ?? [],
   });
 
   const textQuestions = assessment.questions.filter((q) => (q.type ?? "text") === "text");

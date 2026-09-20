@@ -36,7 +36,8 @@ export type DetectionEventKind =
   | "device_visible"
   | "background_voice"
   | "background_noise"
-  | "unusual_movement";
+  | "unusual_movement"
+  | "hand_gesture";
 
 export interface DetectionEvent {
   kind: DetectionEventKind;
@@ -64,6 +65,8 @@ interface Accum {
   noisySeconds: number;
   multiFaceSeconds: number;
   faceMissingSeconds: number;
+  handGestureSeconds: number;
+  handGestureEvents: number;
   deviceSeconds: number;
   backgroundVoiceEvents: number;
   multiFaceEvents: number;
@@ -102,6 +105,8 @@ export function useDetectionEngine({ videoRef, stream, active, getElapsed, onEve
     noisySeconds: 0,
     multiFaceSeconds: 0,
     faceMissingSeconds: 0,
+    handGestureSeconds: 0,
+    handGestureEvents: 0,
     deviceSeconds: 0,
     backgroundVoiceEvents: 0,
     multiFaceEvents: 0,
@@ -262,6 +267,7 @@ export function useDetectionEngine({ videoRef, stream, active, getElapsed, onEve
     let awayStreak = 0;
     let missingStreak = 0;
     let multiFaceStreak = 0;
+    let gestureStreak = 0;
 
     const fire = (kind: DetectionEventKind, detail: string, confidence: number, throttle = 30_000) => {
       const now = Date.now();
@@ -413,6 +419,7 @@ export function useDetectionEngine({ videoRef, stream, active, getElapsed, onEve
         /* posture + movement */
         let posture = signalsRef.current.posture;
         let movement = signalsRef.current.movement;
+        let handGesture: DetectionSignals["handGesture"] = "none";
         const poseResult = poseLandmarker?.detectForVideo(video, stamp) as
           | { landmarks: { x: number; y: number }[][] }
           | undefined;
@@ -439,6 +446,35 @@ export function useDetectionEngine({ videoRef, stream, active, getElapsed, onEve
             if (movement > 78) {
               fire("unusual_movement", "A lot of movement away from the camera was detected.", movement, 60_000);
             }
+          }
+          const leftWrist = pose[15];
+          const rightWrist = pose[16];
+          const leftShoulder = pose[11];
+          const rightShoulder = pose[12];
+          const wristsVisible = [leftWrist, rightWrist].filter(Boolean).length;
+          const raisedHands =
+            (leftWrist && leftShoulder && leftWrist.y < leftShoulder.y - 0.08 ? 1 : 0) +
+            (rightWrist && rightShoulder && rightWrist.y < rightShoulder.y - 0.08 ? 1 : 0);
+          if (raisedHands > 0) {
+            handGesture = "raised";
+          } else if (wristsVisible > 0 && movement > 58) {
+            handGesture = "active";
+          }
+          if (handGesture !== "none") {
+            gestureStreak += 1;
+            if (gestureStreak === 8) {
+              accumRef.current.handGestureEvents += 1;
+              fire(
+                "hand_gesture",
+                handGesture === "raised"
+                  ? "A raised hand gesture was visible. Keep gestures within the camera frame."
+                  : "Active hand movement was visible. Keep gestures deliberate and within the camera frame.",
+                handGesture === "raised" ? 82 : 68,
+                20_000,
+              );
+            }
+          } else {
+            gestureStreak = 0;
           }
           prevPose = pose.map((p) => ({ x: p.x, y: p.y }));
         }
@@ -482,6 +518,7 @@ export function useDetectionEngine({ videoRef, stream, active, getElapsed, onEve
           expression,
           posture,
           movement,
+          handGesture,
           devices,
           blinkRate: Math.round(
             accumRef.current.blinks /
@@ -514,6 +551,7 @@ export function useDetectionEngine({ videoRef, stream, active, getElapsed, onEve
           if (signalsRef.current.noiseLevel > 40) a.noisySeconds += 1;
           if (faces > 1) a.multiFaceSeconds += 1;
           if (faces === 0) a.faceMissingSeconds += 1;
+          if (handGesture !== "none") a.handGestureSeconds += 1;
           if (devices.length) a.deviceSeconds += 1;
           a.emotions.set(expression, (a.emotions.get(expression) ?? 0) + 1);
         }
@@ -554,6 +592,8 @@ export function useDetectionEngine({ videoRef, stream, active, getElapsed, onEve
       noisySeconds: a.noisySeconds,
       multiFaceSeconds: a.multiFaceSeconds,
       faceMissingSeconds: a.faceMissingSeconds,
+      handGestureSeconds: a.handGestureSeconds,
+      handGestureEvents: a.handGestureEvents,
       deviceSeconds: a.deviceSeconds,
       backgroundVoiceEvents: a.backgroundVoiceEvents,
       multiFaceEvents: a.multiFaceEvents,

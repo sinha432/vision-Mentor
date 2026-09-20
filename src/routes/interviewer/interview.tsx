@@ -31,7 +31,7 @@ import { PresenceCoach } from "@/interviewer/components/vmx/PresenceCoach";
 import { IntegrityStrip } from "@/interviewer/components/vmx/IntegrityStrip";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
-import { useRecorder } from "@/interviewer/hooks/useRecorder";
+import { speechRecognitionSupported, useRecorder } from "@/interviewer/hooks/useRecorder";
 import { useSpeaker } from "@/interviewer/hooks/useSpeaker";
 import { useVisionMetrics } from "@/interviewer/hooks/useVisionMetrics";
 import { useSessionRecorder } from "@/interviewer/hooks/useSessionRecorder";
@@ -54,6 +54,7 @@ import {
   type Turn,
   type VoiceMetrics,
 } from "@/interviewer/lib/interview-types";
+import { readMicEnabled } from "@/interviewer/lib/media-settings";
 import { AnswerScoreCard } from "@/interviewer/components/vmx/AnswerScoreCard";
 import { pickSpokenCorrection, proctorSeverity } from "@/interviewer/lib/coach-priority";
 import { loadDraftConfig, newId, saveSession } from "@/interviewer/lib/session-store";
@@ -99,7 +100,10 @@ function InterviewRoom() {
   const [answer, setAnswer] = useState("");
   const [code, setCode] = useState("");
   const [language, setLanguage] = useState<CodeLanguage>("python");
-  const [voice, setVoice] = useState<VoiceMetrics>(EMPTY_VOICE);
+  const [voice, setVoice] = useState<VoiceMetrics>(() => ({
+    ...EMPTY_VOICE,
+    status: readMicEnabled() ? "not_started" : "app_disabled",
+  }));
   const [camOn, setCamOn] = useState(false);
   const [clipAudio, setClipAudio] = useState(false);
   const [elapsed, setElapsed] = useState(0);
@@ -298,7 +302,7 @@ function InterviewRoom() {
       streamRef.current = stream;
       setLiveStream(stream);
       setClipAudio(stream.getAudioTracks().length > 0);
-      clipRecorder.start(stream);
+      if (stream.getAudioTracks().length) clipRecorder.start(stream);
       if (videoRef.current) {
         videoRef.current.srcObject = stream;
         void videoRef.current.play().catch(() => {});
@@ -313,11 +317,15 @@ function InterviewRoom() {
           height: { ideal: 720 },
           frameRate: { ideal: 30, min: 15 },
         },
-        audio: true,
+        audio: readMicEnabled(),
       })
       .then(attach)
       .catch(() =>
         // Mic denied or busy — still record video so the replay timeline works.
+        (setVoice((current) => ({
+          ...current,
+          status: readMicEnabled() ? "permission_denied" : "app_disabled",
+        })),
         navigator.mediaDevices
           ?.getUserMedia({
             video: {
@@ -327,7 +335,7 @@ function InterviewRoom() {
             },
           })
           .then(attach)
-          .catch(() => setCamOn(false)),
+            .catch(() => setCamOn(false))),
       );
     return () => {
       cancelled = true;
@@ -788,9 +796,15 @@ function InterviewRoom() {
   );
 
   async function toggleRecording() {
+    if (!readMicEnabled()) {
+      setVoice((current) => ({ ...current, status: "app_disabled" }));
+      toast.error("Voice is disabled in settings. Turn on the microphone or type your answer.");
+      return;
+    }
     if (recorder.recording) {
       const result = await recorder.stopAndTranscribe();
       if (!result || !result.text) {
+        setVoice((current) => ({ ...current, status: "no_speech" }));
         toast.error("Nothing was picked up — try again or type your answer.");
         return;
       }
@@ -846,12 +860,21 @@ function InterviewRoom() {
         const fluency = Math.round(
           Math.max(0, Math.min(100, paceScore - fillerWords * 2.5 - pauseCount * 1.2)),
         );
-        return { wordsPerMinute: wpm, fillerWords, pauseCount, energy, fluency, samples };
+        return { wordsPerMinute: wpm, fillerWords, pauseCount, energy, fluency, samples, status: "captured" };
       });
       await submitAnswer(result.text);
     } else {
       speaker.stop();
-      await recorder.start();
+      const started = await recorder.start();
+      if (!started) {
+        const message = recorder.error ?? "Microphone is unavailable.";
+        const status = !speechRecognitionSupported()
+          ? "unsupported"
+          : message.includes("access")
+            ? "permission_denied"
+            : "unavailable";
+        setVoice((current) => ({ ...current, status }));
+      }
     }
   }
 
@@ -1128,6 +1151,9 @@ function InterviewRoom() {
                         recording
                       </span>
                     )}
+                    {!recorder.recording && recorder.error && (
+                      <span className="text-xs text-warning">{recorder.error}</span>
+                    )}
                   </div>
                   {recorder.recording && recorder.liveText && (
                     <p className="mt-2 rounded-md border border-dashed border-border bg-muted/40 px-3 py-2 text-xs text-muted-foreground">
@@ -1196,6 +1222,12 @@ function InterviewRoom() {
             {camOn && !clipAudio && (
               <p className="mt-3 text-xs text-muted-foreground">
                 Microphone not available for the replay clip — the replay will have no audio.
+              </p>
+            )}
+            {camOn && detection.signals.ready && !detection.signals.faceVisible && (
+              <p className="mt-3 rounded-lg bg-warning/10 px-3 py-2 text-xs text-warning">
+                Camera not visible — use the Mac front camera, move closer, and add light in front
+                of you so your face and gestures stay in frame.
               </p>
             )}
           </section>

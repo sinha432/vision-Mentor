@@ -70,6 +70,7 @@ function NewAssessment() {
   const [title, setTitle] = useState("");
   const [questions, setQuestions] = useState<Q[]>([blankQ()]);
   const [requireMedia, setRequireMedia] = useState(false);
+  const [timeLimitMinutes, setTimeLimitMinutes] = useState(30);
   const [defaultWeight, setDefaultWeight] = useState(1);
   const [busy, setBusy] = useState(false);
   const [openAdvanced, setOpenAdvanced] = useState<number | null>(null);
@@ -206,7 +207,13 @@ function NewAssessment() {
     setBusy(true);
     try {
       const rec = await createAssessment({
-        data: { companyUserId: user.id, title: title.trim(), requireMedia, questions: cleaned },
+        data: {
+          companyUserId: user.id,
+          title: title.trim(),
+          requireMedia,
+          timeLimitSeconds: timeLimitMinutes * 60,
+          questions: cleaned,
+        },
       });
       const link = `${window.location.origin}/a/${rec.code}`;
       await navigator.clipboard.writeText(link).catch(() => {});
@@ -277,6 +284,24 @@ function NewAssessment() {
           </div>
 
           <div className="space-y-4">
+            <label className="block space-y-2">
+              <span className="text-sm font-medium">Time limit</span>
+              <div className="flex items-center gap-3">
+                <input
+                  type="number"
+                  min={1}
+                  max={1440}
+                  value={timeLimitMinutes}
+                  onChange={(event) =>
+                    setTimeLimitMinutes(Math.max(1, Number(event.target.value) || 1))
+                  }
+                  className="w-28 rounded-lg border border-border bg-background px-3 py-2 text-sm"
+                />
+                <span className="text-sm text-muted-foreground">
+                  minutes before automatic submission
+                </span>
+              </div>
+            </label>
             <label className="block space-y-2">
               <span className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
                 Assessment title

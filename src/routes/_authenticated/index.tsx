@@ -18,6 +18,7 @@ import { useVisionStatus, type Level } from "@/lib/vision-status";
 import { useNovaVoice, voiceLabel, speakWithVoice } from "@/lib/nova/nova-voice";
 import type { NovaExpression, NovaState } from "@/lib/nova/expression";
 import { streamNovaReply } from "@/lib/nova/stream-reply";
+import { AudioMonitor } from "@/lib/audio-monitor";
 
 export const Route = createFileRoute("/_authenticated/")({ component: VisionMentor });
 
@@ -329,37 +330,52 @@ function VideoPanel({ enabled, micEnabled, onToggle }: { enabled: boolean; micEn
 
   useEffect(() => {
     let stream: MediaStream | null = null;
+    let audioMonitor: AudioMonitor | null = null;
     const detector = new VisionDetector();
-    if (enabled) {
+    if (enabled || micEnabled) {
       if (!navigator.mediaDevices?.getUserMedia) {
-        setError("Camera access is not available in this browser.");
+        setError("Camera or microphone access is not available in this browser.");
         return;
       }
 
-      // Keep camera preview separate from speech capture so the preview never
-      // records or analyses ambient audio.
-      navigator.mediaDevices
-        .getUserMedia({ video: true, audio: false })
-        .then(async (s) => {
+      const attach = async (s: MediaStream) => {
           stream = s;
           const el = videoRef.current;
-          if (el) {
+          if (enabled && el) {
             el.srcObject = s;
             try { await el.play(); } catch {}
             void detector.start(el);
           }
+          if (micEnabled && s.getAudioTracks().length) {
+            audioMonitor = new AudioMonitor();
+            audioMonitor.start(s);
+          }
           setError(null);
-        })
-        .catch((err) => {
-          console.warn("Camera access failed", err);
-          setError("Camera access denied");
+      };
+
+      navigator.mediaDevices
+        .getUserMedia({ video: enabled, audio: micEnabled })
+        .then(attach)
+        .catch(async (err) => {
+          console.warn("Camera or microphone access failed", err);
+          if (enabled) {
+            try {
+              await attach(await navigator.mediaDevices.getUserMedia({ video: true, audio: false }));
+              setError(micEnabled ? "Microphone access denied — camera is still available." : null);
+              return;
+            } catch {
+              /* show the camera error below */
+            }
+          }
+          setError(micEnabled ? "Microphone access denied." : "Camera access denied");
         });
     }
     return () => {
       detector.stop();
+      audioMonitor?.stop();
       stream?.getTracks().forEach((t) => t.stop());
     };
-  }, [enabled]);
+  }, [enabled, micEnabled]);
 
   return (
     <div className="relative rounded-2xl overflow-hidden card-3d aspect-video">

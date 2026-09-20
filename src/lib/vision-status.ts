@@ -33,7 +33,7 @@ const INITIAL: VisionStatus = {
   phone: false,
   leftHand: { text: "Waiting…", level: "idle" },
   rightHand: { text: "Waiting…", level: "idle" },
-  audio: { text: "Ready", level: "good" },
+  audio: { text: "Not connected", level: "idle" },
   warnings: [],
 };
 
@@ -52,9 +52,9 @@ function deriveWarnings(s: VisionStatus): EnvironmentWarning[] {
       level: "bad",
     });
   if (s.audio.level === "bad")
-    out.push({ id: "audio", message: `Audio disturbance — ${s.audio.text}`, level: "bad" });
+    out.push({ id: "audio", message: "Audio disturbance detected", level: "bad" });
   else if (s.audio.level === "warn")
-    out.push({ id: "audio-warn", message: `Background noise — ${s.audio.text}`, level: "warn" });
+    out.push({ id: "audio-warn", message: "Background noise detected", level: "warn" });
   if (s.posture.level === "bad" || s.posture.level === "warn")
     out.push({
       id: "posture",

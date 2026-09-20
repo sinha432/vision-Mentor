@@ -113,6 +113,7 @@ export interface VisionMetrics {
 }
 
 export interface VoiceMetrics {
+  status: VoiceStatus;
   wordsPerMinute: number;
   fillerWords: number;
   pauseCount: number;
@@ -120,6 +121,15 @@ export interface VoiceMetrics {
   fluency: number;
   samples: number;
 }
+
+export type VoiceStatus =
+  | "not_started"
+  | "captured"
+  | "app_disabled"
+  | "permission_denied"
+  | "unavailable"
+  | "unsupported"
+  | "no_speech";
 
 export type DressVerdict = "appropriate" | "acceptable" | "not_appropriate";
 export type HairVerdict = "neat" | "untidy";
@@ -389,6 +399,7 @@ export const EMPTY_VISION: VisionMetrics = {
 };
 
 export const EMPTY_VOICE: VoiceMetrics = {
+  status: "not_started",
   wordsPerMinute: 0,
   fillerWords: 0,
   pauseCount: 0,

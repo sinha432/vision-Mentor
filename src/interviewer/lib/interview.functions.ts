@@ -97,6 +97,18 @@ export const buildInterviewReport = createServerFn({ method: "POST" })
           enabled: z.boolean(),
         }),
         voice: z.object({
+          status: z
+            .enum([
+              "not_started",
+              "captured",
+              "app_disabled",
+              "permission_denied",
+              "unavailable",
+              "unsupported",
+              "no_speech",
+            ])
+            .optional(),
+          samples: z.number().optional(),
           wordsPerMinute: z.number(),
           fillerWords: z.number(),
           pauseCount: z.number(),
@@ -113,6 +125,8 @@ export const buildInterviewReport = createServerFn({ method: "POST" })
                 noisySeconds: z.number(),
                 multiFaceSeconds: z.number(),
                 faceMissingSeconds: z.number(),
+                handGestureSeconds: z.number().optional(),
+                handGestureEvents: z.number().optional(),
                 deviceSeconds: z.number(),
                 backgroundVoiceEvents: z.number(),
                 dominantEmotion: z.string(),

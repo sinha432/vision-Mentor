@@ -59,6 +59,7 @@ function seed(): void {
     title: "Frontend Engineer — Sample Assessment",
     code: DEMO_ASSESSMENT_CODE,
     status: "active",
+    timeLimitSeconds: 1_800,
     createdAt: new Date().toISOString(),
     questions: [
       {

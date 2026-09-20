@@ -33,6 +33,7 @@ export class AudioMonitor {
     this.source.connect(this.analyser);
     this.data = new Uint8Array(new ArrayBuffer(this.analyser.fftSize));
     this.freq = new Uint8Array(new ArrayBuffer(this.analyser.frequencyBinCount));
+    patchVisionStatus({ audio: { text: "Connected", level: "good" } });
     this.loop();
   }
 
@@ -81,7 +82,7 @@ export class AudioMonitor {
         text = "Some background sound";
         level = "warn";
       }
-      patchVisionStatus({ audio: { text, level } });
+      patchVisionStatus({ audio: { text: "Connected", level } });
     }
 
     this.raf = requestAnimationFrame(this.loop);
@@ -96,6 +97,6 @@ export class AudioMonitor {
     this.analyser = null;
     this.source = null;
     this.levelListener = null;
-    patchVisionStatus({ audio: { text: "Ready", level: "good" } });
+    patchVisionStatus({ audio: { text: "Not connected", level: "idle" } });
   }
 }

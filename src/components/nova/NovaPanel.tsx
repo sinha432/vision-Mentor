@@ -101,7 +101,7 @@ export function NovaPanel({
           <Radio className="size-4 text-cyber" />
           <span className="text-[10px] tracking-widest text-muted-foreground uppercase">Voice</span>
           <span className="text-[10px]" style={{ color: levelColor(status.audio.level) }}>
-            {senses.micOn ? status.audio.text : "OFFLINE"}
+            {senses.micOn ? "Connected" : "Not connected"}
           </span>
           {senses.micOn && (
             <span className="h-1 w-full overflow-hidden rounded-full bg-foreground/10">

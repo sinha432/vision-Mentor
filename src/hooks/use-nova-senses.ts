@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { AudioMonitor } from "@/lib/audio-monitor";
 import { VisionDetector } from "@/lib/vision-detector";
 import { useVisionStatus, type VisionStatus } from "@/lib/vision-status";
+import { MIC_ENABLED_EVENT } from "@/interviewer/lib/media-settings";
 
 export interface NovaSenses {
   /** attach to a <video> element so Nova can see through the camera */
@@ -30,7 +31,9 @@ export function useNovaSenses(): NovaSenses {
   const [micOn, setMicOn] = useState(false);
   const [micLevel, setMicLevel] = useState(0);
   const [error, setError] = useState<string | null>(null);
+  const cameraOnRef = useRef(false);
   const status = useVisionStatus();
+  cameraOnRef.current = cameraOn;
 
   const disable = useCallback(() => {
     detectorRef.current?.stop();
@@ -102,15 +105,32 @@ export function useNovaSenses(): NovaSenses {
 
   // stop sensing when the tab is hidden, and always clean up on unmount
   useEffect(() => {
+    const onMicSettingChange = (event: Event) => {
+      const enabled = (event as CustomEvent<boolean>).detail;
+      if (enabled === false) {
+        disable();
+      } else if (enabled === true) {
+        void enable({ camera: cameraOnRef.current, mic: true });
+      }
+    };
+    const onStorage = (event: StorageEvent) => {
+      if (event.key !== "vmx.settings.mic-enabled") return;
+      if (event.newValue === "false") disable();
+      if (event.newValue === "true") void enable({ camera: cameraOnRef.current, mic: true });
+    };
+    window.addEventListener(MIC_ENABLED_EVENT, onMicSettingChange);
+    window.addEventListener("storage", onStorage);
     const onVisibility = () => {
       if (document.visibilityState === "hidden") disable();
     };
     document.addEventListener("visibilitychange", onVisibility);
     return () => {
+      window.removeEventListener(MIC_ENABLED_EVENT, onMicSettingChange);
+      window.removeEventListener("storage", onStorage);
       document.removeEventListener("visibilitychange", onVisibility);
       disable();
     };
-  }, [disable]);
+  }, [disable, enable]);
 
   return { videoRef, cameraOn, micOn, micLevel, error, status, enable, disable };
 }

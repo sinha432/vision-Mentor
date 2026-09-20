@@ -1216,10 +1216,7 @@ export function NovaConsole({
             </span>
 
             <span className="text-[10px] text-muted-foreground">
-              {senses.micOn
-                ? visionStatus.audio
-                    .text
-                : "OFFLINE"}
+              {senses.micOn ? "Connected" : "Not connected"}
             </span>
           </div>
 

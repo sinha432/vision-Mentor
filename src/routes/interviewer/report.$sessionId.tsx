@@ -3,8 +3,10 @@ import { useEffect, useState } from "react";
 import {
   ArrowRight,
   BookOpen,
+  CameraOff,
   Code2,
   Download,
+  Hand,
   Loader2,
   MessageSquare,
   Scissors,
@@ -13,6 +15,7 @@ import {
   Shirt,
   Sparkles,
   Target,
+  EyeOff,
   TrendingUp,
 } from "lucide-react";
 import { toast } from "sonner";
@@ -165,7 +168,27 @@ function normalizeForensics(raw: unknown): ForensicsReport {
 }
 
 function voiceCaptured(session: InterviewSession | null): boolean {
-  return !!session && (session.voice.samples ?? 0) > 0;
+  return !!session && (session.voice.status === "captured" || (session.voice.status == null && session.voice.samples > 0)) && session.voice.samples > 0;
+}
+
+function voiceStatusLabel(session: InterviewSession | null): string {
+  if (session?.voice.status == null && session.voice.samples > 0) return "Voice captured";
+  switch (session?.voice.status) {
+    case "app_disabled":
+      return "Voice disabled in settings";
+    case "permission_denied":
+      return "Microphone permission denied";
+    case "unavailable":
+      return "Microphone unavailable";
+    case "unsupported":
+      return "Voice input unsupported";
+    case "no_speech":
+      return "Voice not detected";
+    case "captured":
+      return "Voice captured";
+    default:
+      return "Voice not captured";
+  }
 }
 
 function ReportPage() {
@@ -259,6 +282,8 @@ function ReportPage() {
               enabled: stored.vision.enabled,
             },
             voice: {
+              status: stored.voice.status,
+              samples: stored.voice.samples,
               wordsPerMinute: stored.voice.wordsPerMinute,
               fillerWords: stored.voice.fillerWords,
               pauseCount: stored.voice.pauseCount,
@@ -274,6 +299,8 @@ function ReportPage() {
                     noisySeconds: stored.detection.noisySeconds,
                     multiFaceSeconds: stored.detection.multiFaceSeconds,
                     faceMissingSeconds: stored.detection.faceMissingSeconds,
+                    handGestureSeconds: stored.detection.handGestureSeconds ?? 0,
+                    handGestureEvents: stored.detection.handGestureEvents ?? 0,
                     deviceSeconds: stored.detection.deviceSeconds,
                     backgroundVoiceEvents: stored.detection.backgroundVoiceEvents,
                     dominantEmotion: stored.detection.dominantEmotion,
@@ -464,6 +491,15 @@ function ReportPage() {
 
   const company = session ? getCompany(session.config.companyId) : null;
   const answered = session?.turns.filter((t) => t.answer).length ?? 0;
+  const detectionSummary = session?.detection ?? null;
+  const faceMissingSeconds = detectionSummary?.faceMissingSeconds ?? 0;
+  const handGestureSeconds = detectionSummary?.handGestureSeconds ?? 0;
+  const handGestureEvents = detectionSummary?.handGestureEvents ?? 0;
+  const tabSwitches = session?.proctor?.filter((event) => event.kind === "tab_switch").length ?? 0;
+  const cameraNeedsAttention = faceMissingSeconds > 3 || appearance?.assessed === false;
+  const groomingEvents = (session?.coaching ?? []).filter(
+    (event) => event.area === "hair" || event.area === "grooming",
+  );
 
   return (
     <div className="min-h-screen">
@@ -523,6 +559,70 @@ function ReportPage() {
                 </div>
               </div>
             </section>
+
+            {/* Camera and attention coaching */}
+            {(detectionSummary || appearance) && (
+              <section className="rounded-2xl glass p-6">
+                <h2 className="flex items-center gap-2 font-display text-lg font-semibold">
+                  <EyeOff className="h-4 w-4 text-primary" /> Camera attention & presentation
+                </h2>
+                <p className="mt-2 text-sm text-muted-foreground">
+                  These are approximate coaching signals from the camera, not a judgment about
+                  your intent or mental state.
+                </p>
+                <div className="mt-4 grid gap-3 md:grid-cols-3">
+                  <CoachingSignal
+                    icon={CameraOff}
+                    title="Camera visibility"
+                    issue={cameraNeedsAttention}
+                    detail={
+                      faceMissingSeconds > 0
+                        ? `Your face was not visible for about ${faceMissingSeconds} second${faceMissingSeconds === 1 ? "" : "s"}.`
+                        : "Your face stayed visible during the measured camera samples."
+                    }
+                    action={
+                      faceMissingSeconds > 0
+                        ? "Use the Mac front camera, move closer, and add light in front of you."
+                        : "Keep your face centered with your eyes near the top third of the frame."
+                    }
+                  />
+                  <CoachingSignal
+                    icon={EyeOff}
+                    title="Interview focus"
+                    issue={faceMissingSeconds > 3 || (detectionSummary?.avgEyeContact ?? 100) < 55}
+                    detail={
+                      tabSwitches > 0
+                        ? `${tabSwitches} browser focus loss${tabSwitches === 1 ? " was" : "es were"} recorded during the session.`
+                        : faceMissingSeconds > 3
+                        ? "The report recorded moments when you were not camera-focused because you left the frame."
+                        : `Average camera attention was ${detectionSummary?.avgEyeContact ?? 0}/100.`
+                    }
+                    action={
+                      tabSwitches > 0
+                        ? "Keep the interviewer tab active and close distracting windows before you begin."
+                        : "Look toward the interviewer window, and pause the interview if you need to adjust your setup."
+                    }
+                  />
+                  <CoachingSignal
+                    icon={Hand}
+                    title="Gestures"
+                    issue={handGestureEvents > 0}
+                    detail={
+                      handGestureEvents > 0
+                        ? `${handGestureEvents} hand-gesture interval${handGestureEvents === 1 ? " was" : "s were"} detected (${handGestureSeconds}s total).`
+                        : "No sustained hand-gesture interval was detected."
+                    }
+                    action="Use deliberate gestures and keep your hands inside the camera frame."
+                  />
+                </div>
+                {appearance?.assessed === false && (
+                  <p className="mt-4 rounded-xl bg-warning/10 p-3 text-sm text-warning-foreground">
+                    Dress and grooming could not be assessed reliably because the camera frame was
+                    not clear enough. Improve lighting and framing, then retry the appearance review.
+                  </p>
+                )}
+              </section>
+            )}
 
             {/* Detailed sub-scores */}
             <section className="rounded-2xl glass p-6">
@@ -650,6 +750,11 @@ function ReportPage() {
             {/* Delivery */}
             <section className="rounded-2xl glass p-6">
               <h2 className="font-display text-lg font-semibold">Delivery & presence</h2>
+              <p className="mt-2 text-sm text-muted-foreground">
+                Voice: <span className="font-medium text-foreground">{voiceStatusLabel(session)}</span>
+                {session?.voice.status !== "captured" &&
+                  " — voice metrics are not used to judge delivery when no usable audio was captured."}
+              </p>
               <div className="mt-4 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
                 <Stat
                   label="Speaking pace"
@@ -683,16 +788,46 @@ function ReportPage() {
               <h2 className="flex items-center gap-2 font-display text-lg font-semibold">
                 <Shirt className="h-4 w-4 text-primary" /> Appearance & grooming
               </h2>
+              {groomingEvents.length > 0 && (
+                <div className="mt-4 rounded-xl border border-warning/25 bg-warning/5 p-4">
+                  <h3 className="text-[10px] uppercase tracking-widest text-warning">
+                    Live interview observations
+                  </h3>
+                  <ul className="mt-2 space-y-2">
+                    {groomingEvents.map((event, index) => (
+                      <li key={`${event.t}-${event.area}-${index}`} className="text-sm text-muted-foreground">
+                        <span className="font-medium text-foreground">
+                          {event.area === "hair" ? "Hair" : "Grooming"}:
+                        </span>{" "}
+                        {event.instruction}
+                        {event.reason ? ` ${event.reason}` : ""}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
               {appearanceLoading ? (
                 <p className="mt-3 flex items-center gap-2 text-sm text-muted-foreground">
                   <Loader2 className="h-4 w-4 animate-spin text-primary" /> Reviewing your dress and
                   hair…
                 </p>
               ) : !appearance ? (
-                <p className="mt-3 text-sm text-muted-foreground">
-                  Camera was off — appearance not assessed. Turn the camera on to get dress and hair
-                  feedback.
-                </p>
+                <div className="mt-3 space-y-3">
+                  <p className="text-sm text-muted-foreground">
+                    Camera was off or no appearance frame was saved, so dress and hair were not
+                    assessed from a still frame.
+                  </p>
+                  {forensics?.assessed && forensics.groomingSummary && (
+                    <div className="rounded-xl border border-primary/25 bg-primary/5 p-4">
+                      <h3 className="text-[10px] uppercase tracking-widest text-primary">
+                        Post-interview grooming read (from replay)
+                      </h3>
+                      <p className="mt-1.5 text-sm text-muted-foreground">
+                        {forensics.groomingSummary}
+                      </p>
+                    </div>
+                  )}
+                </div>
               ) : !appearance.assessed ? (
                 <div className="mt-3 space-y-3">
                   <p className="text-sm text-muted-foreground">
@@ -938,6 +1073,34 @@ function ListCard({
         ))}
       </ul>
     </section>
+  );
+}
+
+function CoachingSignal({
+  icon: Icon,
+  title,
+  issue,
+  detail,
+  action,
+}: {
+  icon: React.ElementType;
+  title: string;
+  issue: boolean;
+  detail: string;
+  action: string;
+}) {
+  return (
+    <div className="rounded-xl border border-border/70 p-4">
+      <div className="flex items-center gap-2">
+        <Icon className={issue ? "h-4 w-4 text-warning" : "h-4 w-4 text-success"} />
+        <span className="font-medium">{title}</span>
+        <span className="ml-auto text-[10px] uppercase tracking-widest text-muted-foreground">
+          {issue ? "Practice" : "On track"}
+        </span>
+      </div>
+      <p className="mt-3 text-sm text-muted-foreground">{detail}</p>
+      <p className="mt-2 text-xs text-primary">Next time: {action}</p>
+    </div>
   );
 }
 

@@ -124,7 +124,12 @@ function ReportPage() {
                     </>
                   )}
 
-                  {fb && <div className="text-[11px] text-muted-foreground">{fb.notes}</div>}
+                  {fb && (
+                    <div className="rounded-lg border border-primary/20 bg-primary/5 p-3 text-xs text-muted-foreground">
+                      <div className="font-medium text-foreground">AI feedback and mark deduction</div>
+                      <div className="mt-1">{fb.notes || "No additional feedback was generated for this answer."}</div>
+                    </div>
+                  )}
                 </div>
               );
             })}

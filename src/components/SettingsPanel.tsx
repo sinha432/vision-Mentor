@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button";
 import { useDemoAuth } from "@/contexts/DemoAuthContext";
 import { useNavigate } from "@tanstack/react-router";
 import { toast } from "sonner";
+import { writeMicEnabled } from "@/interviewer/lib/media-settings";
 
 type PermState = "granted" | "denied" | "prompt" | "unknown";
 
@@ -114,6 +115,7 @@ export function SettingsPanel({
               enabled={systemOnline && values.micEnabled}
               onToggle={(v) => {
                 if (!systemOnline) return;
+                writeMicEnabled(v);
                 onChange({ ...values, micEnabled: v });
               }}
               onRequest={requestMic}

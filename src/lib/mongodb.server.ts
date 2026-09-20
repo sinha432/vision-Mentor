@@ -120,6 +120,7 @@ export interface StoredAssessment {
   code: string;
   description?: string;
   requireMedia?: boolean;
+  timeLimitSeconds?: number;
 
   status: "active" | "archived";
 

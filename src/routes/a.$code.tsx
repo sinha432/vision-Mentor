@@ -1,4 +1,4 @@
-import { createFileRoute, useNavigate } from "@tanstack/react-router";
+import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   AlertTriangle,
@@ -23,6 +23,7 @@ import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { useDemoAuth } from "@/contexts/DemoAuthContext";
 import {
+  hasIndividualAttempt,
   getAssessmentByCode,
   submitAttempt,
 } from "@/lib/assessments.functions";
@@ -74,6 +75,7 @@ type AssessmentData = {
   title: string;
   status: "active" | "closed";
   requireMedia?: boolean;
+  timeLimitSeconds?: number;
   questions: AssessmentQuestion[];
 };
 
@@ -84,7 +86,7 @@ function clamp(value: number, min = 0, max = 1) {
 function AssessmentPage() {
   const { code } = Route.useParams();
   const navigate = useNavigate();
-  const { user } = useDemoAuth();
+  const { user, signIn } = useDemoAuth();
 
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
@@ -92,6 +94,7 @@ function AssessmentPage() {
   const startedAtRef = useRef<number | null>(null);
   const submittingRef = useRef(false);
   const endedRef = useRef(false);
+  const terminationReasonRef = useRef<string | null>(null);
 
   // submitAssessment is declared later in this component. The ref lets
   // integrity handlers invoke the latest submit function safely.
@@ -103,6 +106,12 @@ function AssessmentPage() {
 
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
+  const [candidate, setCandidate] = useState<{ id: string; name: string; email: string } | null>(null);
+  const [entryName, setEntryName] = useState("");
+  const [entryEmail, setEntryEmail] = useState("");
+  const [entryPassword, setEntryPassword] = useState("");
+  const [entryBusy, setEntryBusy] = useState(false);
+  const [entryError, setEntryError] = useState<string | null>(null);
 
   const [answers, setAnswers] =
     useState<Record<string, AnswerValue>>({});
@@ -201,15 +210,12 @@ function AssessmentPage() {
    */
 
   useEffect(() => {
-    if (
-      !assessment ||
-      assessment.status === "closed" ||
-      !assessment.requireMedia
-    ) {
+    if (!assessment || assessment.status === "closed" || !candidate) {
       return;
     }
 
-    startedAtRef.current = Date.now();
+    if (!startedAtRef.current) startedAtRef.current = Date.now();
+    const limit = Math.max(60, assessment.timeLimitSeconds ?? 1_800);
 
     const timer = window.setInterval(() => {
       if (!startedAtRef.current) return;
@@ -220,12 +226,21 @@ function AssessmentPage() {
 
       elapsedRef.current = seconds;
       setElapsed(seconds);
+      if (seconds >= limit && !endedRef.current && !submittingRef.current) {
+        endedRef.current = true;
+        const reason = "Time limit reached. Your answered questions were submitted automatically.";
+        terminationReasonRef.current = reason;
+        setTerminationReason(reason);
+        setFinished(true);
+        toast.warning("Time limit reached. Submitting your answers.");
+        void submitAssessmentRef.current?.(true);
+      }
     }, 1000);
 
     return () => {
       window.clearInterval(timer);
     };
-  }, [assessment]);
+  }, [assessment, candidate]);
 
   /*
    * ---------------------------------------------------------
@@ -299,8 +314,31 @@ function AssessmentPage() {
     }
   }, []);
 
+  const verifyCandidate = async (event: React.FormEvent) => {
+    event.preventDefault();
+    setEntryBusy(true);
+    setEntryError(null);
+    try {
+      const authenticated = await signIn(entryEmail, entryPassword, "individual");
+      if (authenticated.name.trim().toLowerCase() !== entryName.trim().toLowerCase()) {
+        throw new Error("The name must exactly match your registered individual account.");
+      }
+      const alreadyAttempted = await hasIndividualAttempt({
+        data: { assessmentId: assessment?._id, individualUserId: authenticated.id },
+      });
+      if (alreadyAttempted) {
+        throw new Error("You have already submitted this assessment. Open your reports to view the result.");
+      }
+      setCandidate({ id: authenticated.id, name: authenticated.name, email: authenticated.email });
+    } catch (error) {
+      setEntryError(error instanceof Error ? error.message : "Could not verify this account.");
+    } finally {
+      setEntryBusy(false);
+    }
+  };
+
   useEffect(() => {
-    if (!assessment || assessment.status === "closed") {
+    if (!assessment || assessment.status === "closed" || !candidate) {
       return;
     }
 
@@ -315,7 +353,7 @@ function AssessmentPage() {
 
       streamRef.current = null;
     };
-  }, [assessment, startMedia]);
+  }, [assessment, candidate, startMedia]);
 
   /*
    * ---------------------------------------------------------
@@ -342,6 +380,7 @@ function AssessmentPage() {
         event.kind === "background_voice";
 
       if (!serious) {
+        setWarnings((previous) => [...previous, event.detail].slice(-5));
         return;
       }
 
@@ -413,8 +452,7 @@ function AssessmentPage() {
    * TAB / WINDOW INTEGRITY
    * ---------------------------------------------------------
    *
-   * Do NOT terminate on the first tab/focus change.
-   * A warning is recorded first.
+  * Leaving the assessment immediately locks and submits it.
    */
 
   const registerPageLeave = useCallback(
@@ -427,36 +465,15 @@ function AssessmentPage() {
         return;
       }
 
+      endedRef.current = true;
+      terminationReasonRef.current = reason;
+      setTerminationReason(reason);
+      setFinished(true);
       setLeftPageWarning(true);
-
-      setWarnings((previous) =>
-        [...previous, reason].slice(-5),
-      );
-
-      setWarningCount((previous) => {
-        const next = previous + 1;
-
-        if (next === 1) {
-          toast.warning(
-            "Integrity warning 1 of 2: " +
-              reason,
-          );
-        } else if (next === 2) {
-          toast.warning(
-            "Final integrity warning: " +
-              reason,
-          );
-        } else {
-          toast.error(
-            "Assessment ended because the page was repeatedly left.",
-          );
-
-          endedRef.current = true;
-          setFinished(true);
-        }
-
-        return next;
-      });
+      setWarnings((previous) => [...previous, reason].slice(-5));
+      setWarningCount((previous) => previous + 1);
+      toast.error("Assessment terminated because the page was left.");
+      void submitAssessmentRef.current?.(true);
     },
     [finished],
   );
@@ -479,14 +496,6 @@ function AssessmentPage() {
     };
 
     const handleKeyDown = (event: KeyboardEvent) => {
-      /*
-       * HARD SHIFT+TAB TERMINATION
-       *
-       * The first Shift+Tab immediately terminates the
-       * assessment. It is not treated as a normal warning.
-       * Browser focus navigation is blocked and the current
-       * answers are submitted before the session is closed.
-       */
       if (
         event.shiftKey &&
         event.key === "Tab"
@@ -501,56 +510,7 @@ function AssessmentPage() {
           return;
         }
 
-        endedRef.current = true;
-
-        const reason =
-          "Shift+Tab detected. The assessment was automatically terminated.";
-
-        /*
-         * HARD LOCK:
-         * The assessment becomes read-only immediately.
-         * Do not wait for the async submission to finish.
-         */
-        setTerminationReason(reason);
-        setLeftPageWarning(true);
-        setFinished(true);
-
-        setWarnings((previous) =>
-          [...previous, reason].slice(-5),
-        );
-
-        setWarningCount(
-          (previous) => previous + 1,
-        );
-
-        /*
-         * Stop camera and microphone immediately.
-         */
-        const stream = streamRef.current;
-
-        stream?.getTracks().forEach((track) => {
-          track.stop();
-        });
-
-        streamRef.current = null;
-
-        setCameraOn(false);
-        setMicOn(false);
-
-        toast.error(
-          "Assessment terminated: Shift+Tab detected.",
-        );
-
-        /*
-         * Force-submit the answers even though
-         * finished has already been set to true.
-         */
-        const submit =
-          submitAssessmentRef.current;
-
-        if (submit) {
-          void submit(true);
-        }
+        registerPageLeave("The assessment page was left using keyboard navigation.");
       }
     };
 
@@ -563,6 +523,12 @@ function AssessmentPage() {
       "keydown",
       handleKeyDown,
     );
+    const handleBlur = () => {
+      if (document.visibilityState === "hidden") {
+        registerPageLeave("The assessment window lost focus.");
+      }
+    };
+    window.addEventListener("blur", handleBlur);
 
     return () => {
       document.removeEventListener(
@@ -574,6 +540,7 @@ function AssessmentPage() {
         "keydown",
         handleKeyDown,
       );
+      window.removeEventListener("blur", handleBlur);
     };
   }, [assessment, finished, registerPageLeave]);
 
@@ -671,10 +638,10 @@ function AssessmentPage() {
          * Demo fallback keeps public assessment links
          * usable during local testing.
          */
-        const individualUserId =
-          user?.role === "individual"
-            ? user.id
-            : user?.id || "demo";
+        const individualUserId = candidate?.id;
+        if (!individualUserId || candidate?.email !== user?.email) {
+          throw new Error("Your individual account could not be verified for this assessment.");
+        }
 
         const vision = buildVisionSummary();
 
@@ -682,8 +649,16 @@ function AssessmentPage() {
           data: {
             code: assessment.code,
             individualUserId,
+            candidateEmail: candidate.email,
             answers,
             vision,
+            terminationReason: terminationReasonRef.current ?? terminationReason,
+            integrityEvents: integrityEvents.map((event) => ({
+              kind: event.kind,
+              detail: event.detail,
+              confidence: event.confidence,
+              t: elapsedRef.current,
+            })),
           },
         });
 
@@ -747,6 +722,8 @@ function AssessmentPage() {
       answers,
       buildVisionSummary,
       finished,
+      integrityEvents,
+      candidate,
       terminationReason,
       user,
     ],
@@ -781,9 +758,12 @@ function AssessmentPage() {
 
     if (!endedRef.current) {
       endedRef.current = true;
+      const reason = "Assessment ended because repeated integrity violations were detected.";
+      terminationReasonRef.current = reason;
+      setTerminationReason(reason);
 
       toast.error(
-        "Assessment ended because repeated integrity violations were detected.",
+        reason,
       );
 
       void submitAssessment();
@@ -803,13 +783,17 @@ function AssessmentPage() {
    */
 
   const formattedTime = useMemo(() => {
+    const remaining = Math.max(
+      0,
+      (assessment?.timeLimitSeconds ?? 1_800) - elapsed,
+    );
     const minutes = Math.floor(
-      elapsed / 60,
+      remaining / 60,
     )
       .toString()
       .padStart(2, "0");
 
-    const seconds = (elapsed % 60)
+    const seconds = (remaining % 60)
       .toString()
       .padStart(2, "0");
 
@@ -872,6 +856,61 @@ function AssessmentPage() {
             Return to Vision Mentor X
           </Button>
         </div>
+      </div>
+    );
+  }
+
+  if (!candidate) {
+    return (
+      <div className="min-h-screen bg-background grid place-items-center p-6">
+        <form onSubmit={verifyCandidate} className="glass w-full max-w-md rounded-3xl p-8">
+          <div className="mb-6 text-center">
+            <UserRound className="mx-auto mb-3 h-10 w-10 text-primary" />
+            <h1 className="font-display text-2xl font-bold">Verify your account</h1>
+            <p className="mt-2 text-sm text-muted-foreground">
+              Sign in with your registered individual Vision Mentor account before entering this assessment.
+            </p>
+          </div>
+          <div className="space-y-4">
+            <label className="block text-sm">
+              <span className="mb-1.5 block text-muted-foreground">Registered name</span>
+              <input
+                required
+                value={entryName}
+                onChange={(event) => setEntryName(event.target.value)}
+                className="w-full rounded-lg border border-border bg-background px-3 py-2"
+                autoComplete="name"
+              />
+            </label>
+            <label className="block text-sm">
+              <span className="mb-1.5 block text-muted-foreground">Email</span>
+              <input
+                required
+                type="email"
+                value={entryEmail}
+                onChange={(event) => setEntryEmail(event.target.value)}
+                className="w-full rounded-lg border border-border bg-background px-3 py-2"
+                autoComplete="email"
+              />
+            </label>
+            <label className="block text-sm">
+              <span className="mb-1.5 block text-muted-foreground">Password</span>
+              <input
+                required
+                type="password"
+                value={entryPassword}
+                onChange={(event) => setEntryPassword(event.target.value)}
+                className="w-full rounded-lg border border-border bg-background px-3 py-2"
+                autoComplete="current-password"
+              />
+            </label>
+          </div>
+          {entryError && <p className="mt-4 rounded-lg bg-destructive/10 p-3 text-sm text-destructive">{entryError}</p>}
+          <Button type="submit" disabled={entryBusy} className="mt-6 w-full">
+            {entryBusy ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
+            {entryBusy ? "Verifying…" : "Verify and enter assessment"}
+          </Button>
+        </form>
       </div>
     );
   }
@@ -954,6 +993,14 @@ function AssessmentPage() {
               </>
             )}
           </div>
+          {submittedReportId && candidate && (
+            <Link
+              to="/reports"
+              className="mt-5 inline-flex items-center justify-center rounded-lg bg-primary px-4 py-2 text-sm text-primary-foreground"
+            >
+              View my detailed report
+            </Link>
+          )}
         </div>
       </div>
     );
@@ -1074,9 +1121,7 @@ function AssessmentPage() {
 
                 {leftPageWarning && (
                   <p className="mt-1 text-sm text-amber-200/80">
-                    Stay on this assessment page.
-                    Leaving the page repeatedly can
-                    terminate the assessment.
+                    This assessment was locked because the page or window was left.
                   </p>
                 )}
 

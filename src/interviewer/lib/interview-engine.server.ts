@@ -753,6 +753,8 @@ export interface BehaviourInput {
     noisySeconds: number;
     multiFaceSeconds: number;
     faceMissingSeconds: number;
+    handGestureSeconds?: number;
+    handGestureEvents?: number;
     deviceSeconds: number;
     backgroundVoiceEvents: number;
     dominantEmotion: string;
@@ -763,6 +765,15 @@ export interface BehaviourInput {
   endedEarly?: boolean;
   appearance?: { dress: string; hair: string } | null;
 }
+
+export type VoiceReportStatus =
+  | "not_started"
+  | "captured"
+  | "app_disabled"
+  | "permission_denied"
+  | "unavailable"
+  | "unsupported"
+  | "no_speech";
 
 interface Measured {
   bodyLanguage: number;
@@ -800,7 +811,7 @@ function measuredSubScores(
   );
 
   const evidence = d
-    ? `eye contact ${d.avgEyeContact}/100, posture ${d.avgPosture}/100, dominant expression ${d.dominantEmotion}, ${d.noisySeconds}s of noisy room, ${d.multiFaceSeconds}s with more than one face, ${d.deviceSeconds}s with a device in frame, ${d.backgroundVoiceEvents} background-voice events, ${flags.length} integrity flags, ${behaviour?.warnings ?? 0} formal warnings.`
+    ? `eye contact ${d.avgEyeContact}/100, posture ${d.avgPosture}/100, dominant expression ${d.dominantEmotion}, ${d.noisySeconds}s of noisy room, ${d.multiFaceSeconds}s with more than one face, ${d.faceMissingSeconds}s with no visible face, ${d.handGestureEvents ?? 0} hand-gesture intervals, ${d.deviceSeconds}s with a device in frame, ${d.backgroundVoiceEvents} background-voice events, ${flags.length} integrity flags, ${behaviour?.warnings ?? 0} formal warnings.`
     : `${flags.length} integrity flags, ${behaviour?.warnings ?? 0} formal warnings.`;
 
   return {

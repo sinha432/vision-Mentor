@@ -22,6 +22,8 @@ export interface DetectionSignals {
   posture: number;
   /** 0-100 how much the candidate is moving around. */
   movement: number;
+  /** Coarse hand signal from pose landmarks, not a semantic gesture classifier. */
+  handGesture: "none" | "raised" | "active";
   /** Phone / laptop / TV style objects currently visible. */
   devices: { label: string; score: number }[];
   /** 0-100 ambient level while the candidate is not speaking. */
@@ -49,6 +51,7 @@ export const EMPTY_SIGNALS: DetectionSignals = {
   expression: "neutral",
   posture: 0,
   movement: 0,
+  handGesture: "none",
   devices: [],
   noiseLevel: 0,
   voiceLevel: 0,
@@ -83,6 +86,8 @@ export interface DetectionSummary {
   noisySeconds: number;
   multiFaceSeconds: number;
   faceMissingSeconds: number;
+  handGestureSeconds: number;
+  handGestureEvents: number;
   deviceSeconds: number;
   backgroundVoiceEvents: number;
   pauses: number;
@@ -109,6 +114,8 @@ export const EMPTY_DETECTION_SUMMARY: DetectionSummary = {
   noisySeconds: 0,
   multiFaceSeconds: 0,
   faceMissingSeconds: 0,
+  handGestureSeconds: 0,
+  handGestureEvents: 0,
   deviceSeconds: 0,
   backgroundVoiceEvents: 0,
   pauses: 0,
