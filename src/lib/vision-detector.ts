@@ -333,11 +333,11 @@ export class VisionDetector {
   // ---------------------------------------------------------------------------
   // DETECTOR TIMING
   //
-  // Face       = ~8 FPS
-  // Pose       = ~5 FPS
-  // Objects    = ~5 FPS
-  // Grooming   = ~2 FPS
-  // UI         = ~4 FPS
+  // Face       = ~5 FPS
+  // Pose       = ~4 FPS
+  // Objects    = ~3 FPS
+  // Grooming   = ~1 FPS
+  // UI         = ~2 FPS
   //
   // Object detection is faster now so phone detection reacts quickly,
   // but we don't run it every animation frame because that would cause lag.
@@ -414,7 +414,10 @@ export class VisionDetector {
 
             runningMode: "VIDEO",
 
-            numFaces: 10,
+            // Individual mode only needs to identify the candidate and any
+            // additional person in frame. Avoiding ten-face inference keeps
+            // the main thread responsive.
+            numFaces: 2,
 
             minFaceDetectionConfidence: 0.45,
             minFacePresenceConfidence: 0.45,
@@ -474,7 +477,7 @@ export class VisionDetector {
 
               scoreThreshold: 0.30,
 
-              maxResults: 20,
+              maxResults: 5,
             },
           );
       } catch (error) {
@@ -530,7 +533,7 @@ export class VisionDetector {
         // ---------------------------------------------------------------------
 
         if (
-          now - this.lastFace >= 125
+          now - this.lastFace >= 200
         ) {
           this.lastFace = now;
 
@@ -546,7 +549,7 @@ export class VisionDetector {
         // ---------------------------------------------------------------------
 
         if (
-          now - this.lastPose >= 200
+          now - this.lastPose >= 250
         ) {
           this.lastPose = now;
 
@@ -567,7 +570,7 @@ export class VisionDetector {
 
         if (
           this.objects &&
-          now - this.lastObjects >= 200
+          now - this.lastObjects >= 350
         ) {
           this.lastObjects = now;
 
@@ -712,7 +715,7 @@ export class VisionDetector {
         // ---------------------------------------------------------------------
 
         if (
-          now - this.lastEmit >= 250
+          now - this.lastEmit >= 500
         ) {
           this.lastEmit = now;
 
@@ -757,7 +760,7 @@ export class VisionDetector {
 
           if (
             this.canvas &&
-            now - this.lastGrooming >= 500
+            now - this.lastGrooming >= 1000
           ) {
             this.lastGrooming = now;
 

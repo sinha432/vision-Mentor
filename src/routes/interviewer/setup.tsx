@@ -94,6 +94,7 @@ function SetupPage() {
   const [corrections, setCorrections] = useState<ResumeCorrection[]>([]);
   const [correctedFullText, setCorrectedFullText] = useState<string | null>(null);
   const [correctionsLoading, setCorrectionsLoading] = useState(false);
+  const [reanalyzingCorrection, setReanalyzingCorrection] = useState(false);
   const [likelihood, setLikelihood] = useState<ShortlistLikelihood | null>(null);
   const [likelihoodLoading, setLikelihoodLoading] = useState(false);
   const [camOk, setCamOk] = useState(false);
@@ -130,16 +131,32 @@ function SetupPage() {
     [resumeText, selectedCompany, role],
   );
 
-  function applyRewrite(insight: SentenceInsight) {
+  async function reanalyzeCorrectedResume(nextText: string) {
+    setReanalyzingCorrection(true);
+    setResume(null);
+    setFit(null);
+    try {
+      const insights = (await analyzeResume({ data: { text: nextText } })) as ResumeInsights;
+      setResumeText(insights.resumeText ?? nextText);
+      setResume(insights);
+      toast.success("Corrected resume analysed again");
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Could not re-analyse the corrected resume");
+    } finally {
+      setReanalyzingCorrection(false);
+    }
+  }
+
+  async function applyRewrite(insight: SentenceInsight) {
     if (!insight.rewrite) return;
-    setResumeText((prev) => {
-      if (!prev.includes(insight.text)) {
-        toast.error("That line changed — re-check the resume text.");
-        return prev;
-      }
-      setUndoText(prev);
-      return prev.replace(insight.text, insight.rewrite as string);
-    });
+    if (!resumeText.includes(insight.text)) {
+      toast.error("That line changed — re-check the resume text.");
+      return;
+    }
+    const nextText = resumeText.replace(insight.text, insight.rewrite);
+    setUndoText(resumeText);
+    setResumeText(nextText);
+    await reanalyzeCorrectedResume(nextText);
     toast.success("Line rewritten — ATS score updated");
   }
 
@@ -238,7 +255,7 @@ function SetupPage() {
     }
   }
 
-  function applyAllCorrections(accepted: ResumeCorrection[]) {
+  async function applyAllCorrections(accepted: ResumeCorrection[]) {
     if (accepted.length === 0) return;
     setUndoText(resumeText);
     let next = resumeText;
@@ -248,21 +265,31 @@ function SetupPage() {
     setResumeText(next);
     setCorrections([]);
     setCorrectedFullText(null);
-    toast.success(`Applied ${accepted.length} correction(s) — resume re-scored.`);
+    await reanalyzeCorrectedResume(next);
+    toast.success(`Applied ${accepted.length} correction(s) — resume re-analysed.`);
   }
 
-  function applyFullRewrite(fullText: string) {
+  async function applyFullRewrite(fullText: string) {
     setUndoText(resumeText);
     setResumeText(fullText);
     setCorrections([]);
     setCorrectedFullText(null);
-    toast.success("Applied the full ATS-optimised rewrite — resume re-scored.");
+    await reanalyzeCorrectedResume(fullText);
+    toast.success("Applied the full ATS-optimised rewrite — resume re-analysed.");
   }
 
   async function requestDevices() {
     setChecking(true);
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: {
+          facingMode: { ideal: "user" },
+          width: { ideal: 1280 },
+          height: { ideal: 720 },
+          frameRate: { ideal: 30, min: 15 },
+        },
+        audio: true,
+      });
       streamRef.current = stream;
       if (videoRef.current) {
         videoRef.current.srcObject = stream;
@@ -527,7 +554,7 @@ function SetupPage() {
                       canUndo={undoText !== null}
                     />
                     <ResumeCorrectionsPanel
-                      loading={correctionsLoading}
+                      loading={correctionsLoading || reanalyzingCorrection}
                       originalText={resumeText}
                       fullText={correctedFullText}
                       corrections={corrections}

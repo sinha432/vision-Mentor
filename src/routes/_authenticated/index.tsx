@@ -14,7 +14,6 @@ import { Companion } from "@/components/nova/Companion";
 import { useTheme } from "@/contexts/ThemeContext";
 import { useDemoAuth } from "@/contexts/DemoAuthContext";
 import { VisionDetector } from "@/lib/vision-detector";
-import { AudioMonitor } from "@/lib/audio-monitor";
 import { useVisionStatus, type Level } from "@/lib/vision-status";
 import { useNovaVoice, voiceLabel, speakWithVoice } from "@/lib/nova/nova-voice";
 import type { NovaExpression, NovaState } from "@/lib/nova/expression";
@@ -331,15 +330,16 @@ function VideoPanel({ enabled, micEnabled, onToggle }: { enabled: boolean; micEn
   useEffect(() => {
     let stream: MediaStream | null = null;
     const detector = new VisionDetector();
-    const monitor = new AudioMonitor();
     if (enabled) {
-  if (!navigator.mediaDevices?.getUserMedia) {
-    setError("Camera and microphone access is not available in this browser.");
-    return;
-  }
+      if (!navigator.mediaDevices?.getUserMedia) {
+        setError("Camera access is not available in this browser.");
+        return;
+      }
 
-  navigator.mediaDevices
-    .getUserMedia({ video: true, audio: micEnabled })
+      // Keep camera preview separate from speech capture so the preview never
+      // records or analyses ambient audio.
+      navigator.mediaDevices
+        .getUserMedia({ video: true, audio: false })
         .then(async (s) => {
           stream = s;
           const el = videoRef.current;
@@ -348,20 +348,18 @@ function VideoPanel({ enabled, micEnabled, onToggle }: { enabled: boolean; micEn
             try { await el.play(); } catch {}
             void detector.start(el);
           }
-          if (micEnabled && s.getAudioTracks().length) monitor.start(s);
           setError(null);
         })
         .catch((err) => {
           console.warn("Camera access failed", err);
-          setError(micEnabled ? "Camera or microphone access denied" : "Camera access denied");
+          setError("Camera access denied");
         });
     }
     return () => {
       detector.stop();
-      monitor.stop();
       stream?.getTracks().forEach((t) => t.stop());
     };
-  }, [enabled, micEnabled]);
+  }, [enabled]);
 
   return (
     <div className="relative rounded-2xl overflow-hidden card-3d aspect-video">
@@ -395,51 +393,97 @@ function VideoPanel({ enabled, micEnabled, onToggle }: { enabled: boolean; micEn
 
 function useSpeech(lang = "en-US", voice: SpeechSynthesisVoice | null = null) {
   const recognitionRef = useRef<any>(null);
+  const stoppingRef = useRef(false);
   const [supported, setSupported] = useState(false);
 
   useEffect(() => {
     const SR = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
-    if (SR) {
-      const r = new SR();
-      r.continuous = false;
-      r.interimResults = true;
-      r.lang = lang;
-      recognitionRef.current = r;
-      setSupported(true);
-    }
-  }, [lang]);
-
-  useEffect(() => {
-    if (recognitionRef.current) {
-      recognitionRef.current.lang = lang;
-    }
-  }, [lang]);
-
-  const listen = useCallback((onFinal: (t: string) => void, onEnd: () => void, onInterim?: (t: string) => void) => {
-    const r = recognitionRef.current;
-    if (!r) return;
-    r.onresult = (e: any) => {
-      let interim = ""; let finalText = "";
-      for (let i = e.resultIndex; i < e.results.length; i++) {
-        const res = e.results[i];
-        if (res.isFinal) finalText += res[0].transcript;
-        else interim += res[0].transcript;
-      }
-      if (interim && onInterim) onInterim(interim);
-      if (finalText) onFinal(finalText);
+    setSupported(Boolean(SR));
+    return () => {
+      stoppingRef.current = true;
+      try { recognitionRef.current?.abort(); } catch {}
+      recognitionRef.current = null;
     };
-    r.onend = onEnd;
-    r.onerror = onEnd;
-    try { r.start(); } catch { onEnd(); }
+  }, [lang]);
+
+  const listen = useCallback(
+    (
+      onFinal: (t: string) => void,
+      onEnd: (errorMessage?: string) => void,
+      onInterim?: (t: string) => void,
+    ) => {
+      const SR = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+      if (!SR) {
+        onEnd("Speech recognition is not supported. Try Chrome or Edge.");
+        return;
+      }
+
+      try {
+        try { recognitionRef.current?.abort(); } catch {}
+        stoppingRef.current = false;
+        const r = new SR();
+        r.continuous = false;
+        r.interimResults = true;
+        r.lang = lang;
+        recognitionRef.current = r;
+        r.onresult = (e: any) => {
+          let interim = ""; let finalText = "";
+          for (let i = e.resultIndex; i < e.results.length; i++) {
+            const res = e.results[i];
+            if (res.isFinal) finalText += res[0].transcript;
+            else interim += res[0].transcript;
+          }
+          if (interim && onInterim) onInterim(interim);
+          if (finalText) onFinal(finalText);
+        };
+
+        r.onend = () => {
+          if (!stoppingRef.current) onEnd();
+        };
+        r.onerror = (e: any) => {
+          if (stoppingRef.current && e?.error === "aborted") return;
+          const errorMessage = e?.error
+            ? `Microphone detection failed: ${String(e.error).replace(/-/g, " ")}.`
+            : "Microphone detection failed.";
+          onEnd(errorMessage);
+        };
+
+        try {
+          r.start();
+        } catch {
+          onEnd("Microphone is busy. Please try again in a moment.");
+        }
+      } catch {
+        onEnd("Microphone detection failed. Please try again.");
+      }
+    },
+    [lang],
+  );
+
+  const stop = useCallback(() => {
+    stoppingRef.current = true;
+    try { recognitionRef.current?.abort(); } catch {}
+    recognitionRef.current = null;
   }, []);
 
-  const stop = useCallback(() => { try { recognitionRef.current?.stop(); } catch {} }, []);
-
-  const speak = useCallback((text: string, onEnd: () => void) => {
-    if (!("speechSynthesis" in window)) { onEnd(); return; }
-    speechSynthesis.cancel();
-    speakWithVoice(text, voice, { onEnd });
-  }, [voice]);
+  const speak = useCallback(
+    (
+      text: string,
+      handlers?: {
+        onStart?: () => void;
+        onEnd?: () => void;
+        onBoundary?: () => void;
+      },
+    ) => {
+      if (!("speechSynthesis" in window)) {
+        handlers?.onEnd?.();
+        return;
+      }
+      speechSynthesis.cancel();
+      speakWithVoice(text, voice, handlers);
+    },
+    [voice],
+  );
 
   return { supported, listen, stop, speak };
 }
@@ -462,7 +506,7 @@ export function VisionMentor() {
 
   const [expression, setExpression] = useState<NovaExpression>("neutral");
   const [pulse, setPulse] = useState(0);
-const [settings, setSettings] = useState<SettingsValues>({
+  const [settings, setSettings] = useState<SettingsValues>({
   cameraEnabled: false,
   micEnabled: false,
   voiceReplies: true,
@@ -519,6 +563,12 @@ useEffect(() => {
   // When system goes offline, stop everything in flight
   useEffect(() => {
     if (!systemOnline) {
+      setSettings((current) => {
+        if (current.cameraEnabled || current.micEnabled) {
+          return { ...current, cameraEnabled: false, micEnabled: false };
+        }
+        return current;
+      });
       stop();
       if (typeof window !== "undefined" && "speechSynthesis" in window) speechSynthesis.cancel();
       setInterim("");
@@ -545,6 +595,7 @@ useEffect(() => {
 
     const replyId = crypto.randomUUID();
     let started = false;
+    let speechStarted = false;
 
     try {
       const reply = await streamNovaReply({
@@ -552,11 +603,8 @@ useEffect(() => {
         interviewerMode,
         onChunk: (full) => {
           const sanitized = sanitizeNovaText(full);
-          setPulse((p) => p + 1);
           if (!started) {
             started = true;
-            setStatus("speaking");
-            setExpression(interviewerMode ? "thinking" : "happy");
             setMessages((m) => [...m, { id: replyId, role: "ai", text: sanitized, ts: Date.now() }]);
             return;
           }
@@ -566,9 +614,27 @@ useEffect(() => {
 
       if (!reply) throw new Error("Nova returned an empty answer.");
       const sanitizedReply = sanitizeNovaText(reply);
-      if (settings.voiceReplies && systemOnline) {
+
+      if (settings.voiceReplies && systemOnline && sanitizedReply) {
         setStatus("speaking");
-        speak(sanitizedReply, () => { setStatus("idle"); setExpression("neutral"); });
+        setExpression(interviewerMode ? "thinking" : "happy");
+        setPulse((p) => p + 1);
+        speechStarted = true;
+
+        speak(sanitizedReply, {
+          onStart: () => {
+            setStatus("speaking");
+            setExpression(interviewerMode ? "thinking" : "happy");
+            setPulse((p) => p + 1);
+          },
+          onBoundary: () => {
+            setPulse((p) => p + 1);
+          },
+          onEnd: () => {
+            setStatus("idle");
+            setExpression("neutral");
+          },
+        });
       } else {
         setStatus("idle");
         setExpression("neutral");
@@ -581,10 +647,30 @@ useEffect(() => {
   };
 
 
-  const handleMic = () => {
+  const handleMic = async () => {
     if (!systemOnline) { toast.error("System is offline"); return; }
-    if (!micEnabled) { toast.error("Microphone disabled in settings"); return; }
     if (!supported) { toast.error("Speech recognition not supported. Try Chrome or Edge."); return; }
+
+    if (!micEnabled) {
+      try {
+        if (typeof navigator !== "undefined" && navigator.mediaDevices?.getUserMedia) {
+          const stream = await navigator.mediaDevices.getUserMedia({
+            audio: {
+              echoCancellation: true,
+              noiseSuppression: true,
+              autoGainControl: true,
+              channelCount: 1,
+            },
+          });
+          stream.getTracks().forEach((track) => track.stop());
+        }
+        setSettings((current) => ({ ...current, micEnabled: true }));
+      } catch {
+        toast.error("Microphone access denied. Allow mic permission in your browser and try again.");
+        return;
+      }
+    }
+
     if (status === "listening") { stop(); setStatus("idle"); setInterim(""); return; }
     setStatus("listening"); setInterim("");
     listen(
@@ -592,7 +678,13 @@ useEffect(() => {
         setInterim("");
         setInput((prev) => (prev ? `${prev} ${text}`.trim() : text.trim()));
       },
-      () => { setInterim(""); setStatus((s) => (s === "listening" ? "idle" : s)); },
+      (errorMessage) => {
+        setInterim("");
+        setStatus((s) => (s === "listening" ? "idle" : s));
+        if (errorMessage) {
+          toast.error(errorMessage);
+        }
+      },
       (t) => setInterim(t),
     );
   };
@@ -754,7 +846,7 @@ useEffect(() => {
               </button>
               <button
                 onClick={handleMic}
-                disabled={!systemOnline || !micEnabled}
+                disabled={!systemOnline}
                 className={`p-2 rounded-lg transition-all disabled:opacity-50 ${status === "listening" ? "bg-primary/30 glow-primary" : "hover:bg-foreground/5"}`}
               >
                 {status === "listening" ? <MicOff className="w-4 h-4 text-primary" /> : <Mic className="w-4 h-4 text-foreground" />}
@@ -798,7 +890,7 @@ useEffect(() => {
               </div>
             </div>
             <div className="flex flex-col items-center gap-3 py-2">
-              <AnimatedMicButton active={status === "listening"} disabled={!systemOnline || !micEnabled} onClick={handleMic} />
+              <AnimatedMicButton active={status === "listening"} disabled={!systemOnline} onClick={handleMic} />
               <p className="text-[11px] text-muted-foreground text-center">
                 {!systemOnline ? "System offline" : status === "listening" ? "Listening…" : status === "speaking" ? "AI speaking…" : "Tap to talk"}
               </p>
@@ -835,6 +927,7 @@ useEffect(() => {
         values={settings}
         onChange={setSettings}
         userEmail={userEmail}
+        systemOnline={systemOnline}
       />
       <Toaster position="top-right" />
     </div>

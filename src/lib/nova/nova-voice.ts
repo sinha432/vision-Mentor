@@ -182,6 +182,7 @@ export function speakWithVoice(
 
   const synth = window.speechSynthesis;
   let cancelled = false;
+  let fallbackInterval: number | null = null;
 
   // Stop previous speech immediately.
   synth.cancel();
@@ -198,9 +199,27 @@ export function speakWithVoice(
   utterance.pitch = 1.0;
   utterance.volume = 1.0;
 
+  const clearFallback = () => {
+    if (fallbackInterval !== null) {
+      window.clearInterval(fallbackInterval);
+      fallbackInterval = null;
+    }
+  };
+
   utterance.onstart = () => {
     if (!cancelled) {
       handlers?.onStart?.();
+      if (handlers?.onBoundary) {
+        // Some browsers fire boundary events inconsistently. Keep the mouth in
+        // sync with a gentle fallback cadence so the avatar still opens/closes
+        // while speech is active.
+        clearFallback();
+        fallbackInterval = window.setInterval(() => {
+          if (!cancelled) {
+            handlers.onBoundary?.();
+          }
+        }, 220);
+      }
     }
   };
 
@@ -212,6 +231,7 @@ export function speakWithVoice(
 
   utterance.onend = () => {
     if (!cancelled) {
+      clearFallback();
       handlers?.onEnd?.();
     }
   };
@@ -222,6 +242,7 @@ export function speakWithVoice(
       event.error !== "canceled" &&
       event.error !== "interrupted"
     ) {
+      clearFallback();
       handlers?.onEnd?.();
     }
   };
@@ -230,6 +251,7 @@ export function speakWithVoice(
 
   return () => {
     cancelled = true;
+    clearFallback();
     synth.cancel();
   };
 }

@@ -305,12 +305,26 @@ function InterviewRoom() {
       setCamOn(stream.getVideoTracks().length > 0);
     };
     navigator.mediaDevices
-      ?.getUserMedia({ video: true, audio: true })
+      ?.getUserMedia({
+        video: {
+          facingMode: { ideal: "user" },
+          width: { ideal: 1280 },
+          height: { ideal: 720 },
+          frameRate: { ideal: 30, min: 15 },
+        },
+        audio: true,
+      })
       .then(attach)
       .catch(() =>
         // Mic denied or busy — still record video so the replay timeline works.
         navigator.mediaDevices
-          ?.getUserMedia({ video: true })
+          ?.getUserMedia({
+            video: {
+              facingMode: { ideal: "user" },
+              width: { ideal: 1280 },
+              height: { ideal: 720 },
+            },
+          })
           .then(attach)
           .catch(() => setCamOn(false)),
       );
@@ -527,8 +541,9 @@ function InterviewRoom() {
         const now = Date.now();
         const fresh = result.items.filter((item) => {
           const last = state.seen.get(item.area);
-          // Don't repeat the same area within 90s — nudge, never nag.
-          if (last && now - last < 90_000) return false;
+          // Re-check each area often enough to reflect a real-time correction
+          // without repeating the same message on every polling cycle.
+          if (last && now - last < 20_000) return false;
           state.seen.set(item.area, now);
           return true;
         });
@@ -552,8 +567,8 @@ function InterviewRoom() {
       }
     }
 
-    const first = window.setTimeout(() => void runCheck(), 12_000);
-    const id = window.setInterval(() => void runCheck(), 35_000);
+    const first = window.setTimeout(() => void runCheck(), 4_000);
+    const id = window.setInterval(() => void runCheck(), 12_000);
     return () => {
       cancelled = true;
       window.clearTimeout(first);
@@ -649,7 +664,9 @@ function InterviewRoom() {
       }
     };
     try {
-      mr.start();
+      // Timeslicing ensures data is available before each periodic analysis.
+      // requestData() alone can race the flush and produce an empty chunk.
+      mr.start(2000);
     } catch {
       return;
     }
@@ -660,7 +677,7 @@ function InterviewRoom() {
         /* not all browsers support requestData mid-stream */
       }
       void flush();
-    }, 10_000);
+    }, 8_000);
     return () => {
       cancelled = true;
       window.clearInterval(id);

@@ -21,12 +21,14 @@ export function SettingsPanel({
   values,
   onChange,
   userEmail,
+  systemOnline = true,
 }: {
   open: boolean;
   onOpenChange: (v: boolean) => void;
   values: SettingsValues;
   onChange: (v: SettingsValues) => void;
   userEmail?: string | null;
+  systemOnline?: boolean;
 }) {
   const { theme, setTheme } = useTheme();
   const [cam, setCam] = useState<PermState>("unknown");
@@ -61,7 +63,14 @@ export function SettingsPanel({
   };
   const requestMic = async () => {
     try {
-      const s = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const s = await navigator.mediaDevices.getUserMedia({
+        audio: {
+          echoCancellation: true,
+          noiseSuppression: true,
+          autoGainControl: true,
+          channelCount: 1,
+        },
+      });
       s.getTracks().forEach((t) => t.stop());
       setMic("granted");
       toast.success("Microphone access granted");
@@ -90,17 +99,25 @@ export function SettingsPanel({
               icon={<Camera className="w-4 h-4" />}
               label="Camera"
               state={cam}
-              enabled={values.cameraEnabled}
-              onToggle={(v) => onChange({ ...values, cameraEnabled: v })}
+              enabled={systemOnline && values.cameraEnabled}
+              onToggle={(v) => {
+                if (!systemOnline) return;
+                onChange({ ...values, cameraEnabled: v });
+              }}
               onRequest={requestCam}
+              disabled={!systemOnline}
             />
             <PermRow
               icon={<Mic className="w-4 h-4" />}
               label="Microphone"
               state={mic}
-              enabled={values.micEnabled}
-              onToggle={(v) => onChange({ ...values, micEnabled: v })}
+              enabled={systemOnline && values.micEnabled}
+              onToggle={(v) => {
+                if (!systemOnline) return;
+                onChange({ ...values, micEnabled: v });
+              }}
               onRequest={requestMic}
+              disabled={!systemOnline}
             />
           </Section>
 
@@ -181,10 +198,10 @@ function Toggle({ checked, onChange }: { checked: boolean; onChange: (v: boolean
 }
 
 function PermRow({
-  icon, label, state, enabled, onToggle, onRequest,
+  icon, label, state, enabled, onToggle, onRequest, disabled = false,
 }: {
   icon: React.ReactNode; label: string; state: PermState;
-  enabled: boolean; onToggle: (v: boolean) => void; onRequest: () => void;
+  enabled: boolean; onToggle: (v: boolean) => void; onRequest: () => void; disabled?: boolean;
 }) {
   const badge = {
     granted: { text: "Granted", cls: "text-emerald-500", Icon: ShieldCheck },
@@ -197,7 +214,7 @@ function PermRow({
     <div className="glass rounded-lg p-3 space-y-2">
       <div className="flex items-center justify-between gap-3">
         <div className="flex items-center gap-2"><span className="text-cyber">{icon}</span><span className="text-sm">{label}</span></div>
-        <Toggle checked={enabled} onChange={onToggle} />
+        <Toggle checked={enabled} onChange={disabled ? () => {} : onToggle} />
       </div>
       <div className="flex items-center justify-between">
         <div className={`flex items-center gap-1.5 text-[11px] ${badge.cls}`}>

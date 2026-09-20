@@ -45,19 +45,24 @@ export function useMouthOpen(talking: boolean, pulse: number, speed = 1) {
   useEffect(() => {
     if (!talking) {
       // ease the aperture closed instead of snapping so it can hand off
-      // cleanly to the resting mouth
+      // cleanly to the resting mouth. Keep the updates constrained so the UI
+      // does not churn on every animation frame while idle.
       if (reduced) {
         setState({ open: 0, shape: 0.5 });
         return;
       }
       let raf = 0;
+      let lastPaint = 0;
       const from = state.open;
       const start = performance.now();
       const duration = 180;
       const tick = (now: number) => {
         const p = Math.min(1, (now - start) / duration);
         const eased = 1 - (1 - p) * (1 - p);
-        setState((prev) => ({ open: from * (1 - eased), shape: prev.shape }));
+        if (now - lastPaint >= 1000 / 30) {
+          lastPaint = now;
+          setState((prev) => ({ open: from * (1 - eased), shape: prev.shape }));
+        }
         if (p < 1) raf = requestAnimationFrame(tick);
       };
       raf = requestAnimationFrame(tick);
@@ -74,6 +79,7 @@ export function useMouthOpen(talking: boolean, pulse: number, speed = 1) {
     }
 
     let raf = 0;
+    let lastPaint = 0;
     const start = performance.now();
     const tick = (now: number) => {
       const elapsed = (now - start) / 1000;
@@ -87,7 +93,10 @@ export function useMouthOpen(talking: boolean, pulse: number, speed = 1) {
         1,
         Math.max(0, 0.5 + 0.45 * Math.sin(t * 6.1 + seed.current) * Math.sin(t * 2.7 + 1.3)),
       );
-      setState({ open, shape });
+      if (now - lastPaint >= 1000 / 30) {
+        lastPaint = now;
+        setState({ open, shape });
+      }
       raf = requestAnimationFrame(tick);
     };
     raf = requestAnimationFrame(tick);

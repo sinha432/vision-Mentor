@@ -132,7 +132,7 @@ export function useDetectionEngine({ videoRef, stream, active, getElapsed, onEve
     const source = ctx.createMediaStreamSource(stream);
     const analyser = ctx.createAnalyser();
     analyser.fftSize = 2048;
-    analyser.smoothingTimeConstant = 0.7;
+    analyser.smoothingTimeConstant = 0.45;
     source.connect(analyser);
     const time = new Float32Array(analyser.fftSize);
     const freq = new Float32Array(analyser.frequencyBinCount);
@@ -190,9 +190,9 @@ export function useDetectionEngine({ videoRef, stream, active, getElapsed, onEve
       const noiseLevel = clamp(Math.round(noiseFloor * 4000));
       const voiceLevel = clamp(Math.round(rms * 1600));
       // Speech-shaped energy while the candidate is silent = someone else.
-      const backgroundVoice = !speaking && speechEnergy > 0.42 && rms > noiseFloor * 1.8;
+      const backgroundVoice = !speaking && speechEnergy > 0.28 && rms > Math.max(0.01, noiseFloor * 1.5);
 
-      if (backgroundVoice && now - lastVoiceEvent > 20_000) {
+      if (backgroundVoice && now - lastVoiceEvent > 10_000) {
         lastVoiceEvent = now;
         accumRef.current.backgroundVoiceEvents += 1;
         eventRef.current?.({
@@ -201,7 +201,7 @@ export function useDetectionEngine({ videoRef, stream, active, getElapsed, onEve
           confidence: clamp(Math.round(speechEnergy * 140)),
         });
       }
-      if (!speaking && noiseLevel > 45 && now - lastNoiseEvent > 45_000) {
+      if (!speaking && noiseLevel > 28 && now - lastNoiseEvent > 15_000) {
         lastNoiseEvent = now;
         eventRef.current?.({
           kind: "background_noise",
@@ -374,13 +374,13 @@ export function useDetectionEngine({ videoRef, stream, active, getElapsed, onEve
           // Require ~1.5s of sustained multi-face detection (frames run at ~5fps)
           // so a person briefly walking past the camera does not trip a strike.
           multiFaceStreak += 1;
-          if (multiFaceStreak === 8) {
+          if (multiFaceStreak === 5) {
             accumRef.current.multiFaceEvents += 1;
             fire(
               "multiple_people",
               `${faces} people detected in the camera frame. Only the candidate may be present.`,
               92,
-              20_000,
+              10_000,
             );
           }
         } else {

@@ -33,7 +33,7 @@ const INITIAL: VisionStatus = {
   phone: false,
   leftHand: { text: "Waiting…", level: "idle" },
   rightHand: { text: "Waiting…", level: "idle" },
-  audio: { text: "Waiting…", level: "idle" },
+  audio: { text: "Ready", level: "good" },
   warnings: [],
 };
 

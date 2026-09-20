@@ -96,6 +96,6 @@ export class AudioMonitor {
     this.analyser = null;
     this.source = null;
     this.levelListener = null;
-    patchVisionStatus({ audio: { text: "Waiting…", level: "idle" } });
+    patchVisionStatus({ audio: { text: "Ready", level: "good" } });
   }
 }

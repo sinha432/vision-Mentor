@@ -47,8 +47,11 @@ export function useVisionMetrics(
       if (!video || video.readyState < 2) return;
       if (!shotCanvasRef.current) shotCanvasRef.current = document.createElement("canvas");
       const canvas = shotCanvasRef.current;
-      canvas.width = 480;
-      canvas.height = 360;
+      const sourceWidth = video.videoWidth || 1280;
+      const sourceHeight = video.videoHeight || 720;
+      const scale = Math.min(1, 720 / sourceWidth);
+      canvas.width = Math.max(640, Math.round(sourceWidth * scale));
+      canvas.height = Math.max(360, Math.round(sourceHeight * scale));
       const ctx = canvas.getContext("2d");
       if (!ctx) return;
       // A frame that is too dark or washed out is useless for grooming feedback.
@@ -56,7 +59,7 @@ export function useVisionMetrics(
       if (snapshotRef.current && snapshotRef.current.quality >= quality) return;
       ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
       try {
-        snapshotRef.current = { dataUrl: canvas.toDataURL("image/jpeg", 0.6), quality };
+        snapshotRef.current = { dataUrl: canvas.toDataURL("image/jpeg", 0.84), quality };
       } catch {
         /* tainted canvas — skip the appearance review */
       }
@@ -175,13 +178,16 @@ export function useVisionMetrics(
     if (!video || video.readyState < 2) return null;
     if (!shotCanvasRef.current) shotCanvasRef.current = document.createElement("canvas");
     const canvas = shotCanvasRef.current;
-    canvas.width = 480;
-    canvas.height = 360;
+    const sourceWidth = video.videoWidth || 1280;
+    const sourceHeight = video.videoHeight || 720;
+    const scale = Math.min(1, 720 / sourceWidth);
+    canvas.width = Math.max(640, Math.round(sourceWidth * scale));
+    canvas.height = Math.max(360, Math.round(sourceHeight * scale));
     const ctx = canvas.getContext("2d");
     if (!ctx) return null;
     ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
     try {
-      return canvas.toDataURL("image/jpeg", 0.6);
+      return canvas.toDataURL("image/jpeg", 0.84);
     } catch {
       return null;
     }
