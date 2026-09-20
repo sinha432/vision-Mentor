@@ -21,8 +21,7 @@ import {
 } from "./local-db";
 import { gradeTextAnswers } from "./grading.functions";
 import { scoreAnswerTyped, weightedOverall } from "./scoring";
-import { fetchAssessmentFromMongoDB } from "./mongodb-sync";
-import { fetchUserFromMongoDB } from "./mongodb-sync";
+import { fetchAssessmentFromMongoDB, fetchCompanyAssessmentsFromMongoDB, fetchUserFromMongoDB } from "./mongodb-sync";
 
 const choiceSchema = z.object({ id: z.string().min(1), text: z.string().trim().min(1).max(300) });
 const testCaseSchema = z.object({
@@ -103,7 +102,24 @@ export async function createAssessment({ data }: { data: unknown }) {
 
 export async function listCompanyAssessments({ data }: { data: unknown }) {
   const { companyUserId } = z.object({ companyUserId: z.string().min(1) }).parse(data);
-  const mine = readAssessments().filter((a) => a.companyUserId === companyUserId);
+  const local = readAssessments().filter((a) => a.companyUserId === companyUserId);
+  let remote: any[] = [];
+  try {
+    remote = await fetchCompanyAssessmentsFromMongoDB(companyUserId);
+  } catch {
+    // Local assessments must remain visible when MongoDB is unavailable.
+  }
+  const merged = new Map<string, (typeof local)[number]>();
+  local.forEach((assessment) => merged.set(assessment.code, assessment));
+  remote.forEach((assessment) => {
+    if (!assessment?.code || assessment.companyUserId !== companyUserId || !Array.isArray(assessment.questions)) return;
+    merged.set(assessment.code, {
+      ...assessment,
+      _id: String(assessment._id ?? assessment.code),
+      status: assessment.status === "archived" ? "closed" : assessment.status,
+    } as (typeof local)[number]);
+  });
+  const mine = [...merged.values()];
   const attempts = readAttempts();
   const reports = readReports();
   return mine.map((a) => {

@@ -161,7 +161,7 @@ export async function listCompanyAssessments(): Promise<
     title: a.title,
     code: a.code,
     status: a.status,
-    questionCount: a.questions.length,
+    questionCount: Array.isArray(a.questions) ? a.questions.length : 0,
     attemptCount: a.attemptCount,
     avgScore: a.avgScore ?? 0,
   }));

@@ -97,6 +97,7 @@ function AssessmentsPage() {
   const { data: assessments = [] } = useQuery({
     queryKey: ["company-assessments"],
     queryFn: () => listCompanyAssessments(),
+    refetchOnMount: "always",
   });
 
   const invalidate = () =>

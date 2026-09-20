@@ -102,6 +102,20 @@ export async function fetchAssessmentFromMongoDB(code: string): Promise<any> {
   }
 }
 
+export async function fetchCompanyAssessmentsFromMongoDB(companyUserId: string): Promise<any[]> {
+  try {
+    const response = await fetch(
+      `/api/db/assessment?companyUserId=${encodeURIComponent(companyUserId)}`,
+    );
+    if (!response.ok) return [];
+    const data = await response.json();
+    return Array.isArray(data) ? data : [];
+  } catch (error) {
+    console.warn("Failed to fetch company assessments from MongoDB:", error);
+    return [];
+  }
+}
+
 export async function fetchUserFromMongoDB(email: string): Promise<any> {
   try {
     const response = await fetch(`/api/db/user?email=${encodeURIComponent(email)}`);
