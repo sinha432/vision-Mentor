@@ -12,6 +12,7 @@ import {
 import appCss from "../styles.css?url";
 import { ThemeProvider } from "@/contexts/ThemeContext";
 import { DemoAuthProvider } from "@/contexts/DemoAuthContext";
+import { MediaProvider } from "@/contexts/MediaProvider";
 
 function NotFoundComponent() {
   return (
@@ -163,7 +164,9 @@ function RootComponent() {
     <QueryClientProvider client={queryClient}>
       <ThemeProvider>
         <DemoAuthProvider>
-          <Outlet />
+          <MediaProvider>
+            <Outlet />
+          </MediaProvider>
         </DemoAuthProvider>
       </ThemeProvider>
     </QueryClientProvider>

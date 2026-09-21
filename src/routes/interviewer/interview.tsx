@@ -37,7 +37,7 @@ import { useVisionMetrics } from "@/interviewer/hooks/useVisionMetrics";
 import { useSessionRecorder } from "@/interviewer/hooks/useSessionRecorder";
 import { saveRecording } from "@/interviewer/lib/recording-store";
 import { getCompany } from "@/interviewer/lib/companies";
-import { coachPresenceNow, nextInterviewTurn } from "@/interviewer/lib/interview.functions";
+import { coachPresenceNow, nextInterviewTurn, reviewAppearance } from "@/interviewer/lib/interview.functions";
 import {
   EMPTY_VOICE,
   PHASE_LABELS,
@@ -62,6 +62,7 @@ import { candidateNameMatchesResume } from "@/interviewer/lib/resume-sentences";
 import { useDemoAuth } from "@/contexts/DemoAuthContext";
 import { syncInterviewToMongoDB } from "@/lib/mongodb-sync";
 import { cn } from "@/lib/utils";
+import { useMedia } from "@/contexts/MediaProvider";
 
 export const Route = createFileRoute("/interviewer/interview")({
   head: () => ({
@@ -85,6 +86,7 @@ export const Route = createFileRoute("/interviewer/interview")({
 function InterviewRoom() {
   const navigate = useNavigate();
   const { user } = useDemoAuth();
+  const { stream: sharedStream, cameraConnected, micConnected } = useMedia();
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const transcriptRef = useRef<HTMLDivElement | null>(null);
@@ -264,6 +266,8 @@ function InterviewRoom() {
     videoRef,
     stream: liveStream,
     active: camOn,
+    audioActive: Boolean(liveStream?.getAudioTracks().length),
+    audioMuted: speaker.speaking,
     getElapsed: () => elapsedRef.current,
     onEvent: handleDetectionEvent,
   });
@@ -291,57 +295,21 @@ function InterviewRoom() {
     setConfig(draft);
   }, [navigate]);
 
-  // Camera + microphone for the local replay clip (audio makes the replay audible).
+  // Consume the shared camera and microphone stream for the interview.
   useEffect(() => {
-    let cancelled = false;
-    const attach = (stream: MediaStream) => {
-      if (cancelled) {
-        stream.getTracks().forEach((t) => t.stop());
-        return;
-      }
-      streamRef.current = stream;
-      setLiveStream(stream);
-      setClipAudio(stream.getAudioTracks().length > 0);
-      if (stream.getAudioTracks().length) clipRecorder.start(stream);
-      if (videoRef.current) {
-        videoRef.current.srcObject = stream;
-        void videoRef.current.play().catch(() => {});
-      }
-      setCamOn(stream.getVideoTracks().length > 0);
-    };
-    navigator.mediaDevices
-      ?.getUserMedia({
-        video: {
-          facingMode: { ideal: "user" },
-          width: { ideal: 1280 },
-          height: { ideal: 720 },
-          frameRate: { ideal: 30, min: 15 },
-        },
-        audio: readMicEnabled(),
-      })
-      .then(attach)
-      .catch(() =>
-        // Mic denied or busy — still record video so the replay timeline works.
-        (setVoice((current) => ({
-          ...current,
-          status: readMicEnabled() ? "permission_denied" : "app_disabled",
-        })),
-        navigator.mediaDevices
-          ?.getUserMedia({
-            video: {
-              facingMode: { ideal: "user" },
-              width: { ideal: 1280 },
-              height: { ideal: 720 },
-            },
-          })
-          .then(attach)
-            .catch(() => setCamOn(false))),
-      );
+    streamRef.current = sharedStream;
+    setLiveStream(sharedStream);
+    setClipAudio(micConnected);
+    if (sharedStream && micConnected) clipRecorder.start(sharedStream);
+    if (videoRef.current && sharedStream && cameraConnected) {
+      videoRef.current.srcObject = sharedStream;
+      void videoRef.current.play().catch(() => undefined);
+    }
+    setCamOn(cameraConnected);
     return () => {
-      cancelled = true;
-      streamRef.current?.getTracks().forEach((t) => t.stop());
+      if (videoRef.current?.srcObject === sharedStream) videoRef.current.srcObject = null;
     };
-  }, []);
+  }, [cameraConnected, clipRecorder.start, micConnected, sharedStream]);
 
   // Timer
   useEffect(() => {
@@ -633,6 +601,7 @@ function InterviewRoom() {
     let cancelled = false;
     let chunks: Blob[] = [];
     let mr: MediaRecorder | null = null;
+    let flushRequested = false;
     try {
       const mime = MediaRecorder.isTypeSupported?.("audio/webm") ? "audio/webm" : undefined;
       mr = new MediaRecorder(stream, mime ? { mimeType: mime } : undefined);
@@ -641,6 +610,10 @@ function InterviewRoom() {
     }
     mr.ondataavailable = (event) => {
       if (event.data.size > 0) chunks.push(event.data);
+      if (flushRequested) {
+        flushRequested = false;
+        void flush();
+      }
     };
     const flush = async () => {
       if (!chunks.length) return;
@@ -681,12 +654,12 @@ function InterviewRoom() {
       return;
     }
     const id = window.setInterval(() => {
+      flushRequested = true;
       try {
         mr?.requestData();
       } catch {
         /* not all browsers support requestData mid-stream */
       }
-      void flush();
     }, 8_000);
     return () => {
       cancelled = true;
@@ -700,7 +673,12 @@ function InterviewRoom() {
   }, [recorder.recording, liveStream, flagIntegrity, escalate]);
 
   const persist = useCallback(
-    (allTurns: Turn[], completed: boolean) => {
+    (
+      allTurns: Turn[],
+      completed: boolean,
+      appearance?: InterviewSession["appearance"],
+      appearanceObservation?: InterviewSession["appearanceObservation"],
+    ) => {
       if (!config) return;
       const session: InterviewSession = {
         id: sessionId,
@@ -713,6 +691,15 @@ function InterviewRoom() {
         report: undefined,
         // One webcam frame, used once on the report to review dress and hair.
         snapshot: vision.getSnapshot(),
+        appearance,
+        appearanceObservation: appearanceObservation ?? (lastVisionResult
+          ? {
+              attire: lastVisionResult.attire,
+              grooming: lastVisionResult.grooming,
+              notes: lastVisionResult.notes,
+              t: elapsedRef.current,
+            }
+          : undefined),
         coaching,
         presence: presenceRef.current.slice(-1800),
         proctor,
@@ -777,7 +764,7 @@ function InterviewRoom() {
         void syncInterviewToMongoDB(mongoInterview);
       }
     },
-    [config, sessionId, elapsed, vision, voice, coaching, proctor, detection, endReason, user],
+    [config, sessionId, elapsed, vision, voice, coaching, proctor, detection, endReason, lastVisionResult, user],
   );
 
   const submitAnswer = useCallback(
@@ -894,12 +881,36 @@ function InterviewRoom() {
           recordingRef.current = { id, duration: clip.duration, mimeType: clip.mimeType };
         }
       }
-      streamRef.current?.getTracks().forEach((t) => t.stop());
-      persist(turns, true);
+      let appearance: InterviewSession["appearance"] = undefined;
+      const snapshot = vision.captureSnapshotNow() ?? vision.getSnapshot();
+      let finalAppearanceObservation: InterviewSession["appearanceObservation"] = undefined;
+      if (snapshot && config) {
+        try {
+          const liveReview = await analyzeProctoringFrame({ data: { dataUrl: snapshot } });
+          finalAppearanceObservation = {
+            attire: liveReview.attire,
+            grooming: liveReview.grooming,
+            notes: liveReview.notes,
+            t: elapsedRef.current,
+          };
+        } catch {
+          /* final appearance evidence remains optional */
+        }
+      }
+      if (snapshot && config) {
+        try {
+          appearance = await reviewAppearance({
+            data: { dataUrl: snapshot, companyId: config.companyId, role: config.role },
+          });
+        } catch {
+          appearance = undefined;
+        }
+      }
+      persist(turns, true, appearance, finalAppearanceObservation);
       if (reason) toast.error(reason);
       navigate({ to: "/interviewer/report/$sessionId", params: { sessionId } });
     },
-    [clipRecorder, navigate, persist, recorder, sessionId, speaker, turns],
+    [clipRecorder, config, navigate, persist, recorder, sessionId, speaker, turns, vision],
   );
 
   useEffect(() => {

@@ -11,6 +11,8 @@ interface CompanionProps {
   talking: boolean;
   /** increments once per speech boundary event to pulse the mouth */
   pulse: number;
+  /** 0..1 response progress from speech synthesis boundaries */
+  progress?: number;
   className?: string;
   /** lip-sync wave-rate multiplier — used by the expression/lip-sync demo */
   speed?: number;
@@ -62,8 +64,8 @@ function restingMouthPath(expression: Expression): string | null {
   }
 }
 
-export function Companion({ expression, talking, pulse, className, speed = 1 }: CompanionProps) {
-  const { open, shape, reduced } = useMouthOpen(talking, pulse, speed);
+export function Companion({ expression, talking, pulse, progress = 0, className, speed = 1 }: CompanionProps) {
+  const { open, shape, reduced } = useMouthOpen(talking, pulse, speed, progress);
   const gaze = useEyeGaze(expression, talking);
 
   // talking mouth geometry — `shape` swings between a wide "eh" and a round "oh"

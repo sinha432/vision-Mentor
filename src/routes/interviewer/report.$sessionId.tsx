@@ -3,10 +3,8 @@ import { useEffect, useState } from "react";
 import {
   ArrowRight,
   BookOpen,
-  CameraOff,
   Code2,
   Download,
-  Hand,
   Loader2,
   MessageSquare,
   Scissors,
@@ -15,14 +13,12 @@ import {
   Shirt,
   Sparkles,
   Target,
-  EyeOff,
   TrendingUp,
 } from "lucide-react";
 import { toast } from "sonner";
 import { SiteHeader } from "@/interviewer/components/vmx/SiteHeader";
 import { ResumeFitCard } from "@/interviewer/components/vmx/ResumeFitCard";
 import { ReplayTimeline } from "@/interviewer/components/vmx/ReplayTimeline";
-import { TrendCharts } from "@/interviewer/components/vmx/TrendCharts";
 import { ScoreBar, ScoreRing } from "@/interviewer/components/vmx/ScoreRing";
 import { Button } from "@/components/ui/button";
 import { getCompany } from "@/interviewer/lib/companies";
@@ -37,6 +33,8 @@ import {
   DRESS_LABELS,
   HAIR_LABELS,
   type AppearanceReview,
+  BEARD_LABELS,
+  type BeardVerdict,
   type DressVerdict,
   type ForensicsFinding,
   type ForensicsKind,
@@ -78,6 +76,7 @@ const list = (value: unknown): string[] =>
 /** The report comes from a model — never trust its shape in the render tree. */
 function normalizeReport(raw: unknown): InterviewReport {
   const r = (raw ?? {}) as Partial<InterviewReport>;
+  const cameraAreas = new Set(["eye contact", "body language", "posture", "attention"]);
   return {
     overall: num(r.overall),
     technical: num(r.technical),
@@ -94,7 +93,7 @@ function normalizeReport(raw: unknown): InterviewReport {
     behaviour: num(r.behaviour),
     subScoreNotes: Array.isArray(r.subScoreNotes)
       ? r.subScoreNotes
-          .filter((n) => n && typeof n.area === "string")
+          .filter((n) => n && typeof n.area === "string" && !cameraAreas.has(n.area.toLowerCase()))
           .map((n) => ({
             area: n.area,
             score: num(n.score),
@@ -121,6 +120,7 @@ function normalizeAppearance(raw: unknown): AppearanceReview {
   const a = (raw ?? {}) as Partial<AppearanceReview>;
   const dressVerdicts: DressVerdict[] = ["appropriate", "acceptable", "not_appropriate"];
   const hairVerdicts: HairVerdict[] = ["neat", "untidy"];
+  const beardVerdicts: BeardVerdict[] = ["neat", "needs_attention", "not_visible"];
   const dressVerdict = a.dress?.verdict;
   const hairVerdict = a.hair?.verdict;
   return {
@@ -133,8 +133,14 @@ function normalizeAppearance(raw: unknown): AppearanceReview {
       verdict: hairVerdict && hairVerdicts.includes(hairVerdict) ? hairVerdict : "neat",
       note: typeof a.hair?.note === "string" ? a.hair.note : "",
     },
+    beard: {
+      verdict: a.beard?.verdict && beardVerdicts.includes(a.beard.verdict) ? a.beard.verdict : "not_visible",
+      note: typeof a.beard?.note === "string" ? a.beard.note : "Beard was not visible enough to assess.",
+    },
     fixes: list(a.fixes),
     reason: typeof a.reason === "string" ? a.reason : "",
+    confidence: typeof a.confidence === "number" ? a.confidence : undefined,
+    limitations: list(a.limitations),
   };
 }
 
@@ -172,7 +178,7 @@ function voiceCaptured(session: InterviewSession | null): boolean {
 }
 
 function voiceStatusLabel(session: InterviewSession | null): string {
-  if (session?.voice.status == null && session.voice.samples > 0) return "Voice captured";
+  if (session && session.voice.status == null && session.voice.samples > 0) return "Voice captured";
   switch (session?.voice.status) {
     case "app_disabled":
       return "Voice disabled in settings";
@@ -491,14 +497,18 @@ function ReportPage() {
 
   const company = session ? getCompany(session.config.companyId) : null;
   const answered = session?.turns.filter((t) => t.answer).length ?? 0;
-  const detectionSummary = session?.detection ?? null;
-  const faceMissingSeconds = detectionSummary?.faceMissingSeconds ?? 0;
-  const handGestureSeconds = detectionSummary?.handGestureSeconds ?? 0;
-  const handGestureEvents = detectionSummary?.handGestureEvents ?? 0;
-  const tabSwitches = session?.proctor?.filter((event) => event.kind === "tab_switch").length ?? 0;
-  const cameraNeedsAttention = faceMissingSeconds > 3 || appearance?.assessed === false;
   const groomingEvents = (session?.coaching ?? []).filter(
     (event) => event.area === "hair" || event.area === "grooming",
+  );
+  const reportProctor = (session?.proctor ?? []).filter(
+    (event) =>
+      ![
+        "multiple_people",
+        "face_missing",
+        "looking_away",
+        "device_visible",
+        "unusual_movement",
+      ].includes(event.kind),
   );
 
   return (
@@ -560,70 +570,6 @@ function ReportPage() {
               </div>
             </section>
 
-            {/* Camera and attention coaching */}
-            {(detectionSummary || appearance) && (
-              <section className="rounded-2xl glass p-6">
-                <h2 className="flex items-center gap-2 font-display text-lg font-semibold">
-                  <EyeOff className="h-4 w-4 text-primary" /> Camera attention & presentation
-                </h2>
-                <p className="mt-2 text-sm text-muted-foreground">
-                  These are approximate coaching signals from the camera, not a judgment about
-                  your intent or mental state.
-                </p>
-                <div className="mt-4 grid gap-3 md:grid-cols-3">
-                  <CoachingSignal
-                    icon={CameraOff}
-                    title="Camera visibility"
-                    issue={cameraNeedsAttention}
-                    detail={
-                      faceMissingSeconds > 0
-                        ? `Your face was not visible for about ${faceMissingSeconds} second${faceMissingSeconds === 1 ? "" : "s"}.`
-                        : "Your face stayed visible during the measured camera samples."
-                    }
-                    action={
-                      faceMissingSeconds > 0
-                        ? "Use the Mac front camera, move closer, and add light in front of you."
-                        : "Keep your face centered with your eyes near the top third of the frame."
-                    }
-                  />
-                  <CoachingSignal
-                    icon={EyeOff}
-                    title="Interview focus"
-                    issue={faceMissingSeconds > 3 || (detectionSummary?.avgEyeContact ?? 100) < 55}
-                    detail={
-                      tabSwitches > 0
-                        ? `${tabSwitches} browser focus loss${tabSwitches === 1 ? " was" : "es were"} recorded during the session.`
-                        : faceMissingSeconds > 3
-                        ? "The report recorded moments when you were not camera-focused because you left the frame."
-                        : `Average camera attention was ${detectionSummary?.avgEyeContact ?? 0}/100.`
-                    }
-                    action={
-                      tabSwitches > 0
-                        ? "Keep the interviewer tab active and close distracting windows before you begin."
-                        : "Look toward the interviewer window, and pause the interview if you need to adjust your setup."
-                    }
-                  />
-                  <CoachingSignal
-                    icon={Hand}
-                    title="Gestures"
-                    issue={handGestureEvents > 0}
-                    detail={
-                      handGestureEvents > 0
-                        ? `${handGestureEvents} hand-gesture interval${handGestureEvents === 1 ? " was" : "s were"} detected (${handGestureSeconds}s total).`
-                        : "No sustained hand-gesture interval was detected."
-                    }
-                    action="Use deliberate gestures and keep your hands inside the camera frame."
-                  />
-                </div>
-                {appearance?.assessed === false && (
-                  <p className="mt-4 rounded-xl bg-warning/10 p-3 text-sm text-warning-foreground">
-                    Dress and grooming could not be assessed reliably because the camera frame was
-                    not clear enough. Improve lighting and framing, then retry the appearance review.
-                  </p>
-                )}
-              </section>
-            )}
-
             {/* Detailed sub-scores */}
             <section className="rounded-2xl glass p-6">
               <h2 className="font-display text-lg font-semibold">Detailed sub-scores</h2>
@@ -632,8 +578,6 @@ function ReportPage() {
                   ? report.subScoreNotes
                   : [
                       { area: "Grammar", score: report.grammar, note: "" },
-                      { area: "Body language", score: report.bodyLanguage, note: "" },
-                      { area: "Eye contact", score: report.eyeContact, note: "" },
                       { area: "Professionalism", score: report.professionalism, note: "" },
                       { area: "Behaviour", score: report.behaviour, note: "" },
                     ]
@@ -681,13 +625,49 @@ function ReportPage() {
               </section>
             )}
 
-            {/* Trend graphs */}
-            <TrendCharts
-              samples={session?.detection?.samples ?? []}
-              turns={session?.turns ?? []}
-              createdAt={session?.createdAt ?? 0}
-              recording={session?.recording ?? null}
-            />
+            {session?.config.resume && (
+              <section className="rounded-2xl glass p-6">
+                <h2 className="font-display text-lg font-semibold">Resume evidence used in interview</h2>
+                <p className="mt-2 text-sm text-muted-foreground">
+                  Vera Kapoor used the attached resume for {session.config.candidateName || session.config.resume.name || "this candidate"}.
+                  The entries below show the resume facts available for questioning and the answers captured.
+                </p>
+                <p className="mt-2 text-xs text-primary">
+                  Resume analysis: {session.config.resume.sourceLines?.length ?? "available"} source lines indexed word by word.
+                </p>
+                <div className="mt-4 grid gap-4 lg:grid-cols-2">
+                  <div className="rounded-xl bg-secondary/35 p-4">
+                    <h3 className="text-xs font-semibold uppercase tracking-widest text-primary">Resume facts</h3>
+                    <ul className="mt-3 space-y-2 text-sm text-muted-foreground">
+                      {session.config.resume.projects.slice(0, 5).map((project) => (
+                        <li key={project.title}>
+                          <span className="font-medium text-foreground">{project.title}</span>: {project.summary}
+                        </li>
+                      ))}
+                      {session.config.resume.skills.length > 0 && (
+                        <li><span className="font-medium text-foreground">Skills:</span> {session.config.resume.skills.join(", ")}</li>
+                      )}
+                    </ul>
+                  </div>
+                  <div className="rounded-xl bg-secondary/35 p-4">
+                    <h3 className="text-xs font-semibold uppercase tracking-widest text-primary">Resume questions</h3>
+                    <ul className="mt-3 space-y-3 text-sm">
+                      {session.turns.filter((turn) => turn.phase === "resume" && turn.question).map((turn) => (
+                        <li key={turn.id}>
+                          <p className="text-foreground">{turn.question?.prompt}</p>
+                          <p className="mt-1 text-xs text-muted-foreground">
+                            {turn.answer ? "Answer captured and available for evaluation." : "No answer captured."}
+                          </p>
+                        </li>
+                      ))}
+                      {!session.turns.some((turn) => turn.phase === "resume" && turn.question) && (
+                        <li className="text-muted-foreground">No resume-specific question was completed.</li>
+                      )}
+                    </ul>
+                  </div>
+                </div>
+              </section>
+            )}
 
             {/* Replay timeline */}
             <ReplayTimeline
@@ -724,14 +704,13 @@ function ReportPage() {
                   interrupted interview as a red flag.
                 </p>
               )}
-              {(session?.proctor ?? []).length === 0 ? (
+              {reportProctor.length === 0 ? (
                 <p className="mt-3 text-sm text-muted-foreground">
-                  No integrity issues were detected — one candidate in frame, a single voice, and
-                  you stayed in the interview the whole time.
+                  No non-camera integrity issues were detected during the interview.
                 </p>
               ) : (
                 <ul className="mt-4 space-y-2">
-                  {(session?.proctor ?? []).map((event, i) => (
+                  {reportProctor.map((event, i) => (
                     <li
                       key={`${event.t}-${event.kind}-${i}`}
                       className="flex flex-wrap items-center gap-2 rounded-xl border border-border/70 px-4 py-3 text-sm"
@@ -745,6 +724,34 @@ function ReportPage() {
                   ))}
                 </ul>
               )}
+            </section>
+
+            <section className="rounded-2xl glass p-6">
+              <h2 className="font-display text-lg font-semibold">Audio environment</h2>
+              <p className="mt-2 text-sm text-muted-foreground">
+                These observations describe external sound or overlapping voices detected by the microphone.
+                Vera Kapoor&apos;s known speech is excluded where the browser can identify it.
+              </p>
+              {(() => {
+                const audioEvents = (session?.proctor ?? []).filter(
+                  (event) => event.kind === "background_noise" || event.kind === "multiple_voices",
+                );
+                return audioEvents.length ? (
+                  <ul className="mt-4 space-y-2">
+                    {audioEvents.map((event, index) => (
+                      <li key={`${event.kind}-${event.t}-${index}`} className="rounded-xl border border-border/70 px-4 py-3 text-sm">
+                        <span className="font-medium">{PROCTOR_LABELS[event.kind]}</span>
+                        <span className="ml-2 text-muted-foreground">{event.detail}</span>
+                        {typeof event.confidence === "number" && (
+                          <span className="ml-2 text-xs text-primary">Confidence {event.confidence}/100</span>
+                        )}
+                      </li>
+                    ))}
+                  </ul>
+                ) : (
+                  <p className="mt-4 text-sm text-success">No external noise or overlapping voice was recorded.</p>
+                );
+              })()}
             </section>
 
             {/* Delivery */}
@@ -767,18 +774,6 @@ function ReportPage() {
                 <Stat
                   label="Long pauses"
                   value={voiceCaptured(session) ? String(session!.voice.pauseCount) : "not captured"}
-                />
-                <Stat
-                  label="Eye contact"
-                  value={session?.vision.enabled ? `${session.vision.eyeContact}%` : "not captured"}
-                />
-                <Stat
-                  label="Posture"
-                  value={session?.vision.enabled ? `${session.vision.posture}%` : "not captured"}
-                />
-                <Stat
-                  label="Attention"
-                  value={session?.vision.enabled ? `${session.vision.attention}%` : "not captured"}
                 />
               </div>
             </section>
@@ -806,6 +801,28 @@ function ReportPage() {
                   </ul>
                 </div>
               )}
+              {session?.appearanceObservation && (
+                <div className="mt-4 rounded-xl border border-primary/25 bg-primary/5 p-4">
+                  <h3 className="text-[10px] uppercase tracking-widest text-primary">
+                    Detected from the interview video
+                  </h3>
+                  {session.appearanceObservation.attire && (
+                    <p className="mt-2 text-sm text-muted-foreground">
+                      <span className="font-medium text-foreground">Detected outfit:</span>{" "}
+                      {session.appearanceObservation.attire}
+                    </p>
+                  )}
+                  {session.appearanceObservation.grooming && (
+                    <p className="mt-1 text-sm text-muted-foreground">
+                      <span className="font-medium text-foreground">Detected grooming:</span>{" "}
+                      {session.appearanceObservation.grooming}
+                    </p>
+                  )}
+                  {session.appearanceObservation.notes && (
+                    <p className="mt-1 text-xs text-muted-foreground">{session.appearanceObservation.notes}</p>
+                  )}
+                </div>
+              )}
               {appearanceLoading ? (
                 <p className="mt-3 flex items-center gap-2 text-sm text-muted-foreground">
                   <Loader2 className="h-4 w-4 animate-spin text-primary" /> Reviewing your dress and
@@ -813,10 +830,15 @@ function ReportPage() {
                 </p>
               ) : !appearance ? (
                 <div className="mt-3 space-y-3">
-                  <p className="text-sm text-muted-foreground">
-                    Camera was off or no appearance frame was saved, so dress and hair were not
-                    assessed from a still frame.
-                  </p>
+                  {forensicsLoading ? (
+                    <p className="flex items-center gap-2 text-sm text-muted-foreground">
+                      <Loader2 className="h-4 w-4 animate-spin text-primary" /> Reviewing recorded interview frames for appearance and grooming…
+                    </p>
+                  ) : !session?.appearanceObservation && !forensics?.assessed ? (
+                    <p className="text-sm text-muted-foreground">
+                      Camera was off or no usable appearance evidence was saved.
+                    </p>
+                  ) : null}
                   {forensics?.assessed && forensics.groomingSummary && (
                     <div className="rounded-xl border border-primary/25 bg-primary/5 p-4">
                       <h3 className="text-[10px] uppercase tracking-widest text-primary">
@@ -869,6 +891,19 @@ function ReportPage() {
                 </div>
               ) : (
                 <div className="mt-4 space-y-4">
+                  <div className="rounded-xl border border-primary/25 bg-primary/5 p-4">
+                    <p className="text-[10px] uppercase tracking-widest text-primary">
+                      Overall presentation
+                    </p>
+                    <p className="mt-1 text-sm font-medium">
+                      {appearance.dress.verdict === "not_appropriate" || appearance.hair.verdict === "untidy"
+                        ? "Needs improvement"
+                        : "Neat and interview-ready"}
+                    </p>
+                    <p className="mt-1 text-xs text-muted-foreground">
+                      Based only on visible clothing, hair, and grooming details from the camera frame.
+                    </p>
+                  </div>
                   <div className="grid gap-4 sm:grid-cols-2">
                     <AppearanceItem
                       icon={Shirt}
@@ -890,7 +925,24 @@ function ReportPage() {
                       tone={appearance.hair.verdict === "neat" ? "success" : "warning"}
                       note={appearance.hair.note}
                     />
+                    <AppearanceItem
+                      icon={Scissors}
+                      title="Beard grooming"
+                      label={BEARD_LABELS[appearance.beard.verdict]}
+                      tone={
+                        appearance.beard.verdict === "neat"
+                          ? "success"
+                          : "warning"
+                      }
+                      note={appearance.beard.note}
+                    />
                   </div>
+                  {typeof appearance.confidence === "number" && (
+                    <p className="text-xs text-muted-foreground">
+                      Appearance confidence: {appearance.confidence}/100
+                      {appearance.limitations?.length ? ` · ${appearance.limitations.join(" ")}` : ""}
+                    </p>
+                  )}
                   {forensics?.assessed && forensics.groomingSummary && (
                     <div className="rounded-xl border border-primary/25 bg-primary/5 p-4">
                       <h3 className="text-[10px] uppercase tracking-widest text-primary">

@@ -41,6 +41,7 @@ export interface QuestionSpec {
 
 export interface ResumeInsights {
   resumeText?: string;
+  sourceLines?: { line: number; text: string; words: string[] }[];
   name: string;
   headline: string;
   skills: string[];
@@ -133,13 +134,17 @@ export type VoiceStatus =
 
 export type DressVerdict = "appropriate" | "acceptable" | "not_appropriate";
 export type HairVerdict = "neat" | "untidy";
+export type BeardVerdict = "neat" | "needs_attention" | "not_visible";
 
 export interface AppearanceReview {
   assessed: boolean;
   dress: { verdict: DressVerdict; note: string };
   hair: { verdict: HairVerdict; note: string };
+  beard: { verdict: BeardVerdict; note: string };
   fixes: string[];
   reason: string;
+  confidence?: number;
+  limitations?: string[];
 }
 
 export const DRESS_LABELS: Record<DressVerdict, string> = {
@@ -151,6 +156,12 @@ export const DRESS_LABELS: Record<DressVerdict, string> = {
 export const HAIR_LABELS: Record<HairVerdict, string> = {
   neat: "Neat",
   untidy: "Needs tidying",
+};
+
+export const BEARD_LABELS: Record<BeardVerdict, string> = {
+  neat: "Well groomed",
+  needs_attention: "Needs grooming",
+  not_visible: "Not visible enough to assess",
 };
 
 /** How much a detected presentation issue actually costs the candidate. */
@@ -365,6 +376,8 @@ export interface InterviewSession {
   /** Base64 webcam frame kept only until the appearance review is generated. */
   snapshot?: string | null;
   appearance?: AppearanceReview | null;
+  /** Last live attire/grooming observation produced from the detection video panel. */
+  appearanceObservation?: { attire: string; grooming: string; notes: string; t: number } | null;
   /** Real-time presentation nudges surfaced during the session. */
   coaching?: CoachingEvent[];
   /** Per-second presence track backing the replay timeline. */

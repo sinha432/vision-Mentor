@@ -19,6 +19,7 @@ import { useNovaVoice, voiceLabel, speakWithVoice } from "@/lib/nova/nova-voice"
 import type { NovaExpression, NovaState } from "@/lib/nova/expression";
 import { streamNovaReply } from "@/lib/nova/stream-reply";
 import { AudioMonitor } from "@/lib/audio-monitor";
+import { useMedia } from "@/contexts/MediaProvider";
 
 export const Route = createFileRoute("/_authenticated/")({ component: VisionMentor });
 
@@ -80,10 +81,12 @@ function AvatarPanel({
   status,
   expression,
   pulse,
+  speechProgress,
 }: {
   status: Status;
   expression: NovaExpression;
   pulse: number;
+  speechProgress: number;
 }) {
   const vision = useVisionStatus();
   const { voices: novaVoices, active: activeVoice, setVoice, fellBack } = useNovaVoice();
@@ -106,6 +109,7 @@ function AvatarPanel({
             expression={status === "offline" ? "sad" : expression}
             talking={novaState === "speaking"}
             pulse={pulse}
+            progress={speechProgress}
           />
         </div>
         {[0, 60, 120, 180, 240, 300].map((deg) => (
@@ -327,66 +331,45 @@ function VisionWarnings() {
 function VideoPanel({ enabled, micEnabled, onToggle }: { enabled: boolean; micEnabled: boolean; onToggle: () => void }) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const [error, setError] = useState<string | null>(null);
+  const { stream, cameraConnected, micConnected, error: mediaError } = useMedia();
 
   useEffect(() => {
-    let stream: MediaStream | null = null;
     let audioMonitor: AudioMonitor | null = null;
     const detector = new VisionDetector();
-    if (enabled || micEnabled) {
-      if (!navigator.mediaDevices?.getUserMedia) {
-        setError("Camera or microphone access is not available in this browser.");
-        return;
-      }
-
-      const attach = async (s: MediaStream) => {
-          stream = s;
-          const el = videoRef.current;
-          if (enabled && el) {
-            el.srcObject = s;
-            try { await el.play(); } catch {}
-            void detector.start(el);
-          }
-          if (micEnabled && s.getAudioTracks().length) {
-            audioMonitor = new AudioMonitor();
-            audioMonitor.start(s);
-          }
-          setError(null);
-      };
-
-      navigator.mediaDevices
-        .getUserMedia({ video: enabled, audio: micEnabled })
-        .then(attach)
-        .catch(async (err) => {
-          console.warn("Camera or microphone access failed", err);
-          if (enabled) {
-            try {
-              await attach(await navigator.mediaDevices.getUserMedia({ video: true, audio: false }));
-              setError(micEnabled ? "Microphone access denied — camera is still available." : null);
-              return;
-            } catch {
-              /* show the camera error below */
-            }
-          }
-          setError(micEnabled ? "Microphone access denied." : "Camera access denied");
-        });
-    }
-    return () => {
+    const stopAnalysis = () => {
       detector.stop();
       audioMonitor?.stop();
-      stream?.getTracks().forEach((t) => t.stop());
+      audioMonitor = null;
+      if (videoRef.current) videoRef.current.srcObject = null;
     };
-  }, [enabled, micEnabled]);
+
+    const el = videoRef.current;
+    if (enabled && cameraConnected && el && stream) {
+      el.srcObject = stream;
+      void el.play().catch(() => undefined);
+      void detector.start(el);
+    }
+    if (micEnabled && micConnected && stream) {
+      audioMonitor = new AudioMonitor();
+      audioMonitor.start(stream);
+    }
+    setError(mediaError);
+
+    return () => {
+      stopAnalysis();
+    };
+  }, [cameraConnected, enabled, mediaError, micConnected, micEnabled, stream]);
 
   return (
     <div className="relative rounded-2xl overflow-hidden card-3d aspect-video">
       <div className="absolute top-3 left-3 z-10 flex items-center gap-2 px-2 py-1 rounded-md bg-background/60 backdrop-blur">
         <span className="w-1.5 h-1.5 rounded-full bg-destructive animate-pulse" />
-        <span className="text-[10px] font-display uppercase tracking-widest text-foreground">{enabled ? "LIVE" : "OFF"}</span>
+        <span className="text-[10px] font-display uppercase tracking-widest text-foreground">{cameraConnected ? "CONNECTED" : "DISCONNECTED"}</span>
       </div>
       <button onClick={onToggle} className="absolute top-3 right-3 z-10 p-2 rounded-md glass hover:glow-cyber transition-shadow">
         {enabled ? <Video className="w-4 h-4 text-cyber" /> : <VideoOff className="w-4 h-4 text-muted-foreground" />}
       </button>
-      {enabled && !error ? (
+      {enabled && cameraConnected && !error ? (
         <>
           <video ref={videoRef} autoPlay playsInline muted className="w-full h-full object-cover" />
           <div className="absolute inset-0 pointer-events-none">
@@ -400,7 +383,7 @@ function VideoPanel({ enabled, micEnabled, onToggle }: { enabled: boolean; micEn
       ) : (
         <div className="w-full h-full grid-bg flex flex-col items-center justify-center gap-2">
           <VideoOff className="w-10 h-10 text-muted-foreground" />
-          <p className="text-xs text-muted-foreground">{error ?? "Camera offline"}</p>
+          <p className="text-xs text-muted-foreground">{error ?? mediaError ?? "Camera disconnected"}</p>
         </div>
       )}
     </div>
@@ -411,6 +394,7 @@ function useSpeech(lang = "en-US", voice: SpeechSynthesisVoice | null = null) {
   const recognitionRef = useRef<any>(null);
   const stoppingRef = useRef(false);
   const [supported, setSupported] = useState(false);
+  const [speechProgress, setSpeechProgress] = useState(0);
 
   useEffect(() => {
     const SR = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
@@ -488,7 +472,7 @@ function useSpeech(lang = "en-US", voice: SpeechSynthesisVoice | null = null) {
       handlers?: {
         onStart?: () => void;
         onEnd?: () => void;
-        onBoundary?: () => void;
+        onBoundary?: (progress?: number) => void;
       },
     ) => {
       if (!("speechSynthesis" in window)) {
@@ -496,16 +480,31 @@ function useSpeech(lang = "en-US", voice: SpeechSynthesisVoice | null = null) {
         return;
       }
       speechSynthesis.cancel();
-      speakWithVoice(text, voice, handlers);
+      speakWithVoice(text, voice, {
+        ...handlers,
+        onStart: () => {
+          setSpeechProgress(0);
+          handlers?.onStart?.();
+        },
+        onBoundary: (progress) => {
+          if (typeof progress === "number") setSpeechProgress(progress);
+          handlers?.onBoundary?.(progress);
+        },
+        onEnd: () => {
+          setSpeechProgress(1);
+          handlers?.onEnd?.();
+        },
+      });
     },
     [voice],
   );
 
-  return { supported, listen, stop, speak };
+  return { supported, listen, stop, speak, speechProgress };
 }
 
 export function VisionMentor() {
   const { resolved, toggle } = useTheme();
+  const { cameraEnabled, micEnabled: micSettingEnabled, setCameraEnabled, setMicEnabled } = useMedia();
   const navigate = useNavigate();
   const [status, setStatus] = useState<Status>("idle");
   const [systemOnline, setSystemOnline] = useState(true);
@@ -522,11 +521,8 @@ export function VisionMentor() {
 
   const [expression, setExpression] = useState<NovaExpression>("neutral");
   const [pulse, setPulse] = useState(0);
-  const [settings, setSettings] = useState<SettingsValues>({
-  cameraEnabled: false,
-  micEnabled: false,
-  voiceReplies: true,
-});
+  const [voiceReplies, setVoiceReplies] = useState(true);
+  const settings: SettingsValues = { cameraEnabled, micEnabled: micSettingEnabled, voiceReplies };
   const [settingsOpen, setSettingsOpen] = useState(false);
   const { user } = useDemoAuth();
   const userEmail = user?.email ?? null;
@@ -539,7 +535,7 @@ export function VisionMentor() {
   const [booted, setBooted] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
   const { active: novaVoice } = useNovaVoice();
-  const { supported, listen, stop, speak } = useSpeech(novaVoice?.lang || "en-US", novaVoice);
+  const { supported, listen, stop, speak, speechProgress } = useSpeech(novaVoice?.lang || "en-US", novaVoice);
 
   function sanitizeNovaText(text: string) {
     const cleaned = text
@@ -574,17 +570,11 @@ useEffect(() => {
   });
 }, [messages.length, status]);
   const videoOn = systemOnline && settings.cameraEnabled;
-  const micEnabled = systemOnline && settings.micEnabled;
+  const micEnabled = systemOnline && micSettingEnabled;
 
   // When system goes offline, stop everything in flight
   useEffect(() => {
     if (!systemOnline) {
-      setSettings((current) => {
-        if (current.cameraEnabled || current.micEnabled) {
-          return { ...current, cameraEnabled: false, micEnabled: false };
-        }
-        return current;
-      });
       stop();
       if (typeof window !== "undefined" && "speechSynthesis" in window) speechSynthesis.cancel();
       setInterim("");
@@ -680,7 +670,7 @@ useEffect(() => {
           });
           stream.getTracks().forEach((track) => track.stop());
         }
-        setSettings((current) => ({ ...current, micEnabled: true }));
+        setMicEnabled(true);
       } catch {
         toast.error("Microphone access denied. Allow mic permission in your browser and try again.");
         return;
@@ -811,7 +801,7 @@ useEffect(() => {
 
       <main className="grid grid-cols-1 lg:grid-cols-[320px_1fr_340px] gap-4 p-4 h-[calc(100vh-69px)]">
         <section className="card-3d rounded-2xl overflow-hidden">
-          <AvatarPanel status={status} expression={expression} pulse={pulse} />
+          <AvatarPanel status={status} expression={expression} pulse={pulse} speechProgress={speechProgress} />
         </section>
 
 
@@ -855,7 +845,7 @@ useEffect(() => {
                 className="flex-1 bg-transparent outline-none px-3 py-2 text-sm placeholder:text-muted-foreground disabled:opacity-50"
               />
               <button
-                onClick={() => setSettings((s) => ({ ...s, voiceReplies: !s.voiceReplies }))}
+                onClick={() => setVoiceReplies((current) => !current)}
                 className="p-2 rounded-lg hover:bg-foreground/5 transition-colors"
               >
                 {settings.voiceReplies ? <Volume2 className="w-4 h-4 text-cyber" /> : <VolumeX className="w-4 h-4 text-muted-foreground" />}
@@ -892,7 +882,7 @@ useEffect(() => {
             <VideoPanel
               enabled={videoOn}
               micEnabled={micEnabled}
-              onToggle={() => setSettings((s) => ({ ...s, cameraEnabled: !s.cameraEnabled }))}
+              onToggle={() => setCameraEnabled(!cameraEnabled)}
             />
             <VisionMetrics />
             <VisionWarnings />
@@ -941,7 +931,11 @@ useEffect(() => {
         open={settingsOpen}
         onOpenChange={setSettingsOpen}
         values={settings}
-        onChange={setSettings}
+              onChange={(next) => {
+                setCameraEnabled(next.cameraEnabled);
+                setMicEnabled(next.micEnabled);
+                setVoiceReplies(next.voiceReplies);
+              }}
         userEmail={userEmail}
         systemOnline={systemOnline}
       />

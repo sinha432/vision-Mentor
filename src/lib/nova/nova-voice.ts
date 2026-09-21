@@ -166,7 +166,7 @@ export function speakWithVoice(
   handlers?: {
     onStart?: () => void;
     onEnd?: () => void;
-    onBoundary?: () => void;
+    onBoundary?: (progress?: number) => void;
   },
 ) {
   const spokenText = toSpeechText(text);
@@ -183,6 +183,9 @@ export function speakWithVoice(
   const synth = window.speechSynthesis;
   let cancelled = false;
   let fallbackInterval: number | null = null;
+  let startedAt = 0;
+  const speechRate = 1.02;
+  const estimatedMs = Math.max(600, (spokenText.split(/\s+/).length / (165 * speechRate)) * 60_000);
 
   // Stop previous speech immediately.
   synth.cancel();
@@ -195,7 +198,7 @@ export function speakWithVoice(
   }
 
   // Natural and responsive speech.
-  utterance.rate = 1.02;
+  utterance.rate = speechRate;
   utterance.pitch = 1.0;
   utterance.volume = 1.0;
 
@@ -208,6 +211,7 @@ export function speakWithVoice(
 
   utterance.onstart = () => {
     if (!cancelled) {
+      startedAt = performance.now();
       handlers?.onStart?.();
       if (handlers?.onBoundary) {
         // Some browsers fire boundary events inconsistently. Keep the mouth in
@@ -216,16 +220,16 @@ export function speakWithVoice(
         clearFallback();
         fallbackInterval = window.setInterval(() => {
           if (!cancelled) {
-            handlers.onBoundary?.();
+            handlers.onBoundary?.(Math.min(1, (performance.now() - startedAt) / estimatedMs));
           }
         }, 220);
       }
     }
   };
 
-  utterance.onboundary = () => {
+  utterance.onboundary = (event) => {
     if (!cancelled) {
-      handlers?.onBoundary?.();
+      handlers?.onBoundary?.(Math.min(1, (event.charIndex || 0) / Math.max(1, spokenText.length)));
     }
   };
 

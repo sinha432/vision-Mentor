@@ -11,7 +11,7 @@ import {
   UserRound,
 } from "lucide-react";
 import { toast } from "sonner";
-import { readMicEnabled } from "@/interviewer/lib/media-settings";
+import { useMedia } from "@/contexts/MediaProvider";
 import { SiteHeader } from "@/interviewer/components/vmx/SiteHeader";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -27,27 +27,21 @@ import {
 import { COMPANIES, EXPERIENCE_LEVELS, ROLES, getCompany } from "@/interviewer/lib/companies";
 import { computeAts } from "@/interviewer/lib/ats";
 import {
-  analyzeResumeSentences,
   candidateNameMatchesResume,
-  type SentenceInsight,
 } from "@/interviewer/lib/resume-sentences";
 import { AtsMeter } from "@/interviewer/components/vmx/AtsMeter";
-import { ResumeSentenceReview } from "@/interviewer/components/vmx/ResumeSentenceReview";
 import { CompanyBrief } from "@/interviewer/components/vmx/CompanyBrief";
 
 import {
   analyzeResume,
   analyzeResumeFit,
   analyzeShortlistLikelihood,
-  generateResumeCorrections,
   getAiStatus,
 } from "@/interviewer/lib/interview.functions";
 import { ResumeFitCard } from "@/interviewer/components/vmx/ResumeFitCard";
-import { ResumeCorrectionsPanel } from "@/interviewer/components/vmx/ResumeCorrectionsPanel";
 import { ShortlistLikelihoodCard } from "@/interviewer/components/vmx/ShortlistLikelihoodCard";
 import type {
   InterviewConfig,
-  ResumeCorrection,
   ResumeFit,
   ResumeInsights,
   ShortlistLikelihood,
@@ -86,22 +80,15 @@ function SetupPage() {
   const [resumeText, setResumeText] = useState("");
   const [resumeError, setResumeError] = useState<string | null>(null);
   const [startError, setStartError] = useState<string | null>(null);
-  const [undoText, setUndoText] = useState<string | null>(null);
 
   const [resume, setResume] = useState<ResumeInsights | null>(null);
   const [analyzing, setAnalyzing] = useState(false);
   const [fit, setFit] = useState<ResumeFit | null>(null);
   const [fitLoading, setFitLoading] = useState(false);
-  const [corrections, setCorrections] = useState<ResumeCorrection[]>([]);
-  const [correctedFullText, setCorrectedFullText] = useState<string | null>(null);
-  const [correctionsLoading, setCorrectionsLoading] = useState(false);
-  const [reanalyzingCorrection, setReanalyzingCorrection] = useState(false);
   const [likelihood, setLikelihood] = useState<ShortlistLikelihood | null>(null);
   const [likelihoodLoading, setLikelihoodLoading] = useState(false);
-  const [camOk, setCamOk] = useState(false);
-  const [micOk, setMicOk] = useState(false);
   const [checking, setChecking] = useState(false);
-  const streamRef = useRef<MediaStream | null>(null);
+  const { stream, cameraConnected, micConnected, setCameraEnabled, setMicEnabled, error: mediaError } = useMedia();
   const [aiReady, setAiReady] = useState(true);
 
   // Surfaces a friendly notice instead of a raw server error when GROQ_API_KEY is absent.
@@ -126,50 +113,14 @@ function SetupPage() {
     () => computeAts(resumeText, selectedCompany, role, experience),
     [resumeText, selectedCompany, role, experience],
   );
-  // Sentence-level validation + per-line rewrite suggestions for this company.
-  const sentenceAnalysis = useMemo(
-    () => analyzeResumeSentences(resumeText, selectedCompany, role),
-    [resumeText, selectedCompany, role],
-  );
-
-  async function reanalyzeCorrectedResume(nextText: string) {
-    setReanalyzingCorrection(true);
-    setResume(null);
-    setFit(null);
-    try {
-      const insights = (await analyzeResume({ data: { text: nextText } })) as ResumeInsights;
-      setResumeText(insights.resumeText ?? nextText);
-      setResume(insights);
-      toast.success("Corrected resume analysed again");
-    } catch (error) {
-      toast.error(error instanceof Error ? error.message : "Could not re-analyse the corrected resume");
-    } finally {
-      setReanalyzingCorrection(false);
-    }
-  }
-
-  async function applyRewrite(insight: SentenceInsight) {
-    if (!insight.rewrite) return;
-    if (!resumeText.includes(insight.text)) {
-      toast.error("That line changed — re-check the resume text.");
-      return;
-    }
-    const nextText = resumeText.replace(insight.text, insight.rewrite);
-    setUndoText(resumeText);
-    setResumeText(nextText);
-    await reanalyzeCorrectedResume(nextText);
-    toast.success("Line rewritten — ATS score updated");
-  }
-
-  function undoRewrite() {
-    if (undoText === null) return;
-    setResumeText(undoText);
-    setUndoText(null);
-  }
-
   useEffect(() => {
-    return () => streamRef.current?.getTracks().forEach((t) => t.stop());
-  }, []);
+    if (!videoRef.current || !stream || !cameraConnected) return;
+    videoRef.current.srcObject = stream;
+    void videoRef.current.play().catch(() => undefined);
+    return () => {
+      if (videoRef.current?.srcObject === stream) videoRef.current.srcObject = null;
+    };
+  }, [cameraConnected, stream]);
 
   // Fit is company-specific: debounce expensive AI analysis so it only runs after typing settles.
   useEffect(() => {
@@ -236,76 +187,12 @@ function SetupPage() {
     };
   }, [deferredResumeText, companyId, role, experience]);
 
-  async function generateCorrections() {
-    setCorrectionsLoading(true);
-    try {
-      const result = (await generateResumeCorrections({
-        data: { resumeText, companyId, role },
-      })) as { fullText: string; corrections: ResumeCorrection[] };
-      setCorrections(result.corrections ?? []);
-      setCorrectedFullText(result.fullText ?? null);
-      if ((result.corrections ?? []).length === 0) {
-        toast.info(
-          "No further line changes found — the rewrite above still targets a 100/100 ATS score.",
-        );
-      }
-    } catch (error) {
-      toast.error(error instanceof Error ? error.message : "Could not generate corrections");
-    } finally {
-      setCorrectionsLoading(false);
-    }
-  }
-
-  async function applyAllCorrections(accepted: ResumeCorrection[]) {
-    if (accepted.length === 0) return;
-    setUndoText(resumeText);
-    let next = resumeText;
-    for (const c of accepted) {
-      if (next.includes(c.original)) next = next.replace(c.original, c.corrected);
-    }
-    setResumeText(next);
-    setCorrections([]);
-    setCorrectedFullText(null);
-    await reanalyzeCorrectedResume(next);
-    toast.success(`Applied ${accepted.length} correction(s) — resume re-analysed.`);
-  }
-
-  async function applyFullRewrite(fullText: string) {
-    setUndoText(resumeText);
-    setResumeText(fullText);
-    setCorrections([]);
-    setCorrectedFullText(null);
-    await reanalyzeCorrectedResume(fullText);
-    toast.success("Applied the full ATS-optimised rewrite — resume re-analysed.");
-  }
-
   async function requestDevices() {
     setChecking(true);
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({
-        video: {
-          facingMode: { ideal: "user" },
-          width: { ideal: 1280 },
-          height: { ideal: 720 },
-          frameRate: { ideal: 30, min: 15 },
-        },
-        audio: readMicEnabled(),
-      });
-      streamRef.current = stream;
-      if (videoRef.current) {
-        videoRef.current.srcObject = stream;
-        await videoRef.current.play().catch(() => {});
-      }
-      setCamOk(stream.getVideoTracks().length > 0);
-      setMicOk(stream.getAudioTracks().length > 0);
-      toast.success("Camera and microphone ready");
-    } catch {
-      toast.error("Permission denied. You can still interview by typing your answers.");
-      setCamOk(false);
-      setMicOk(false);
-    } finally {
-      setChecking(false);
-    }
+    setCameraEnabled(true);
+    setMicEnabled(true);
+    window.setTimeout(() => setChecking(false), 300);
+    if (cameraConnected || micConnected) toast.success("Camera and microphone ready");
   }
 
   async function handleFile(file: File) {
@@ -394,7 +281,6 @@ function SetupPage() {
       resumeFit: fit,
     };
     saveDraftConfig(config);
-    streamRef.current?.getTracks().forEach((t) => t.stop());
     navigate({ to: "/interviewer/interview" });
   }
 
@@ -547,22 +433,6 @@ function SetupPage() {
                 {resumeText.trim().length >= 60 && (
                   <>
                     <AtsMeter ats={ats} companyName={selectedCompany.name} />
-                    <ResumeSentenceReview
-                      analysis={sentenceAnalysis}
-                      companyName={selectedCompany.name}
-                      onApply={applyRewrite}
-                      onUndo={undoRewrite}
-                      canUndo={undoText !== null}
-                    />
-                    <ResumeCorrectionsPanel
-                      loading={correctionsLoading || reanalyzingCorrection}
-                      originalText={resumeText}
-                      fullText={correctedFullText}
-                      corrections={corrections}
-                      onGenerate={generateCorrections}
-                      onApplyAll={applyAllCorrections}
-                      onApplyFullRewrite={applyFullRewrite}
-                    />
                     <ShortlistLikelihoodCard
                       likelihood={likelihood}
                       loading={likelihoodLoading}
@@ -622,8 +492,8 @@ function SetupPage() {
                 />
               </div>
               <div className="mt-4 space-y-2 text-sm">
-                <DeviceRow icon={Camera} label="Camera" ok={camOk} />
-                <DeviceRow icon={Mic} label="Microphone" ok={micOk} />
+                <DeviceRow icon={Camera} label="Camera" ok={cameraConnected} />
+                <DeviceRow icon={Mic} label="Microphone" ok={micConnected} />
               </div>
               <Button
                 variant="secondary"
@@ -632,8 +502,9 @@ function SetupPage() {
                 disabled={checking}
               >
                 {checking ? <Loader2 className="mr-1.5 h-4 w-4 animate-spin" /> : null}
-                {camOk || micOk ? "Re-check devices" : "Allow camera & microphone"}
+                {cameraConnected || micConnected ? "Re-check devices" : "Allow camera & microphone"}
               </Button>
+              {mediaError && <p className="mt-3 text-xs text-destructive">{mediaError}</p>}
               <p className="mt-3 text-xs text-muted-foreground">
                 Camera powers presence analytics. We prefer the Mac front-facing camera so your
                 face, posture and gestures stay visible. Without it you can still speak or type

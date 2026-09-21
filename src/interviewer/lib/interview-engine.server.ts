@@ -69,6 +69,8 @@ export interface ReportPayload {
 }
 
 export interface ResumePayload {
+  resumeText?: string;
+  sourceLines?: { line: number; text: string; words: string[] }[];
   name: string;
   headline: string;
   skills: string[];
@@ -920,7 +922,13 @@ const resumeSchema = z.object({
 });
 
 export async function analyzeResumeText(text: string): Promise<ResumePayload> {
+  const sourceLines = text
+    .split(/\r?\n/)
+    .map((line, index) => ({ line: index + 1, text: line.trim(), words: line.trim().split(/\s+/).filter(Boolean) }))
+    .filter((entry) => entry.text.length > 0);
   const fallback: ResumePayload = {
+    resumeText: text,
+    sourceLines,
     name: "",
     headline: "",
     skills: [],
@@ -945,6 +953,8 @@ export async function analyzeResumeText(text: string): Promise<ResumePayload> {
   return {
     ...fallback,
     ...raw,
+    resumeText: text,
+    sourceLines,
     skills: (raw.skills ?? []).slice(0, 10),
     projects: (raw.projects ?? []).slice(0, 10),
     experience: (raw.experience ?? []).slice(0, 10),
@@ -1073,8 +1083,11 @@ export interface AppearancePayload {
   assessed: boolean;
   dress: { verdict: "appropriate" | "acceptable" | "not_appropriate"; note: string };
   hair: { verdict: "neat" | "untidy"; note: string };
+  beard: { verdict: "neat" | "needs_attention" | "not_visible"; note: string };
   fixes: string[];
   reason: string;
+  confidence: number;
+  limitations: string[];
 }
 
 const appearanceSchema = z.object({
@@ -1084,7 +1097,11 @@ const appearanceSchema = z.object({
   dressNote: z.string(),
   hairVerdict: z.enum(["neat", "untidy"]),
   hairNote: z.string(),
+  beardVerdict: z.enum(["neat", "needs_attention", "not_visible"]),
+  beardNote: z.string(),
   fixes: z.array(z.string()),
+  confidence: z.number().min(0).max(100).default(70),
+  limitations: z.array(z.string()).default([]),
 });
 
 /**
@@ -1101,26 +1118,29 @@ export async function analyzeAppearance(
     assessed: false,
     dress: { verdict: "acceptable", note: "" },
     hair: { verdict: "neat", note: "" },
+    beard: { verdict: "not_visible", note: "A beard was not visible enough to assess." },
     fixes: [],
     reason: "The camera frame was not clear enough to review your appearance.",
+    confidence: 0,
+    limitations: ["No usable appearance frame was available."],
   };
 
   if (!dataUrl.startsWith("data:image/")) return notAssessed;
 
   const system = [
     `You review interview presentation for candidates interviewing at ${company.name} for a ${role} role.`,
-    `Judge ONLY two things from the webcam frame: (1) clothing — formality for this company, fit, tidiness, wrinkles, collar, colour suitability on camera; (2) hair — whether it looks groomed and interview-ready, or grown out, uncombed, or falling over the face.`,
-    `Never comment on the person's body, weight, skin, age, gender, ethnicity, attractiveness, or anything unrelated to clothing and hair grooming. Never guess identity.`,
+    `Judge ONLY visible presentation: (1) clothing and formality for this company; (2) hair grooming; (3) visible beard grooming. For a beard, use not_visible when it cannot be seen clearly.`,
+    `Never comment on the person's body, weight, skin, age, gender, ethnicity, attractiveness, identity, or anything unrelated to visible clothing, hair, and beard grooming.`,
     `${company.name}'s interview style is ${company.interviewStyle} — set the dress expectation accordingly (formal shirt for conservative firms, clean smart-casual for product companies).`,
     `Set assessed=false only when no person is visible at all, the image is completely blank, or the frame is unusable. Normal Mac webcam compression, mild blur, ordinary indoor lighting, or a partially visible outfit are still assessable; judge only what is visible and mention limitations in the notes.`,
-    `dressNote and hairNote are one short second-person sentence each, concrete about what you see and what to change. fixes = 2-4 short actionable items for the next interview. If everything already looks right, say so plainly and keep fixes to light polish.`,
+    `dressNote, hairNote, and beardNote are short second-person sentences. fixes = 2-4 actionable items. confidence reflects image clarity, and limitations lists only visible-frame limitations.`,
   ].join("\n");
 
   try {
-    const { value: output } = await runStructured({
+    const result = await runStructured({
       schema: appearanceSchema,
       system,
-      prompt: `Review this candidate's dress and hair for a ${company.name} ${role} interview.`,
+      prompt: `Review this candidate's visible clothing, hair, and beard grooming for a ${company.name} ${role} interview.`,
       images: [dataUrl],
       vision: true,
       fallback: {
@@ -1130,19 +1150,31 @@ export async function analyzeAppearance(
         dressNote: "",
         hairVerdict: "neat",
         hairNote: "",
+        beardVerdict: "not_visible",
+        beardNote: "",
         fixes: [],
+        confidence: 0,
+        limitations: ["The appearance service could not analyse this frame."],
       },
     });
-    const parsed = appearanceSchema.safeParse(output);
+    const parsed = appearanceSchema.safeParse(result.value);
     if (!parsed.success) return notAssessed;
     const r = parsed.data;
-    if (!r.assessed) return { ...notAssessed, reason: r.reason || notAssessed.reason };
+    if (!r.assessed) {
+      return {
+        ...notAssessed,
+        reason: r.reason || (result.error ? `${result.error.title}: ${result.error.fix}` : notAssessed.reason),
+      };
+    }
     return {
       assessed: true,
       dress: { verdict: r.dressVerdict, note: r.dressNote.trim() },
       hair: { verdict: r.hairVerdict, note: r.hairNote.trim() },
+      beard: { verdict: r.beardVerdict, note: r.beardNote.trim() },
       fixes: r.fixes.filter(Boolean).slice(0, 4),
       reason: "",
+      confidence: r.confidence,
+      limitations: r.limitations.filter(Boolean).slice(0, 4),
     };
   } catch {
     return notAssessed;

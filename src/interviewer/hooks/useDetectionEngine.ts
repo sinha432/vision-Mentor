@@ -49,6 +49,8 @@ interface Options {
   videoRef: React.RefObject<HTMLVideoElement | null>;
   stream: MediaStream | null;
   active: boolean;
+  audioActive?: boolean;
+  audioMuted?: boolean;
   /** Seconds since the interview started, for sample timestamps. */
   getElapsed: () => number;
   onEvent?: (event: DetectionEvent) => void;
@@ -86,7 +88,15 @@ function blend(categories: { categoryName?: string; score: number }[] | undefine
   return (name: string) => map.get(name) ?? 0;
 }
 
-export function useDetectionEngine({ videoRef, stream, active, getElapsed, onEvent }: Options) {
+export function useDetectionEngine({
+  videoRef,
+  stream,
+  active,
+  audioActive = active,
+  audioMuted = false,
+  getElapsed,
+  onEvent,
+}: Options) {
   const [signals, setSignals] = useState<DetectionSignals>(EMPTY_SIGNALS);
   const signalsRef = useRef(EMPTY_SIGNALS);
   const eventRef = useRef(onEvent);
@@ -123,7 +133,7 @@ export function useDetectionEngine({ videoRef, stream, active, getElapsed, onEve
   /* audio: candidate voice vs. the room                                 */
   /* ------------------------------------------------------------------ */
   useEffect(() => {
-    if (!active || !stream || !stream.getAudioTracks().length) return;
+    if (audioMuted || !audioActive || !stream || !stream.getAudioTracks().length) return;
     let cancelled = false;
     let ctx: AudioContext | null = null;
     let raf = 0;
@@ -152,7 +162,6 @@ export function useDetectionEngine({ videoRef, stream, active, getElapsed, onEve
     let pauses = 0;
     let longestPause = 0;
     let lastVoiceEvent = 0;
-    let lastNoiseEvent = 0;
     let last = Date.now();
 
     const tick = () => {
@@ -217,14 +226,13 @@ export function useDetectionEngine({ videoRef, stream, active, getElapsed, onEve
           confidence: clamp(Math.round(speechEnergy * 140)),
         });
       }
-      if (!speaking && noiseLevel > 22 && now - lastNoiseEvent > 15_000) {
-        lastNoiseEvent = now;
-        eventRef.current?.({
-          kind: "background_noise",
-          detail: `Loud background noise in the room (${noiseLevel}/100). Move somewhere quieter.`,
-          confidence: noiseLevel,
-        });
-      }
+      // A noisy room can remain noisy while the candidate is answering. A
+      // candidate's own voice has strong speech-band energy, so only report
+      // concurrent noise when the broadband level is high and speech is not
+      // the dominant signal.
+      // Do not turn a generic loud or low-pitched sound into an accusation.
+      // Music/TV and a second person are classified by the rolling audio
+      // proctor; this on-device pass only emits speech-shaped overlap.
 
       const minutes = Math.max(0.25, (now - accumRef.current.startedAt) / 60_000);
       patch({
@@ -245,7 +253,7 @@ export function useDetectionEngine({ videoRef, stream, active, getElapsed, onEve
       window.cancelAnimationFrame(raf);
       void ctx?.close();
     };
-  }, [active, stream, patch]);
+  }, [audioActive, audioMuted, stream, patch]);
 
   /* ------------------------------------------------------------------ */
   /* vision: face, pose and objects                                      */

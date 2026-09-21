@@ -6,7 +6,8 @@ import { Button } from "@/components/ui/button";
 import { useDemoAuth } from "@/contexts/DemoAuthContext";
 import { useNavigate } from "@tanstack/react-router";
 import { toast } from "sonner";
-import { writeMicEnabled } from "@/interviewer/lib/media-settings";
+import { writeCameraEnabled, writeMicEnabled } from "@/interviewer/lib/media-settings";
+import { useMedia } from "@/contexts/MediaProvider";
 
 type PermState = "granted" | "denied" | "prompt" | "unknown";
 
@@ -35,6 +36,7 @@ export function SettingsPanel({
   const [cam, setCam] = useState<PermState>("unknown");
   const [mic, setMic] = useState<PermState>("unknown");
   const navigate = useNavigate();
+  const { cameraConnected, micConnected } = useMedia();
 
   useEffect(() => {
     if (!open || !navigator.permissions) return;
@@ -101,8 +103,10 @@ export function SettingsPanel({
               label="Camera"
               state={cam}
               enabled={systemOnline && values.cameraEnabled}
+              connected={cameraConnected}
               onToggle={(v) => {
                 if (!systemOnline) return;
+                writeCameraEnabled(v);
                 onChange({ ...values, cameraEnabled: v });
               }}
               onRequest={requestCam}
@@ -113,6 +117,7 @@ export function SettingsPanel({
               label="Microphone"
               state={mic}
               enabled={systemOnline && values.micEnabled}
+              connected={micConnected}
               onToggle={(v) => {
                 if (!systemOnline) return;
                 writeMicEnabled(v);
@@ -200,10 +205,10 @@ function Toggle({ checked, onChange }: { checked: boolean; onChange: (v: boolean
 }
 
 function PermRow({
-  icon, label, state, enabled, onToggle, onRequest, disabled = false,
+  icon, label, state, enabled, connected, onToggle, onRequest, disabled = false,
 }: {
   icon: React.ReactNode; label: string; state: PermState;
-  enabled: boolean; onToggle: (v: boolean) => void; onRequest: () => void; disabled?: boolean;
+  enabled: boolean; connected: boolean; onToggle: (v: boolean) => void; onRequest: () => void; disabled?: boolean;
 }) {
   const badge = {
     granted: { text: "Granted", cls: "text-emerald-500", Icon: ShieldCheck },
@@ -212,6 +217,8 @@ function PermRow({
     unknown: { text: "Unknown", cls: "text-muted-foreground", Icon: ShieldQuestion },
   }[state];
   const B = badge.Icon;
+  const connectionText = enabled && connected ? "Connected" : "Disconnected";
+  const connectionClass = enabled && connected ? "text-emerald-500" : "text-muted-foreground";
   return (
     <div className="glass rounded-lg p-3 space-y-2">
       <div className="flex items-center justify-between gap-3">
@@ -219,10 +226,10 @@ function PermRow({
         <Toggle checked={enabled} onChange={disabled ? () => {} : onToggle} />
       </div>
       <div className="flex items-center justify-between">
-        <div className={`flex items-center gap-1.5 text-[11px] ${badge.cls}`}>
-          <B className="w-3.5 h-3.5" /> {badge.text}
+        <div className={`flex items-center gap-1.5 text-[11px] ${connectionClass}`}>
+          <B className="w-3.5 h-3.5" /> {connectionText}
         </div>
-        {state !== "granted" && (
+        {(!connected || state !== "granted") && (
           <button onClick={onRequest} className="text-[11px] text-primary hover:underline">Request access</button>
         )}
       </div>

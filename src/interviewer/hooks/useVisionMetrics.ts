@@ -173,6 +173,26 @@ export function useVisionMetrics(
 
   const getSnapshot = useCallback(() => snapshotRef.current?.dataUrl ?? null, []);
 
+  const captureSnapshotNow = useCallback(() => {
+    const video = videoRef.current;
+    if (!video || video.readyState < 2 || !video.videoWidth || !video.videoHeight) return null;
+    if (!shotCanvasRef.current) shotCanvasRef.current = document.createElement("canvas");
+    const canvas = shotCanvasRef.current;
+    const scale = Math.min(1, 720 / video.videoWidth);
+    canvas.width = Math.max(640, Math.round(video.videoWidth * scale));
+    canvas.height = Math.max(360, Math.round(video.videoHeight * scale));
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return null;
+    ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+    try {
+      const dataUrl = canvas.toDataURL("image/jpeg", 0.9);
+      snapshotRef.current = { dataUrl, quality: 100 };
+      return dataUrl;
+    } catch {
+      return null;
+    }
+  }, [videoRef]);
+
   /** Current frame, on demand — used by the live presence coach. */
   const grabFrame = useCallback(() => {
     const video = videoRef.current;
@@ -194,5 +214,5 @@ export function useVisionMetrics(
     }
   }, [videoRef]);
 
-  return { live, summarize, getSnapshot, grabFrame };
+  return { live, summarize, getSnapshot, captureSnapshotNow, grabFrame };
 }

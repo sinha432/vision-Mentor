@@ -28,11 +28,13 @@ export function mouthWave(t: number) {
  * `pulse` increments per boundary and adds a syllable accent + shape shift.
  * `speed` scales the wave rate — used by the lip-sync speed demo control.
  */
-export function useMouthOpen(talking: boolean, pulse: number, speed = 1) {
+export function useMouthOpen(talking: boolean, pulse: number, speed = 1, progress = 0) {
   const [state, setState] = useState({ open: 0, shape: 0.5 });
   const reduced = usePrefersReducedMotion();
   const accentAt = useRef(-1e6);
   const seed = useRef(0);
+  const progressRef = useRef(progress);
+  progressRef.current = progress;
 
   useEffect(() => {
     if (pulse) {
@@ -83,7 +85,7 @@ export function useMouthOpen(talking: boolean, pulse: number, speed = 1) {
     const start = performance.now();
     const tick = (now: number) => {
       const elapsed = (now - start) / 1000;
-      const t = elapsed * speed;
+      const t = elapsed * speed + progressRef.current * 2.4;
       // ease the mouth in over the first ~180ms so speech start doesn't snap
       const rampIn = Math.min(1, elapsed / 0.18);
       const decay = Math.max(0, 1 - (now - accentAt.current) / 160);
@@ -101,7 +103,6 @@ export function useMouthOpen(talking: boolean, pulse: number, speed = 1) {
     };
     raf = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(raf);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [talking, reduced, speed]);
 
   return { open: state.open, shape: state.shape, reduced };
