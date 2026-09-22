@@ -1,4 +1,10 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+} from "react";
+
 import {
   BANNED_OBJECTS,
   EMPTY_SIGNALS,
@@ -9,22 +15,28 @@ import {
 } from "@/interviewer/lib/detection-types";
 
 /**
- * On-device detection engine.
+ * On-device interview detection engine.
  *
- * MediaPipe Tasks run entirely in the browser: a face landmarker (face count,
- * gaze, blinks, expression), a pose landmarker (posture, movement) and an
- * object detector (phone / second screen). A Web Audio analyser runs alongside
- * them to measure the candidate's voice against the room, which is how
- * background noise, background voices and real pauses are detected.
+ * Core detectors:
+ * - FaceLandmarker: face count, gaze, blink, expression
+ * - PoseLandmarker: posture, movement, hand position
+ * - ObjectDetector: phone / second-screen style objects
+ * - Web Audio: candidate voice vs speech-shaped background audio
  *
- * Nothing leaves the device and no frame is uploaded. If the models fail to
- * load, `signals.degraded` is set and the caller keeps its heuristic fallback.
+ * The detectors are initialized independently. A failure in the object
+ * detector must not prevent face detection from running.
  */
 
-const WASM_BASE = "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@1.0.1/wasm";
+const WASM_BASE =
+  "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@1.0.1/wasm";
+
 const MODELS = {
-  face: "https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task",
-  pose: "https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_lite/float16/1/pose_landmarker_lite.task",
+  face:
+    "https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task",
+
+  pose:
+    "https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_lite/float16/1/pose_landmarker_lite.task",
+
   object:
     "https://storage.googleapis.com/mediapipe-models/object_detector/efficientdet_lite0/float32/1/efficientdet_lite0.task",
 };
@@ -51,7 +63,6 @@ interface Options {
   active: boolean;
   audioActive?: boolean;
   audioMuted?: boolean;
-  /** Seconds since the interview started, for sample timestamps. */
   getElapsed: () => number;
   onEvent?: (event: DetectionEvent) => void;
 }
@@ -80,11 +91,19 @@ function clamp(value: number, min = 0, max = 100) {
   return Math.max(min, Math.min(max, value));
 }
 
-function blend(categories: { categoryName?: string; score: number }[] | undefined) {
+function blend(
+  categories:
+    | { categoryName?: string; score: number }[]
+    | undefined,
+) {
   const map = new Map<string, number>();
-  categories?.forEach((c) => {
-    if (c.categoryName) map.set(c.categoryName, c.score);
+
+  categories?.forEach((category) => {
+    if (category.categoryName) {
+      map.set(category.categoryName, category.score);
+    }
   });
+
   return (name: string) => map.get(name) ?? 0;
 }
 
@@ -97,10 +116,14 @@ export function useDetectionEngine({
   getElapsed,
   onEvent,
 }: Options) {
-  const [signals, setSignals] = useState<DetectionSignals>(EMPTY_SIGNALS);
-  const signalsRef = useRef(EMPTY_SIGNALS);
+  const [signals, setSignals] =
+    useState<DetectionSignals>(EMPTY_SIGNALS);
+
+  const signalsRef = useRef<DetectionSignals>(EMPTY_SIGNALS);
+
   const eventRef = useRef(onEvent);
   eventRef.current = onEvent;
+
   const elapsedRef = useRef(getElapsed);
   elapsedRef.current = getElapsed;
 
@@ -124,117 +147,267 @@ export function useDetectionEngine({
     startedAt: Date.now(),
   });
 
-  const patch = useCallback((next: Partial<DetectionSignals>) => {
-    signalsRef.current = { ...signalsRef.current, ...next };
-    setSignals(signalsRef.current);
-  }, []);
+  const patch = useCallback(
+    (next: Partial<DetectionSignals>) => {
+      signalsRef.current = {
+        ...signalsRef.current,
+        ...next,
+      };
 
-  /* ------------------------------------------------------------------ */
-  /* audio: candidate voice vs. the room                                 */
-  /* ------------------------------------------------------------------ */
+      setSignals(signalsRef.current);
+    },
+    [],
+  );
+
+  /*
+   * ------------------------------------------------------------------
+   * AUDIO
+   * ------------------------------------------------------------------
+   */
+
   useEffect(() => {
-    if (audioMuted || !audioActive || !stream || !stream.getAudioTracks().length) return;
+    if (
+      audioMuted ||
+      !audioActive ||
+      !stream ||
+      !stream.getAudioTracks().length
+    ) {
+      patch({
+        speaking: false,
+        backgroundVoice: false,
+        voiceLevel: 0,
+      });
+      return;
+    }
+
     let cancelled = false;
     let ctx: AudioContext | null = null;
     let raf = 0;
 
-    const AudioCtx: typeof AudioContext | undefined =
+    const AudioCtx:
+      | typeof AudioContext
+      | undefined =
       window.AudioContext ??
-      (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
-    if (!AudioCtx) return;
+      (
+        window as unknown as {
+          webkitAudioContext?: typeof AudioContext;
+        }
+      ).webkitAudioContext;
 
-    ctx = new AudioCtx();
+    if (!AudioCtx) {
+      console.warn(
+        "[Vision Mentor] Web Audio is not supported by this browser.",
+      );
+      return;
+    }
+
+    const audioTracks = stream.getAudioTracks();
+
+    console.info(
+      "[Vision Mentor] Starting microphone monitoring.",
+      {
+        trackLabel: audioTracks[0]?.label,
+        enabled: audioTracks[0]?.enabled,
+        muted: audioTracks[0]?.muted,
+      },
+    );
+
+    try {
+      ctx = new AudioCtx();
+    } catch (error) {
+      console.error(
+        "[Vision Mentor] Could not create AudioContext.",
+        error,
+      );
+      return;
+    }
+
     void ctx.resume().catch(() => undefined);
-    const source = ctx.createMediaStreamSource(stream);
+
+    let source: MediaStreamAudioSourceNode;
+
+    try {
+      source = ctx.createMediaStreamSource(stream);
+    } catch (error) {
+      console.error(
+        "[Vision Mentor] Could not connect microphone stream to analyser.",
+        error,
+      );
+      return;
+    }
+
     const analyser = ctx.createAnalyser();
-    analyser.fftSize = 2048;
-    analyser.smoothingTimeConstant = 0.45;
+    analyser.fftSize = 1024;
+    analyser.smoothingTimeConstant = 0.25;
+    analyser.minDecibels = -90;
+    analyser.maxDecibels = -10;
+
     source.connect(analyser);
+
     const time = new Float32Array(analyser.fftSize);
     const freq = new Float32Array(analyser.frequencyBinCount);
     const binHz = ctx.sampleRate / analyser.fftSize;
 
     let noiseFloor = 0.004;
-    let calibratedNoise = 0.004;
     let calibrationMs = 0;
-    let silentSince = Date.now();
     let voicedMs = 0;
+    let silentSince = Date.now();
     let pauses = 0;
     let longestPause = 0;
     let lastVoiceEvent = 0;
+    let noisySince = 0;
+    let lastNoiseEvent = 0;
     let last = Date.now();
 
     const tick = () => {
       if (cancelled) return;
+
       raf = window.requestAnimationFrame(tick);
+
       const now = Date.now();
-      if (now - last < 100) return;
+
+      if (now - last < 80) {
+        return;
+      }
+
       const dt = now - last;
       last = now;
 
+      if (ctx?.state === "suspended") {
+        void ctx.resume().catch(() => undefined);
+      }
+
       analyser.getFloatTimeDomainData(time);
+      analyser.getFloatFrequencyData(freq);
+
       let sum = 0;
-      for (let i = 0; i < time.length; i++) sum += time[i] * time[i];
+
+      for (let i = 0; i < time.length; i += 1) {
+        sum += time[i] * time[i];
+      }
+
       const rms = Math.sqrt(sum / time.length);
 
-      // Energy in the speech band tells voices apart from hum and fan noise.
-      analyser.getFloatFrequencyData(freq);
-      let speechBand = 0;
+      let speechPower = 0;
+      let totalPower = 0;
       let speechBins = 0;
-      for (let i = 0; i < freq.length; i++) {
-        const hz = i * binHz;
-        if (hz < 300 || hz > 3400) continue;
-        speechBand += Math.max(0, (freq[i] + 100) / 100);
-        speechBins++;
-      }
-      const speechEnergy = speechBins ? speechBand / speechBins : 0;
 
-      if (calibrationMs < 1800) {
-        calibratedNoise = calibratedNoise * 0.9 + rms * 0.1;
-        calibrationMs += dt;
+      for (let i = 0; i < freq.length; i += 1) {
+        const db = freq[i];
+        const power = Math.pow(10, db / 20);
+        const hz = i * binHz;
+
+        totalPower += power;
+
+        if (hz >= 120 && hz <= 4200) {
+          speechPower += power;
+          speechBins += 1;
+        }
       }
-      const baseline = Math.max(0.003, calibratedNoise);
-      const speaking = rms > Math.max(0.012, baseline * 2.8);
+
+      const speechRatio =
+        totalPower > 0 && speechBins > 0
+          ? speechPower / totalPower
+          : 0;
+
+      if (calibrationMs < 1500) {
+        noiseFloor =
+          noiseFloor * 0.92 + rms * 0.08;
+        calibrationMs += dt;
+      } else if (
+        rms < Math.max(0.0025, noiseFloor * 1.25)
+      ) {
+        noiseFloor =
+          noiseFloor * 0.985 + rms * 0.015;
+      }
+
+      const speakingThreshold = Math.max(
+        0.0055,
+        noiseFloor * 1.7,
+      );
+
+      const speechLike =
+        speechRatio > 0.18 ||
+        (rms > 0.006 && speechPower > 0.0015);
+
+      const speaking =
+        rms > speakingThreshold &&
+        speechLike;
+
       if (speaking) {
         voicedMs += dt;
+
         const gap = now - silentSince;
+
         if (gap > 1500) {
           pauses += 1;
-          longestPause = Math.max(longestPause, Math.round(gap / 1000));
+          longestPause = Math.max(
+            longestPause,
+            Math.round(gap / 1000),
+          );
         }
+
         silentSince = now;
-      } else {
-        // Only quiet frames update the noise floor, so the room is measured
-        // while the candidate is not talking.
-        // Track only slow changes below the speech threshold. Do not absorb a
-        // sustained fan, TV, or room conversation into the baseline.
-        if (rms < baseline * 1.35) noiseFloor = noiseFloor * 0.995 + rms * 0.005;
       }
 
-      const ambientRatio = rms / Math.max(0.003, noiseFloor);
-      const noiseLevel = clamp(Math.round((ambientRatio - 1) * 38));
-      const voiceLevel = clamp(Math.round(rms * 1600));
-      // Speech-shaped energy while the candidate is silent = someone else.
-      const backgroundVoice = !speaking && speechEnergy > 0.28 && rms > Math.max(0.01, noiseFloor * 1.5);
+      const backgroundVoice =
+        !speaking &&
+        rms > Math.max(0.006, noiseFloor * 1.25) &&
+        speechRatio > 0.16 &&
+        rms / Math.max(0.003, noiseFloor) >= 2.45;
 
-      if (backgroundVoice && now - lastVoiceEvent > 10_000) {
+      if (
+        backgroundVoice &&
+        now - lastVoiceEvent > 10_000
+      ) {
         lastVoiceEvent = now;
+
         accumRef.current.backgroundVoiceEvents += 1;
+
         eventRef.current?.({
           kind: "background_voice",
-          detail: "Another voice was heard while you were not speaking.",
-          confidence: clamp(Math.round(speechEnergy * 140)),
+          detail:
+            "Speech-shaped background audio was detected while the candidate was not speaking.",
+          confidence: clamp(
+            Math.round(
+              speechRatio * 100 +
+                Math.min(35, rms * 1800),
+            ),
+          ),
         });
       }
-      // A noisy room can remain noisy while the candidate is answering. A
-      // candidate's own voice has strong speech-band energy, so only report
-      // concurrent noise when the broadband level is high and speech is not
-      // the dominant signal.
-      // Do not turn a generic loud or low-pitched sound into an accusation.
-      // Music/TV and a second person are classified by the rolling audio
-      // proctor; this on-device pass only emits speech-shaped overlap.
 
-      const minutes = Math.max(0.25, (now - accumRef.current.startedAt) / 60_000);
+      const ambientRatio =
+        rms / Math.max(0.003, noiseFloor);
+
+      const noiseLevel = clamp(
+        Math.round((ambientRatio - 1) * 38),
+      );
+
+      if (noiseLevel >= 55 && !speaking) {
+        noisySince ||= now;
+        if (now - noisySince >= 1200 && now - lastNoiseEvent >= 10_000) {
+          lastNoiseEvent = now;
+          eventRef.current?.({
+            kind: "background_noise",
+            detail: "Sustained loud background noise was detected while you were not speaking.",
+            confidence: noiseLevel,
+          });
+        }
+      } else {
+        noisySince = 0;
+      }
+
+      const voiceLevel = clamp(
+        Math.round(rms * 1600),
+      );
+
+      const minutes = Math.max(
+        0.25,
+        (now - accumRef.current.startedAt) /
+          60_000,
+      );
+
       patch({
         noiseLevel,
         voiceLevel,
@@ -242,10 +415,12 @@ export function useDetectionEngine({
         backgroundVoice,
         pauses,
         longestPause,
-        // Voiced seconds per minute, scaled to an approximate words-per-minute.
-        speechPace: Math.round((voicedMs / 1000 / minutes) * 2.6),
+        speechPace: Math.round(
+          (voicedMs / 1000 / minutes) * 2.6,
+        ),
       });
     };
+
     raf = window.requestAnimationFrame(tick);
 
     return () => {
@@ -253,117 +428,522 @@ export function useDetectionEngine({
       window.cancelAnimationFrame(raf);
       void ctx?.close();
     };
-  }, [audioActive, audioMuted, stream, patch]);
+  }, [
+    audioActive,
+    audioMuted,
+    stream,
+    patch,
+  ]);
 
-  /* ------------------------------------------------------------------ */
-  /* vision: face, pose and objects                                      */
-  /* ------------------------------------------------------------------ */
+  /*
+   * ------------------------------------------------------------------
+   * VISION
+   * ------------------------------------------------------------------
+   */
+
   useEffect(() => {
-    if (!active) return;
+    if (!active) {
+      return;
+    }
+
     let cancelled = false;
     let raf = 0;
-    let faceLandmarker: { detectForVideo: (v: HTMLVideoElement, t: number) => unknown; close: () => void } | null = null;
-    let poseLandmarker: { detectForVideo: (v: HTMLVideoElement, t: number) => unknown; close: () => void } | null = null;
-    let objectDetector: { detectForVideo: (v: HTMLVideoElement, t: number) => unknown; close: () => void } | null = null;
+
+    type VideoDetector = {
+      detectForVideo: (
+        video: HTMLVideoElement,
+        timestamp: number,
+      ) => unknown;
+
+      close: () => void;
+    };
+
+    let faceLandmarker:
+      | VideoDetector
+      | null = null;
+
+    let poseLandmarker:
+      | VideoDetector
+      | null = null;
+
+    let objectDetector:
+      | VideoDetector
+      | null = null;
 
     let lastFace = 0;
     let lastObject = 0;
     let lastStamp = -1;
+
     let blinkClosed = false;
-    let prevPose: { x: number; y: number }[] | null = null;
-    const lastEvent = new Map<DetectionEventKind, number>();
+
+    let prevPose:
+      | { x: number; y: number }[]
+      | null = null;
+
+    const lastEvent =
+      new Map<DetectionEventKind, number>();
+
     let awayStreak = 0;
     let missingStreak = 0;
     let multiFaceStreak = 0;
     let gestureStreak = 0;
 
-    const fire = (kind: DetectionEventKind, detail: string, confidence: number, throttle = 30_000) => {
+    const fire = (
+      kind: DetectionEventKind,
+      detail: string,
+      confidence: number,
+      throttle = 30_000,
+    ) => {
       const now = Date.now();
+
       const previous = lastEvent.get(kind);
-      if (previous && now - previous < throttle) return;
+
+      if (
+        previous &&
+        now - previous < throttle
+      ) {
+        return;
+      }
+
       lastEvent.set(kind, now);
-      eventRef.current?.({ kind, detail, confidence });
+
+      eventRef.current?.({
+        kind,
+        detail,
+        confidence,
+      });
     };
+
+    async function createFace(
+      vision: typeof import("@mediapipe/tasks-vision"),
+      fileset: Awaited<
+        ReturnType<
+          typeof vision.FilesetResolver.forVisionTasks
+        >
+      >,
+    ) {
+      try {
+        return (await vision.FaceLandmarker.createFromOptions(
+          fileset,
+          {
+            baseOptions: {
+              modelAssetPath: MODELS.face,
+              delegate: "GPU",
+            },
+            runningMode: "VIDEO",
+            numFaces: 3,
+            outputFaceBlendshapes: true,
+          },
+        )) as unknown as VideoDetector;
+      } catch (gpuError) {
+        console.warn(
+          "[Vision Mentor] Face GPU initialization failed. Retrying CPU.",
+          gpuError,
+        );
+
+        try {
+          return (await vision.FaceLandmarker.createFromOptions(
+            fileset,
+            {
+              baseOptions: {
+                modelAssetPath: MODELS.face,
+                delegate: "CPU",
+              },
+              runningMode: "VIDEO",
+              numFaces: 3,
+              outputFaceBlendshapes: true,
+            },
+          )) as unknown as VideoDetector;
+        } catch (cpuError) {
+          console.error(
+            "[Vision Mentor] Face detector failed on GPU and CPU.",
+            cpuError,
+          );
+
+          return null;
+        }
+      }
+    }
+
+    async function createPose(
+      vision: typeof import("@mediapipe/tasks-vision"),
+      fileset: Awaited<
+        ReturnType<
+          typeof vision.FilesetResolver.forVisionTasks
+        >
+      >,
+    ) {
+      try {
+        return (await vision.PoseLandmarker.createFromOptions(
+          fileset,
+          {
+            baseOptions: {
+              modelAssetPath: MODELS.pose,
+              delegate: "GPU",
+            },
+            runningMode: "VIDEO",
+            numPoses: 1,
+          },
+        )) as unknown as VideoDetector;
+      } catch (gpuError) {
+        console.warn(
+          "[Vision Mentor] Pose GPU initialization failed. Retrying CPU.",
+          gpuError,
+        );
+
+        try {
+          return (await vision.PoseLandmarker.createFromOptions(
+            fileset,
+            {
+              baseOptions: {
+                modelAssetPath: MODELS.pose,
+                delegate: "CPU",
+              },
+              runningMode: "VIDEO",
+              numPoses: 1,
+            },
+          )) as unknown as VideoDetector;
+        } catch (cpuError) {
+          console.error(
+            "[Vision Mentor] Pose detector failed on GPU and CPU.",
+            cpuError,
+          );
+
+          return null;
+        }
+      }
+    }
+
+    async function createObjectDetector(
+      vision: typeof import("@mediapipe/tasks-vision"),
+      fileset: Awaited<
+        ReturnType<
+          typeof vision.FilesetResolver.forVisionTasks
+        >
+      >,
+    ) {
+      try {
+        return (await vision.ObjectDetector.createFromOptions(
+          fileset,
+          {
+            baseOptions: {
+              modelAssetPath: MODELS.object,
+              delegate: "GPU",
+            },
+            runningMode: "VIDEO",
+            scoreThreshold: 0.42,
+            maxResults: 6,
+          },
+        )) as unknown as VideoDetector;
+      } catch (gpuError) {
+        console.warn(
+          "[Vision Mentor] Object detector GPU initialization failed. Retrying CPU.",
+          gpuError,
+        );
+
+        try {
+          return (await vision.ObjectDetector.createFromOptions(
+            fileset,
+            {
+              baseOptions: {
+                modelAssetPath: MODELS.object,
+                delegate: "CPU",
+              },
+              runningMode: "VIDEO",
+              scoreThreshold: 0.42,
+              maxResults: 6,
+            },
+          )) as unknown as VideoDetector;
+        } catch (cpuError) {
+          console.error(
+            "[Vision Mentor] Object detector failed on GPU and CPU.",
+            cpuError,
+          );
+
+          return null;
+        }
+      }
+    }
 
     async function boot() {
       try {
-        const vision = await import("@mediapipe/tasks-vision");
-        const fileset = await vision.FilesetResolver.forVisionTasks(WASM_BASE);
-        if (cancelled) return;
-        faceLandmarker = (await vision.FaceLandmarker.createFromOptions(fileset, {
-          baseOptions: { modelAssetPath: MODELS.face, delegate: "GPU" },
-          runningMode: "VIDEO",
-          numFaces: 3,
-          outputFaceBlendshapes: true,
-        })) as never;
-        poseLandmarker = (await vision.PoseLandmarker.createFromOptions(fileset, {
-          baseOptions: { modelAssetPath: MODELS.pose, delegate: "GPU" },
-          runningMode: "VIDEO",
-          numPoses: 1,
-        })) as never;
-        objectDetector = (await vision.ObjectDetector.createFromOptions(fileset, {
-          baseOptions: { modelAssetPath: MODELS.object, delegate: "GPU" },
-          runningMode: "VIDEO",
-          scoreThreshold: 0.42,
-          maxResults: 6,
-        })) as never;
-        if (cancelled) return;
-        patch({ ready: true, degraded: false });
-        raf = window.requestAnimationFrame(loop);
-      } catch {
-        // No WebGL, offline, or blocked CDN — the caller keeps its heuristics.
-        if (!cancelled) patch({ ready: false, degraded: true });
+        console.info(
+          "[Vision Mentor] Starting MediaPipe vision engine...",
+        );
+
+        const vision =
+          await import("@mediapipe/tasks-vision");
+
+        console.info(
+          "[Vision Mentor] MediaPipe package loaded.",
+        );
+
+        const fileset =
+          await vision.FilesetResolver.forVisionTasks(
+            WASM_BASE,
+          );
+
+        console.info(
+          "[Vision Mentor] MediaPipe WASM loaded.",
+        );
+
+        if (cancelled) {
+          return;
+        }
+
+        /*
+         * Face is the core detector.
+         */
+        faceLandmarker = await createFace(
+          vision,
+          fileset,
+        );
+
+        if (cancelled) {
+          return;
+        }
+
+        if (faceLandmarker) {
+          console.info(
+            "[Vision Mentor] Face detector ready.",
+          );
+        } else {
+          console.error(
+            "[Vision Mentor] Face detector could not be initialized.",
+          );
+        }
+
+        /*
+         * Pose is independent. A pose failure must not disable face
+         * detection.
+         */
+        poseLandmarker = await createPose(
+          vision,
+          fileset,
+        );
+
+        if (poseLandmarker) {
+          console.info(
+            "[Vision Mentor] Pose detector ready.",
+          );
+        } else {
+          console.warn(
+            "[Vision Mentor] Pose detector unavailable.",
+          );
+        }
+
+        /*
+         * Object detector is optional. Phone/second-screen detection
+         * can fail without disabling face and pose monitoring.
+         */
+        objectDetector =
+          await createObjectDetector(
+            vision,
+            fileset,
+          );
+
+        if (objectDetector) {
+          console.info(
+            "[Vision Mentor] Object detector ready.",
+          );
+        } else {
+          console.warn(
+            "[Vision Mentor] Object detector unavailable.",
+          );
+        }
+
+        if (cancelled) {
+          return;
+        }
+
+        /*
+         * The face detector is the core requirement for the monitoring
+         * engine. If it works, start the vision loop.
+         */
+        if (faceLandmarker) {
+          patch({
+            ready: true,
+            degraded:
+              !poseLandmarker ||
+              !objectDetector,
+          });
+
+          console.info(
+            "[Vision Mentor] Vision engine LIVE.",
+          );
+
+          raf =
+            window.requestAnimationFrame(loop);
+        } else {
+          patch({
+            ready: false,
+            degraded: true,
+          });
+
+          console.error(
+            "[Vision Mentor] Vision engine could not start because the face detector failed.",
+          );
+        }
+      } catch (error) {
+        console.error(
+          "[Vision Mentor] MediaPipe boot failed.",
+          error,
+        );
+
+        if (!cancelled) {
+          patch({
+            ready: false,
+            degraded: true,
+          });
+        }
       }
     }
 
     function loop() {
-      if (cancelled) return;
+      if (cancelled) {
+        return;
+      }
+
       raf = window.requestAnimationFrame(loop);
+
       const video = videoRef.current;
-      if (!video || video.readyState < 2 || !video.videoWidth) return;
+
+      if (
+        !video ||
+        video.readyState < 2 ||
+        !video.videoWidth
+      ) {
+        return;
+      }
+
       const now = performance.now();
-      // ~5fps for face/pose is plenty and keeps the main thread free.
-      if (now - lastFace < 200) return;
+
+      /*
+       * Approximately 5 FPS.
+       */
+      if (now - lastFace < 200) {
+        return;
+      }
+
       lastFace = now;
-      const stamp = Math.max(lastStamp + 1, Math.round(now));
+
+      const stamp = Math.max(
+        lastStamp + 1,
+        Math.round(now),
+      );
+
       lastStamp = stamp;
 
       try {
-        const faceResult = faceLandmarker?.detectForVideo(video, stamp) as
-          | {
-              faceLandmarks: { x: number; y: number }[][];
-              faceBlendshapes?: { categories: { categoryName?: string; score: number }[] }[];
-            }
-          | undefined;
-        const faces = faceResult?.faceLandmarks?.length ?? 0;
-        const primary = faceResult?.faceLandmarks?.[0];
-        const shapes = blend(faceResult?.faceBlendshapes?.[0]?.categories);
+        /*
+         * ------------------------------------------------------------
+         * FACE
+         * ------------------------------------------------------------
+         */
 
-        let eyeContact = signalsRef.current.eyeContact;
+        const faceResult =
+          faceLandmarker?.detectForVideo(
+            video,
+            stamp,
+          ) as
+            | {
+                faceLandmarks: {
+                  x: number;
+                  y: number;
+                }[][];
+
+                faceBlendshapes?: {
+                  categories: {
+                    categoryName?: string;
+                    score: number;
+                  }[];
+                }[];
+              }
+            | undefined;
+
+        const faces =
+          faceResult?.faceLandmarks?.length ?? 0;
+
+        const primary =
+          faceResult?.faceLandmarks?.[0];
+
+        const shapes = blend(
+          faceResult?.faceBlendshapes?.[0]
+            ?.categories,
+        );
+
+        let eyeContact =
+          signalsRef.current.eyeContact;
+
         let gaze: GazeDirection = "unknown";
-        let expression = signalsRef.current.expression;
+
+        let expression =
+          signalsRef.current.expression;
 
         if (primary?.length) {
           const h =
-            (shapes("eyeLookOutLeft") + shapes("eyeLookInRight")) / 2 -
-            (shapes("eyeLookInLeft") + shapes("eyeLookOutRight")) / 2;
+            (
+              shapes("eyeLookOutLeft") +
+              shapes("eyeLookInRight")
+            ) /
+              2 -
+            (
+              shapes("eyeLookInLeft") +
+              shapes("eyeLookOutRight")
+            ) /
+              2;
+
           const v =
-            (shapes("eyeLookUpLeft") + shapes("eyeLookUpRight")) / 2 -
-            (shapes("eyeLookDownLeft") + shapes("eyeLookDownRight")) / 2;
-          // Head turn: how off-centre the nose sits between the temples.
+            (
+              shapes("eyeLookUpLeft") +
+              shapes("eyeLookUpRight")
+            ) /
+              2 -
+            (
+              shapes("eyeLookDownLeft") +
+              shapes("eyeLookDownRight")
+            ) /
+              2;
+
           const nose = primary[1];
           const left = primary[234];
           const right = primary[454];
+
           const yaw =
             left && right && nose
-              ? Math.abs((nose.x - (left.x + right.x) / 2) / Math.max(0.05, Math.abs(right.x - left.x)))
+              ? Math.abs(
+                  (nose.x -
+                    (left.x + right.x) / 2) /
+                    Math.max(
+                      0.05,
+                      Math.abs(
+                        right.x - left.x,
+                      ),
+                    ),
+                )
               : 0;
-          eyeContact = clamp(Math.round(100 - (Math.abs(h) + Math.abs(v)) * 150 - yaw * 190));
-          const magnitude = Math.max(Math.abs(h), Math.abs(v));
+
+          eyeContact = clamp(
+            Math.round(
+              100 -
+                (Math.abs(h) +
+                  Math.abs(v)) *
+                  150 -
+                yaw * 190,
+            ),
+          );
+
+          const magnitude = Math.max(
+            Math.abs(h),
+            Math.abs(v),
+          );
+
           gaze =
-            magnitude < 0.14 && yaw < 0.12
+            magnitude < 0.14 &&
+            yaw < 0.12
               ? "center"
-              : Math.abs(h) >= Math.abs(v)
+              : Math.abs(h) >=
+                  Math.abs(v)
                 ? h > 0
                   ? "left"
                   : "right"
@@ -371,36 +951,61 @@ export function useDetectionEngine({
                   ? "up"
                   : "down";
 
-          const closed = shapes("eyeBlinkLeft") > 0.5 && shapes("eyeBlinkRight") > 0.5;
-          if (closed && !blinkClosed) accumRef.current.blinks += 1;
+          const closed =
+            shapes("eyeBlinkLeft") > 0.5 &&
+            shapes("eyeBlinkRight") > 0.5;
+
+          if (closed && !blinkClosed) {
+            accumRef.current.blinks += 1;
+          }
+
           blinkClosed = closed;
 
           expression =
-            shapes("mouthSmileLeft") + shapes("mouthSmileRight") > 0.5
+            shapes("mouthSmileLeft") +
+              shapes("mouthSmileRight") >
+            0.5
               ? "smiling"
-              : shapes("browDownLeft") + shapes("browDownRight") > 0.7
+              : shapes("browDownLeft") +
+                    shapes(
+                      "browDownRight",
+                    ) >
+                  0.7
                 ? "tense"
-                : shapes("jawOpen") > 0.35
+                : shapes("jawOpen") >
+                    0.35
                   ? "speaking"
                   : eyeContact > 70
                     ? "engaged"
                     : "neutral";
         }
 
+        /*
+         * Face missing.
+         */
         if (faces === 0) {
           missingStreak += 1;
+
           if (missingStreak === 8) {
-            fire("face_missing", "Your face was not visible in the camera for several seconds.", 90);
+            fire(
+              "face_missing",
+              "Your face was not visible in the camera for several seconds.",
+              90,
+            );
           }
         } else {
           missingStreak = 0;
         }
+
+        /*
+         * Multiple faces.
+         */
         if (faces > 1) {
-          // Require ~1.5s of sustained multi-face detection (frames run at ~5fps)
-          // so a person briefly walking past the camera does not trip a strike.
           multiFaceStreak += 1;
+
           if (multiFaceStreak === 5) {
             accumRef.current.multiFaceEvents += 1;
+
             fire(
               "multiple_people",
               `${faces} people detected in the camera frame. Only the candidate may be present.`,
@@ -411,8 +1016,17 @@ export function useDetectionEngine({
         } else {
           multiFaceStreak = 0;
         }
-        if (gaze !== "center" && gaze !== "unknown" && faces === 1) {
+
+        /*
+         * Looking away.
+         */
+        if (
+          gaze !== "center" &&
+          gaze !== "unknown" &&
+          faces === 1
+        ) {
           awayStreak += 1;
+
           if (awayStreak === 12) {
             fire(
               "looking_away",
@@ -424,98 +1038,312 @@ export function useDetectionEngine({
           awayStreak = 0;
         }
 
-        /* posture + movement */
-        let posture = signalsRef.current.posture;
-        let movement = signalsRef.current.movement;
-        let handGesture: DetectionSignals["handGesture"] = "none";
-        const poseResult = poseLandmarker?.detectForVideo(video, stamp) as
-          | { landmarks: { x: number; y: number }[][] }
-          | undefined;
-        const pose = poseResult?.landmarks?.[0];
+        /*
+         * ------------------------------------------------------------
+         * POSE
+         * ------------------------------------------------------------
+         */
+
+        let posture =
+          signalsRef.current.posture;
+
+        let movement =
+          signalsRef.current.movement;
+
+        let handGesture:
+          DetectionSignals["handGesture"] =
+          "none";
+
+        const poseResult =
+          poseLandmarker?.detectForVideo(
+            video,
+            stamp,
+          ) as
+            | {
+                landmarks: {
+                  x: number;
+                  y: number;
+                }[][];
+              }
+            | undefined;
+
+        const pose =
+          poseResult?.landmarks?.[0];
+
         if (pose?.length) {
           const ls = pose[11];
           const rs = pose[12];
           const le = pose[7];
           const re = pose[8];
+
           if (ls && rs) {
-            const tilt = Math.abs(ls.y - rs.y) * 400;
-            const shoulderMid = (ls.y + rs.y) / 2;
-            const earMid = le && re ? (le.y + re.y) / 2 : shoulderMid - 0.18;
-            // Head sunk toward the shoulders reads as slouching.
-            const neck = clamp((shoulderMid - earMid) * 520, 0, 100);
-            posture = clamp(Math.round(100 - tilt - Math.max(0, 55 - neck)));
+            const tilt =
+              Math.abs(ls.y - rs.y) *
+              400;
+
+            const shoulderMid =
+              (ls.y + rs.y) / 2;
+
+            const earMid =
+              le && re
+                ? (le.y + re.y) / 2
+                : shoulderMid - 0.18;
+
+            const neck = clamp(
+              (shoulderMid - earMid) *
+                520,
+              0,
+              100,
+            );
+
+            posture = clamp(
+              Math.round(
+                100 -
+                  tilt -
+                  Math.max(
+                    0,
+                    55 - neck,
+                  ),
+              ),
+            );
           }
+
           if (prevPose) {
             let delta = 0;
-            for (let i = 0; i < Math.min(pose.length, prevPose.length); i++) {
-              delta += Math.abs(pose[i].x - prevPose[i].x) + Math.abs(pose[i].y - prevPose[i].y);
+
+            for (
+              let i = 0;
+              i <
+              Math.min(
+                pose.length,
+                prevPose.length,
+              );
+              i += 1
+            ) {
+              delta +=
+                Math.abs(
+                  pose[i].x -
+                    prevPose[i].x,
+                ) +
+                Math.abs(
+                  pose[i].y -
+                    prevPose[i].y,
+                );
             }
-            movement = clamp(Math.round((delta / pose.length) * 2600));
+
+            movement = clamp(
+              Math.round(
+                (delta / pose.length) *
+                  2600,
+              ),
+            );
+
             if (movement > 78) {
-              fire("unusual_movement", "A lot of movement away from the camera was detected.", movement, 60_000);
+              fire(
+                "unusual_movement",
+                "A lot of movement away from the camera was detected.",
+                movement,
+                60_000,
+              );
             }
           }
+
           const leftWrist = pose[15];
           const rightWrist = pose[16];
+
           const leftShoulder = pose[11];
           const rightShoulder = pose[12];
-          const wristsVisible = [leftWrist, rightWrist].filter(Boolean).length;
+
+          const wristsVisible = [
+            leftWrist,
+            rightWrist,
+          ].filter(Boolean).length;
+
           const raisedHands =
-            (leftWrist && leftShoulder && leftWrist.y < leftShoulder.y - 0.08 ? 1 : 0) +
-            (rightWrist && rightShoulder && rightWrist.y < rightShoulder.y - 0.08 ? 1 : 0);
+            (leftWrist &&
+            leftShoulder &&
+            leftWrist.y <
+              leftShoulder.y - 0.08
+              ? 1
+              : 0) +
+            (rightWrist &&
+            rightShoulder &&
+            rightWrist.y <
+              rightShoulder.y - 0.08
+              ? 1
+              : 0);
+
           if (raisedHands > 0) {
             handGesture = "raised";
-          } else if (wristsVisible > 0 && movement > 58) {
+          } else if (
+            wristsVisible > 0 &&
+            movement > 58
+          ) {
             handGesture = "active";
           }
+
           if (handGesture !== "none") {
             gestureStreak += 1;
+
             if (gestureStreak === 8) {
-              accumRef.current.handGestureEvents += 1;
+              accumRef.current.handGestureEvents +=
+                1;
+
               fire(
                 "hand_gesture",
                 handGesture === "raised"
                   ? "A raised hand gesture was visible. Keep gestures within the camera frame."
                   : "Active hand movement was visible. Keep gestures deliberate and within the camera frame.",
-                handGesture === "raised" ? 82 : 68,
+                handGesture ===
+                "raised"
+                  ? 82
+                  : 68,
                 20_000,
               );
             }
           } else {
             gestureStreak = 0;
           }
-          prevPose = pose.map((p) => ({ x: p.x, y: p.y }));
+
+          prevPose = pose.map(
+            (point) => ({
+              x: point.x,
+              y: point.y,
+            }),
+          );
         }
 
-        /* objects — heavier, so a slower cadence */
-        let devices = signalsRef.current.devices;
-        if (now - lastObject > 700) {
+        /*
+         * ------------------------------------------------------------
+         * OBJECTS
+         * ------------------------------------------------------------
+         */
+
+        let devices =
+          signalsRef.current.devices;
+
+        if (
+          objectDetector &&
+          now - lastObject > 500
+        ) {
           lastObject = now;
-          const objectResult = objectDetector?.detectForVideo(video, stamp) as
-            | { detections: { categories: { categoryName?: string; score: number }[] }[] }
-            | undefined;
-          const found: { label: string; score: number }[] = [];
-          objectResult?.detections?.forEach((d) => {
-            const top = d.categories?.[0];
-            const label = top?.categoryName?.toLowerCase();
-            if (!label || !top) return;
-            if (BANNED_OBJECTS.has(label)) found.push({ label, score: Math.round(top.score * 100) });
-          });
+
+          const objectResult =
+            objectDetector.detectForVideo(
+              video,
+              stamp,
+            ) as
+              | {
+                  detections: {
+                    categories: {
+                      categoryName?: string;
+                      score: number;
+                    }[];
+                  }[];
+                }
+              | undefined;
+
+          const found: {
+            label: string;
+            score: number;
+          }[] = [];
+
+          objectResult?.detections?.forEach(
+            (detection) => {
+              const top =
+                detection.categories?.[0];
+
+              if (!top) {
+                return;
+              }
+
+              const rawLabel =
+                top.categoryName
+                  ?.trim()
+                  .toLowerCase();
+
+              if (!rawLabel) {
+                return;
+              }
+
+              const label =
+                rawLabel === "cell phone" ||
+                rawLabel === "mobile phone"
+                  ? "phone"
+                  : rawLabel;
+
+              const score = Math.round(
+                top.score * 100,
+              );
+
+              const isPhone =
+                label === "phone" ||
+                label.includes("cell phone") ||
+                label.includes("mobile");
+
+              const isSecondScreen =
+                label === "laptop" ||
+                label === "monitor" ||
+                label === "tv" ||
+                label === "screen";
+
+              if (
+                isPhone ||
+                isSecondScreen ||
+                BANNED_OBJECTS.has(rawLabel)
+              ) {
+                found.push({
+                  label,
+                  score,
+                });
+              }
+            },
+          );
+
           devices = found;
+
           if (found.length) {
-            const best = found.reduce((a, b) => (b.score > a.score ? b : a));
+            const best = found.reduce(
+              (current, candidate) =>
+                candidate.score >
+                current.score
+                  ? candidate
+                  : current,
+            );
+
             fire(
               "device_visible",
-              `A ${best.label} is visible in the camera frame (${best.score}% confidence).`,
+              best.label === "phone"
+                ? `A phone was detected in the camera frame (${best.score}% confidence).`
+                : `A possible second-screen/device object (${best.label}) was detected in the camera frame (${best.score}% confidence).`,
               best.score,
-              25_000,
+              10_000,
             );
           }
         }
 
-        const attention = clamp(Math.round(100 - movement * 0.8));
+        /*
+         * ------------------------------------------------------------
+         * AGGREGATE SIGNALS
+         * ------------------------------------------------------------
+         */
+
+        const attention = clamp(
+          Math.round(
+            100 - movement * 0.8,
+          ),
+        );
+
         const confidence = clamp(
-          Math.round(eyeContact * 0.4 + posture * 0.3 + attention * 0.2 + (expression === "smiling" ? 10 : 6)),
+          Math.round(
+            eyeContact * 0.4 +
+              posture * 0.3 +
+              attention * 0.2 +
+              (expression ===
+              "smiling"
+                ? 10
+                : 6),
+          ),
         );
 
         patch({
@@ -530,88 +1358,211 @@ export function useDetectionEngine({
           devices,
           blinkRate: Math.round(
             accumRef.current.blinks /
-              Math.max(0.5, (Date.now() - accumRef.current.startedAt) / 60_000),
+              Math.max(
+                0.5,
+                (Date.now() -
+                  accumRef.current
+                    .startedAt) /
+                  60_000,
+              ),
           ),
         });
 
-        /* accumulate one sample per ~second for the report graphs */
+        /*
+         * ------------------------------------------------------------
+         * ONE-SECOND REPORT SAMPLE
+         * ------------------------------------------------------------
+         */
+
         const a = accumRef.current;
+
         const t = elapsedRef.current();
-        const lastSample = a.samples[a.samples.length - 1];
-        if (!lastSample || t > lastSample.t) {
+
+        const lastSample =
+          a.samples[a.samples.length - 1];
+
+        if (
+          !lastSample ||
+          t > lastSample.t
+        ) {
           a.samples.push({
             t,
             eyeContact,
             posture,
             attention,
             confidence,
-            noise: signalsRef.current.noiseLevel,
-            voice: signalsRef.current.voiceLevel,
+            noise:
+              signalsRef.current
+                .noiseLevel,
+            voice:
+              signalsRef.current
+                .voiceLevel,
             faces,
             emotion: expression,
           });
-          if (a.samples.length > 3600) a.samples.shift();
+
+          if (a.samples.length > 3600) {
+            a.samples.shift();
+          }
+
           a.eye += eyeContact;
           a.posture += posture;
           a.confidence += confidence;
-          a.noise += signalsRef.current.noiseLevel;
+          a.noise +=
+            signalsRef.current
+              .noiseLevel;
+
           a.count += 1;
-          if (signalsRef.current.noiseLevel > 40) a.noisySeconds += 1;
-          if (faces > 1) a.multiFaceSeconds += 1;
-          if (faces === 0) a.faceMissingSeconds += 1;
-          if (handGesture !== "none") a.handGestureSeconds += 1;
-          if (devices.length) a.deviceSeconds += 1;
-          a.emotions.set(expression, (a.emotions.get(expression) ?? 0) + 1);
+
+          if (
+            signalsRef.current
+              .noiseLevel > 40
+          ) {
+            a.noisySeconds += 1;
+          }
+
+          if (faces > 1) {
+            a.multiFaceSeconds += 1;
+          }
+
+          if (faces === 0) {
+            a.faceMissingSeconds += 1;
+          }
+
+          if (handGesture !== "none") {
+            a.handGestureSeconds += 1;
+          }
+
+          if (devices.length) {
+            a.deviceSeconds += 1;
+          }
+
+          a.emotions.set(
+            expression,
+            (a.emotions.get(
+              expression,
+            ) ?? 0) + 1,
+          );
         }
-      } catch {
-        /* a dropped frame is never fatal */
+      } catch (error) {
+        /*
+         * A bad frame must never kill the entire monitoring loop.
+         */
+        console.warn(
+          "[Vision Mentor] Detection frame failed.",
+          error,
+        );
       }
     }
 
     void boot();
+
     return () => {
       cancelled = true;
+
       window.cancelAnimationFrame(raf);
+
       faceLandmarker?.close();
       poseLandmarker?.close();
       objectDetector?.close();
     };
   }, [active, videoRef, patch]);
 
-  const summarize = useCallback((): DetectionSummary => {
-    const a = accumRef.current;
-    const n = Math.max(1, a.count);
-    let dominant = "neutral";
-    let best = 0;
-    a.emotions.forEach((count, emotion) => {
-      if (count > best) {
-        best = count;
-        dominant = emotion;
-      }
-    });
-    const s = signalsRef.current;
-    return {
-      samples: a.samples.slice(-1800),
-      avgEyeContact: Math.round(a.eye / n),
-      avgPosture: Math.round(a.posture / n),
-      avgConfidence: Math.round(a.confidence / n),
-      avgNoise: Math.round(a.noise / n),
-      blinkRate: s.blinkRate,
-      noisySeconds: a.noisySeconds,
-      multiFaceSeconds: a.multiFaceSeconds,
-      faceMissingSeconds: a.faceMissingSeconds,
-      handGestureSeconds: a.handGestureSeconds,
-      handGestureEvents: a.handGestureEvents,
-      deviceSeconds: a.deviceSeconds,
-      backgroundVoiceEvents: a.backgroundVoiceEvents,
-      multiFaceEvents: a.multiFaceEvents,
-      pauses: s.pauses,
-      longestPause: s.longestPause,
-      speechPace: s.speechPace,
-      dominantEmotion: dominant,
-      onDevice: a.count > 0 && !s.degraded,
-    };
-  }, []);
+  /*
+   * ------------------------------------------------------------------
+   * SUMMARY
+   * ------------------------------------------------------------------
+   */
 
-  return { signals, summarize };
+  const summarize = useCallback(
+    (): DetectionSummary => {
+      const a = accumRef.current;
+
+      const n = Math.max(
+        1,
+        a.count,
+      );
+
+      let dominant = "neutral";
+      let best = 0;
+
+      a.emotions.forEach(
+        (count: number, emotion: string) => {
+          if (count > best) {
+            best = count;
+            dominant = emotion;
+          }
+        },
+      );
+
+      const s = signalsRef.current;
+
+      return {
+        samples: a.samples.slice(-1800),
+
+        avgEyeContact: Math.round(
+          a.eye / n,
+        ),
+
+        avgPosture: Math.round(
+          a.posture / n,
+        ),
+
+        avgConfidence: Math.round(
+          a.confidence / n,
+        ),
+
+        avgNoise: Math.round(
+          a.noise / n,
+        ),
+
+        blinkRate: s.blinkRate,
+
+        noisySeconds:
+          a.noisySeconds,
+
+        multiFaceSeconds:
+          a.multiFaceSeconds,
+
+        faceMissingSeconds:
+          a.faceMissingSeconds,
+
+        handGestureSeconds:
+          a.handGestureSeconds,
+
+        handGestureEvents:
+          a.handGestureEvents,
+
+        deviceSeconds:
+          a.deviceSeconds,
+
+        backgroundVoiceEvents:
+          a.backgroundVoiceEvents,
+
+        multiFaceEvents:
+          a.multiFaceEvents,
+
+        pauses: s.pauses,
+
+        longestPause:
+          s.longestPause,
+
+        speechPace:
+          s.speechPace,
+
+        dominantEmotion:
+          dominant,
+
+        onDevice:
+          a.count > 0 &&
+          !s.degraded,
+      };
+    },
+    [],
+  );
+
+  return {
+    signals,
+    summarize,
+  };
 }

@@ -3,6 +3,7 @@ import { z } from "zod";
 
 const schema = z.object({
   sourceCode: z.string().min(1).max(50000),
+  language: z.enum(["java", "javascript", "python"]).default("java"),
   cases: z.array(z.object({
     input: z.string().max(10000).default(""),
     expectedStdout: z.string().max(10000).default(""),
@@ -24,6 +25,12 @@ export const runJavaCode = createServerFn({ method: "POST" })
     const url = "https://judge0-ce.p.rapidapi.com/submissions?base64_encoded=false&wait=true";
 
     const results: { ok: boolean; actual: string; stderr?: string }[] = [];
+    const languageId = {
+      java: 62,
+      javascript: 63,
+      python: 71,
+    }[data.language];
+
     for (const c of data.cases) {
       try {
         const res = await fetch(url, {
@@ -31,7 +38,7 @@ export const runJavaCode = createServerFn({ method: "POST" })
           headers,
           body: JSON.stringify({
             source_code: data.sourceCode,
-            language_id: 62, // Java (OpenJDK 13)
+            language_id: languageId,
             stdin: c.input,
             expected_output: c.expectedStdout,
           }),

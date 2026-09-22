@@ -38,6 +38,8 @@ signIn: (
 };
 
 const STORAGE_KEY = "vmx_user";
+const COMPANY_STORAGE_KEY = "vmx_company_user";
+const INDIVIDUAL_STORAGE_KEY = "vmx_individual_user";
 
 const DemoAuthCtx = createContext<Ctx | null>(null);
 
@@ -94,6 +96,10 @@ export function DemoAuthProvider({
 
     if (nextUser) {
       localStorage.setItem(STORAGE_KEY, JSON.stringify(nextUser));
+      localStorage.setItem(
+        nextUser.role === "company" ? COMPANY_STORAGE_KEY : INDIVIDUAL_STORAGE_KEY,
+        JSON.stringify(nextUser),
+      );
       localStorage.removeItem("vmx_demo_user");
     } else {
       localStorage.removeItem(STORAGE_KEY);

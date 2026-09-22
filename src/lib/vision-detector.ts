@@ -512,8 +512,7 @@ export class VisionDetector {
     if (
       !this.running ||
       !this.video ||
-      !this.face ||
-      !this.pose
+      !this.face
     ) {
       return;
     }
@@ -654,8 +653,12 @@ export class VisionDetector {
              */
             const isPhone =
               name === "cell phone" ||
+              name === "cellphone" ||
               name === "mobile phone" ||
-              name === "phone";
+              name === "mobile" ||
+              name === "smartphone" ||
+              name === "phone" ||
+              name.includes("phone");
 
             /*
              * 0.45 is deliberately lower than the
@@ -666,10 +669,7 @@ export class VisionDetector {
              * are available but are not strong enough
              * to trigger the warning.
              */
-            if (
-              isPhone &&
-              score >= 0.45
-            ) {
+            if (isPhone && score >= 0.30) {
               detectedPhone = true;
               break;
             }

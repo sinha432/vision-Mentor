@@ -271,6 +271,8 @@ function InterviewRoom() {
     getElapsed: () => elapsedRef.current,
     onEvent: handleDetectionEvent,
   });
+  const noiseLevelRef = useRef(0);
+  noiseLevelRef.current = detection.signals.noiseLevel;
 
   const current = turns[turns.length - 1] ?? null;
   const question = current?.question ?? null;
@@ -555,13 +557,19 @@ function InterviewRoom() {
   }, [camOn, config, vision, flagIntegrity, escalate]);
 
   // Groq vision phone check: samples a frame every ~6s while the candidate is
-  // answering, on top of the continuous on-device object detector.
+  // in the interview, on top of the continuous on-device object detector.
   useEffect(() => {
-    if (!camOn || !config || !recorder.recording) return;
+    if (!camOn || !config) return;
     let cancelled = false;
+    let checking = false;
     async function checkPhone() {
+      if (checking) return;
+      checking = true;
       const frame = vision.grabFrame();
-      if (!frame) return;
+      if (!frame) {
+        checking = false;
+        return;
+      }
       try {
         const result = await analyzeProctoringFrame({ data: { dataUrl: frame } });
         if (cancelled) return;
@@ -584,14 +592,16 @@ function InterviewRoom() {
         }
       } catch {
         /* best-effort */
+      } finally {
+        checking = false;
       }
     }
-    const id = window.setInterval(() => void checkPhone(), 6000);
+    const id = window.setInterval(() => void checkPhone(), 15_000);
     return () => {
       cancelled = true;
       window.clearInterval(id);
     };
-  }, [camOn, config, recorder.recording, vision, flagIntegrity, escalate]);
+  }, [camOn, config, vision, flagIntegrity, escalate]);
 
   // Rolling ~10s audio chunks while answering, checked for music/second voice.
   useEffect(() => {
@@ -617,6 +627,10 @@ function InterviewRoom() {
     };
     const flush = async () => {
       if (!chunks.length) return;
+      if (noiseLevelRef.current < 55) {
+        chunks = [];
+        return;
+      }
       const blob = new Blob(chunks, { type: mr!.mimeType || "audio/webm" });
       chunks = [];
       try {
@@ -660,7 +674,7 @@ function InterviewRoom() {
       } catch {
         /* not all browsers support requestData mid-stream */
       }
-    }, 8_000);
+    }, 15_000);
     return () => {
       cancelled = true;
       window.clearInterval(id);
@@ -882,7 +896,13 @@ function InterviewRoom() {
         }
       }
       let appearance: InterviewSession["appearance"] = undefined;
-      const snapshot = vision.captureSnapshotNow() ?? vision.getSnapshot();
+      let snapshot = vision.captureSnapshotNow() ?? vision.getSnapshot();
+      if (!snapshot && camOn) {
+        for (let attempt = 0; attempt < 3 && !snapshot; attempt += 1) {
+          await new Promise((resolve) => window.setTimeout(resolve, 250));
+          snapshot = vision.captureSnapshotNow() ?? vision.getSnapshot();
+        }
+      }
       let finalAppearanceObservation: InterviewSession["appearanceObservation"] = undefined;
       if (snapshot && config) {
         try {
@@ -894,7 +914,12 @@ function InterviewRoom() {
             t: elapsedRef.current,
           };
         } catch {
-          /* final appearance evidence remains optional */
+          finalAppearanceObservation = {
+            attire: "",
+            grooming: "",
+            notes: "The final appearance review was unavailable, but the interview frame was saved for report retry.",
+            t: elapsedRef.current,
+          };
         }
       }
       if (snapshot && config) {
@@ -1205,7 +1230,12 @@ function InterviewRoom() {
             </div>
           )}
 
-          <IntegrityStrip events={proctor} enabled={camOn} warnings={tabWarnings + phoneWarnings} />
+          <IntegrityStrip
+            events={proctor}
+            enabled={camOn}
+            warnings={tabWarnings + phoneWarnings}
+            signals={detection.signals}
+          />
 
           {qaOpen && (
             <ProctorDebugPanel

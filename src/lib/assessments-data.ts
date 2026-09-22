@@ -99,18 +99,23 @@ function currentCompanyUserId(): string {
   if (typeof window === "undefined") return "";
 
   try {
-   const raw = localStorage.getItem("vmx_user"); 
+    const activeRaw = localStorage.getItem("vmx_user");
+    const storedRaw = localStorage.getItem("vmx_company_user");
 
-    if (!raw) return "";
+    if (!activeRaw && !storedRaw) return "";
 
-    const u = JSON.parse(raw) as {
-      id?: string;
-      role?: string;
-    };
+    const active = activeRaw ? JSON.parse(activeRaw) as { id?: string; role?: string } : null;
+    const u = active?.role === "company"
+      ? active
+      : storedRaw
+        ? JSON.parse(storedRaw) as { id?: string; role?: string }
+        : null;
 
-    return u.role === "company"
-      ? u.id ?? ""
-      : "";
+    if (!u) return "";
+
+    const companyId = u.id;
+    if (!companyId) return "";
+    return companyId;
   } catch {
     return "";
   }
@@ -120,19 +125,19 @@ function currentCompanyEmail(): string {
   if (typeof window === "undefined") return "";
 
   try {
-    const raw = localStorage.getItem("vmx_user");
+    const activeRaw = localStorage.getItem("vmx_user");
+    const storedRaw = localStorage.getItem("vmx_company_user");
 
-    if (!raw) return "";
+    if (!activeRaw && !storedRaw) return "";
 
-    const u = JSON.parse(raw) as {
-      email?: string;
-      role?: string;
-    };
+    const active = activeRaw ? JSON.parse(activeRaw) as { email?: string; role?: string } : null;
+    const u = active?.role === "company"
+      ? active
+      : storedRaw
+        ? JSON.parse(storedRaw) as { email?: string; role?: string }
+        : null;
 
-    if (u.role !== "company") {
-      return "";
-    }
-
+    if (!u) return "";
     return u.email?.trim().toLowerCase() ?? "";
   } catch {
     return "";
@@ -191,6 +196,7 @@ export async function setAssessmentStatus(input: {
 
 export async function deleteAssessment(input: {
   id: string;
+  code?: string;
 }): Promise<void> {
   const companyUserId =
     currentCompanyUserId();
@@ -205,6 +211,7 @@ export async function deleteAssessment(input: {
     data: {
       assessmentId: input.id,
       companyUserId,
+      code: input.code,
     },
   });
 }

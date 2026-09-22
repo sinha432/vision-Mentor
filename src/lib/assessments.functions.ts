@@ -9,6 +9,8 @@ import { z } from "zod";
 import { newId, type StoredReport } from "./assessment-types";
 import {
   deleteAssessmentLocal,
+  deleteCandidateLocal,
+  deleteIndividualReportsLocal,
   findUserById,
   insertAssessment,
   insertAttempt,
@@ -21,7 +23,15 @@ import {
 } from "./local-db";
 import { gradeTextAnswers } from "./grading.functions";
 import { scoreAnswerTyped, weightedOverall } from "./scoring";
-import { fetchAssessmentFromMongoDB, fetchCompanyAssessmentsFromMongoDB, fetchUserFromMongoDB } from "./mongodb-sync";
+import {
+  deleteAssessmentFromMongoDB,
+  deleteCandidateFromMongoDB,
+  deleteIndividualReportsFromMongoDB,
+  fetchAssessmentFromMongoDB,
+  fetchCompanyAssessmentsFromMongoDB,
+  fetchUserFromMongoDB,
+  syncAssessmentSubmissionToMongoDB,
+} from "./mongodb-sync";
 
 const choiceSchema = z.object({ id: z.string().min(1), text: z.string().trim().min(1).max(300) });
 const testCaseSchema = z.object({
@@ -37,6 +47,7 @@ const questionInput = z.object({
   maxLength: z.number().int().min(20).max(5000).nullable().default(null),
   choices: z.array(choiceSchema).max(8).optional(),
   correctChoiceId: z.string().optional(),
+  language: z.enum(["java", "javascript", "python"]).optional(),
   starterCode: z.string().max(20000).optional(),
   testCases: z.array(testCaseSchema).max(10).optional(),
 });
@@ -172,12 +183,25 @@ export async function setAssessmentStatus({ data }: { data: unknown }) {
 
 export async function deleteAssessment({ data }: { data: unknown }) {
   const input = z
-    .object({ assessmentId: z.string().min(1), companyUserId: z.string().min(1) })
+    .object({
+      assessmentId: z.string().min(1),
+      companyUserId: z.string().min(1),
+      code: z.string().trim().min(1).optional(),
+    })
     .parse(data);
   const a = readAssessments().find((x) => x._id === input.assessmentId);
-  if (!a || a.companyUserId !== input.companyUserId) throw new Error("Not authorized");
-  deleteAssessmentLocal(input.assessmentId);
-  return { ok: true };
+  if (a && a.companyUserId !== input.companyUserId) throw new Error("Not authorized");
+
+  const code = input.code ?? a?.code;
+  if (!code) throw new Error("Assessment not found");
+
+  const mongoDeleted = await deleteAssessmentFromMongoDB(code, input.companyUserId);
+
+  if (a) {
+    deleteAssessmentLocal(input.assessmentId);
+  }
+
+  return { ok: true, mongoDeleted };
 }
 
 export async function submitAttempt({ data }: { data: unknown }) {
@@ -258,6 +282,8 @@ export async function submitAttempt({ data }: { data: unknown }) {
     overallScore: weightedOverall(per.map((p) => ({ score: p.score, weight: p.weight }))),
     vision: input.vision,
   });
+
+  await syncAssessmentSubmissionToMongoDB(attempt, report);
 
   return { attemptId: attempt._id, reportId: report._id };
 }
@@ -341,6 +367,35 @@ export async function listIndividualReports({ data }: { data: unknown }) {
     .sort((a, b) => b.submittedAt.localeCompare(a.submittedAt));
 }
 
+export async function deleteIndividualReports({ data }: { data: unknown }) {
+  const input = z
+    .object({
+      individualUserId: z.string().min(1),
+      attemptIds: z.array(z.string().min(1)).min(1).max(100),
+    })
+    .parse(data);
+  const ownedIds = new Set(
+    readAttempts()
+      .filter(
+        (attempt) =>
+          attempt.individualUserId === input.individualUserId &&
+          input.attemptIds.includes(attempt._id),
+      )
+      .map((attempt) => attempt._id),
+  );
+
+  const attemptIds = [...ownedIds];
+  const mongoDeleted = await deleteIndividualReportsFromMongoDB(
+    input.individualUserId,
+    attemptIds,
+  );
+  if (attemptIds.length) {
+    deleteIndividualReportsLocal(input.individualUserId, ownedIds);
+  }
+
+  return { ok: true, mongoDeleted, deleted: attemptIds.length };
+}
+
 export async function listAssessmentAttempts({ data }: { data: unknown }) {
   const input = z
     .object({ assessmentId: z.string().min(1), companyUserId: z.string().min(1) })
@@ -408,6 +463,33 @@ export async function listCompanyCandidates({ data }: { data: unknown }) {
       };
     })
     .sort((a, b) => b.lastSubmittedAt.localeCompare(a.lastSubmittedAt));
+}
+
+export async function deleteCompanyCandidate({ data }: { data: unknown }) {
+  const input = z
+    .object({
+      companyUserId: z.string().min(1),
+      individualUserId: z.string().min(1),
+    })
+    .parse(data);
+  const mine = readAssessments().filter((assessment) => assessment.companyUserId === input.companyUserId);
+  const assessmentIds = new Set(mine.map((assessment) => assessment._id));
+  const hasCandidateAttempt = readAttempts().some(
+    (attempt) =>
+      attempt.individualUserId === input.individualUserId &&
+      assessmentIds.has(attempt.assessmentId),
+  );
+
+  const mongoDeleted = await deleteCandidateFromMongoDB(
+    input.individualUserId,
+    input.companyUserId,
+  );
+
+  if (hasCandidateAttempt) {
+    deleteCandidateLocal(input.individualUserId, assessmentIds);
+  }
+
+  return { ok: true, mongoDeleted };
 }
 
 export async function getReport({ data }: { data: unknown }) {

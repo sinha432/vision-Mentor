@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
-import { Building2, Plus, Copy, ExternalLink, ArrowLeft, LogOut, Loader2, Ban, PlayCircle, Trash2 } from "lucide-react";
+import { Building2, Plus, Copy, ExternalLink, ArrowLeft, LogOut, Loader2, Ban, PlayCircle, Trash2, CheckSquare, Square } from "lucide-react";
 import { toast } from "sonner";
 import { Toaster } from "@/components/ui/sonner";
 import {
@@ -18,6 +18,8 @@ function CompanyDashboard() {
   const { user, signOut } = useDemoAuth();
   const navigate = useNavigate();
   const [rows, setRows] = useState<Row[] | null>(null);
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [deletingSelected, setDeletingSelected] = useState(false);
 
   useEffect(() => {
     if (!user) return;
@@ -55,6 +57,41 @@ function CompanyDashboard() {
       toast.success("Assessment deleted");
     } catch (e: any) {
       toast.error(e?.message ?? "Could not delete");
+    }
+  };
+
+  const allSelected = rows !== null && rows.length > 0 && selectedIds.size === rows.length;
+
+  const toggleSelected = (id: string) => {
+    setSelectedIds((current) => {
+      const next = new Set(current);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+
+  const toggleAll = () => {
+    setSelectedIds(allSelected ? new Set() : new Set(rows?.map((row) => row._id) ?? []));
+  };
+
+  const removeSelected = async () => {
+    if (!user || !rows || selectedIds.size === 0) return;
+    setDeletingSelected(true);
+    try {
+      const targets = rows.filter((row) => selectedIds.has(row._id));
+      await Promise.all(
+        targets.map((row) =>
+          deleteAssessment({ data: { assessmentId: row._id, companyUserId: user.id } }),
+        ),
+      );
+      setRows((current) => current?.filter((row) => !selectedIds.has(row._id)) ?? current);
+      setSelectedIds(new Set());
+      toast.success(`${targets.length} assessment${targets.length === 1 ? "" : "s"} deleted`);
+    } catch (e: any) {
+      toast.error(e?.message ?? "Could not delete selected assessments");
+    } finally {
+      setDeletingSelected(false);
     }
   };
 
@@ -97,8 +134,59 @@ function CompanyDashboard() {
             </div>
           ) : (
             <div className="space-y-3">
+              <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-border/60 bg-background/30 p-3">
+                <button
+                  type="button"
+                  onClick={toggleAll}
+                  className="inline-flex items-center gap-2 text-xs font-medium hover:text-primary"
+                >
+                  {allSelected ? <CheckSquare className="h-4 w-4" /> : <Square className="h-4 w-4" />}
+                  {allSelected ? "Deselect all" : "Select all"}
+                </button>
+                <div className="flex items-center gap-3">
+                  {selectedIds.size > 0 && (
+                    <span className="text-xs text-muted-foreground">
+                      {selectedIds.size} selected
+                    </span>
+                  )}
+                  <AlertDialog>
+                    <AlertDialogTrigger asChild>
+                      <button
+                        type="button"
+                        disabled={selectedIds.size === 0 || deletingSelected}
+                        className="inline-flex items-center gap-1.5 rounded-md border border-destructive/40 px-3 py-1.5 text-xs text-destructive transition hover:bg-destructive/10 disabled:cursor-not-allowed disabled:opacity-40"
+                      >
+                        {deletingSelected ? <Loader2 className="h-3 w-3 animate-spin" /> : <Trash2 className="h-3 w-3" />}
+                        Delete selected
+                      </button>
+                    </AlertDialogTrigger>
+                    <AlertDialogContent>
+                      <AlertDialogHeader>
+                        <AlertDialogTitle>Delete {selectedIds.size} assessment{selectedIds.size === 1 ? "" : "s"}?</AlertDialogTitle>
+                        <AlertDialogDescription>
+                          The selected assessments and their share links will be removed. This action cannot be undone.
+                        </AlertDialogDescription>
+                      </AlertDialogHeader>
+                      <AlertDialogFooter>
+                        <AlertDialogCancel>Cancel</AlertDialogCancel>
+                        <AlertDialogAction onClick={() => void removeSelected()} className="bg-destructive text-destructive-foreground hover:bg-destructive/90">
+                          Delete selected
+                        </AlertDialogAction>
+                      </AlertDialogFooter>
+                    </AlertDialogContent>
+                  </AlertDialog>
+                </div>
+              </div>
               {rows.map((r) => (
                 <div key={r._id} className="glass-strong rounded-2xl p-4 flex flex-col md:flex-row md:items-center gap-3">
+                  <button
+                    type="button"
+                    onClick={() => toggleSelected(r._id)}
+                    aria-label={`${selectedIds.has(r._id) ? "Deselect" : "Select"} ${r.title}`}
+                    className="self-start rounded-md p-1 text-muted-foreground hover:text-primary md:self-center"
+                  >
+                    {selectedIds.has(r._id) ? <CheckSquare className="h-5 w-5 text-primary" /> : <Square className="h-5 w-5" />}
+                  </button>
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-2 flex-wrap">
                       <div className="font-display text-sm">{r.title}</div>

@@ -1,7 +1,18 @@
 import { useEffect, useState } from "react";
 import { createFileRoute, Link } from "@tanstack/react-router";
-import { Users, Loader2, AlertCircle, FileText } from "lucide-react";
-import { listCompanyCandidates } from "@/lib/assessments.functions";
+import { Users, Loader2, AlertCircle, FileText, Trash2, CheckSquare, Square } from "lucide-react";
+import { toast } from "sonner";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
+import { deleteCompanyCandidate, listCompanyCandidates } from "@/lib/assessments.functions";
 import { useDemoAuth } from "@/contexts/DemoAuthContext";
 
 export const Route = createFileRoute("/_authenticated/dashboard/candidates")({
@@ -30,6 +41,10 @@ function CandidatesPage() {
   const { user } = useDemoAuth();
   const [rows, setRows] = useState<Candidate[] | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [pendingDelete, setPendingDelete] = useState<Candidate | null>(null);
+  const [bulkDeleteOpen, setBulkDeleteOpen] = useState(false);
+  const [deleting, setDeleting] = useState(false);
 
   useEffect(() => {
     if (!user) return;
@@ -42,6 +57,48 @@ function CandidatesPage() {
       alive = false;
     };
   }, [user]);
+
+  const allSelected = Boolean(rows?.length) && selectedIds.size === rows?.length;
+
+  const toggleCandidate = (id: string) => {
+    setSelectedIds((current) => {
+      const next = new Set(current);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+
+  const toggleAll = () => {
+    setSelectedIds(allSelected ? new Set() : new Set(rows?.map((row) => row.individualUserId) ?? []));
+  };
+
+  const deleteCandidates = async (candidates: Candidate[]) => {
+    if (!user || !candidates.length) return;
+    setDeleting(true);
+    try {
+      await Promise.all(
+        candidates.map((candidate) =>
+          deleteCompanyCandidate({
+            data: {
+              companyUserId: user.id,
+              individualUserId: candidate.individualUserId,
+            },
+          }),
+        ),
+      );
+      const deletedIds = new Set(candidates.map((candidate) => candidate.individualUserId));
+      setRows((current) => current?.filter((candidate) => !deletedIds.has(candidate.individualUserId)) ?? current);
+      setSelectedIds(new Set());
+      setPendingDelete(null);
+      setBulkDeleteOpen(false);
+      toast.success(`${candidates.length} candidate${candidates.length === 1 ? "" : "s"} deleted`);
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Could not delete candidates");
+    } finally {
+      setDeleting(false);
+    }
+  };
 
   return (
     <div className="mx-auto w-full max-w-5xl">
@@ -80,11 +137,42 @@ function CandidatesPage() {
 
       {!error && rows && rows.length > 0 && (
         <div className="grid gap-3 animate-fade-in">
+          <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-border/60 bg-background/30 px-3 py-2">
+            <button
+              type="button"
+              onClick={toggleAll}
+              className="inline-flex items-center gap-2 text-xs font-medium hover:text-primary"
+            >
+              {allSelected ? <CheckSquare className="h-4 w-4" /> : <Square className="h-4 w-4" />}
+              {allSelected ? "Deselect all" : "Select all"}
+            </button>
+            <div className="flex items-center gap-3">
+              {selectedIds.size > 0 && (
+                <span className="text-xs text-muted-foreground">{selectedIds.size} selected</span>
+              )}
+              <button
+                type="button"
+                disabled={selectedIds.size === 0 || deleting}
+                onClick={() => setBulkDeleteOpen(true)}
+                className="inline-flex items-center gap-1.5 rounded-lg border border-destructive/40 px-3 py-2 text-xs text-destructive hover:bg-destructive/10 disabled:cursor-not-allowed disabled:opacity-40"
+              >
+                <Trash2 className="h-3.5 w-3.5" /> Delete selected
+              </button>
+            </div>
+          </div>
           {rows.map((c) => (
             <article
               key={c.individualUserId}
               className="glass card-3d flex flex-wrap items-center gap-4 rounded-2xl p-5"
             >
+              <button
+                type="button"
+                onClick={() => toggleCandidate(c.individualUserId)}
+                aria-label={`${selectedIds.has(c.individualUserId) ? "Deselect" : "Select"} ${c.candidateName}`}
+                className="text-muted-foreground hover:text-primary"
+              >
+                {selectedIds.has(c.individualUserId) ? <CheckSquare className="h-5 w-5 text-primary" /> : <Square className="h-5 w-5" />}
+              </button>
               <div className="min-w-[180px] flex-1">
                 <h2 className="font-display text-sm font-bold">{c.candidateName}</h2>
                 <p className="text-xs text-muted-foreground">{c.candidateEmail || "—"}</p>
@@ -108,10 +196,62 @@ function CandidatesPage() {
                   <FileText className="h-3.5 w-3.5" /> Report
                 </Link>
               )}
+              <button
+                type="button"
+                onClick={() => setPendingDelete(c)}
+                className="inline-flex items-center gap-1.5 rounded-lg border border-destructive/40 px-3 py-2 text-xs text-destructive transition-colors hover:bg-destructive/10"
+              >
+                <Trash2 className="h-3.5 w-3.5" /> Delete
+              </button>
             </article>
           ))}
         </div>
       )}
+
+      <AlertDialog
+        open={pendingDelete !== null}
+        onOpenChange={(open) => !open && setPendingDelete(null)}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete {pendingDelete?.candidateName}?</AlertDialogTitle>
+            <AlertDialogDescription>
+              This removes the candidate&apos;s attempts and reports from this company&apos;s workspace and MongoDB data. This cannot be undone.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              disabled={deleting}
+              onClick={() => pendingDelete && void deleteCandidates([pendingDelete])}
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+            >
+              Delete candidate
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      <AlertDialog open={bulkDeleteOpen} onOpenChange={setBulkDeleteOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete {selectedIds.size} candidate{selectedIds.size === 1 ? "" : "s"}?</AlertDialogTitle>
+            <AlertDialogDescription>
+              This removes the selected candidates&apos; attempts and reports from this company&apos;s workspace and MongoDB data. This cannot be undone.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              disabled={deleting}
+              onClick={() => void deleteCandidates(rows?.filter((row) => selectedIds.has(row.individualUserId)) ?? [])}
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+            >
+              Delete selected
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }

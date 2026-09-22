@@ -66,6 +66,8 @@ interface GeneratedQuestion {
 
   correctChoiceId?: string;
 
+  language?: "java" | "javascript" | "python";
+
   starterCode?: string;
 
   testCases?: {

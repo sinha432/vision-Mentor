@@ -13,6 +13,8 @@ import {
   RotateCcw,
   Trash2,
   Search,
+  CheckSquare,
+  Square,
 } from "lucide-react";
 import { toast } from "sonner";
 
@@ -93,6 +95,8 @@ function AssessmentsPage() {
   const [pendingDelete, setPendingDelete] = useState<CompanyAssessment | null>(
     null,
   );
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [bulkDeleteOpen, setBulkDeleteOpen] = useState(false);
 
   const { data: assessments = [] } = useQuery({
     queryKey: ["company-assessments"],
@@ -124,6 +128,23 @@ function AssessmentsPage() {
     onError: (e: any) => toast.error(e?.message ?? "Could not delete"),
   });
 
+  const bulkDeleteMutation = useMutation({
+    mutationFn: async (selected: CompanyAssessment[]) => {
+      await Promise.all(
+        selected.map((assessment) =>
+          deleteAssessment({ id: assessment.id, code: assessment.code }),
+        ),
+      );
+    },
+    onSuccess: (_data, selected) => {
+      toast.success(`${selected.length} assessment${selected.length === 1 ? "" : "s"} deleted.`);
+      setSelectedIds(new Set());
+      setBulkDeleteOpen(false);
+      void invalidate();
+    },
+    onError: (e: any) => toast.error(e?.message ?? "Could not delete selected assessments"),
+  });
+
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
     return assessments.filter((a) => {
@@ -135,6 +156,28 @@ function AssessmentsPage() {
       return matchesQuery && matchesStatus;
     });
   }, [assessments, query, status]);
+
+  const selectedCount = selectedIds.size;
+  const allVisibleSelected =
+    filtered.length > 0 && filtered.every((assessment) => selectedIds.has(assessment.id));
+
+  const toggleAssessment = (id: string) => {
+    setSelectedIds((current) => {
+      const next = new Set(current);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+
+  const toggleAllVisible = () => {
+    setSelectedIds((current) => {
+      const next = new Set(current);
+      if (allVisibleSelected) filtered.forEach((assessment) => next.delete(assessment.id));
+      else filtered.forEach((assessment) => next.add(assessment.id));
+      return next;
+    });
+  };
 
   const created = assessments.length;
   const tested = assessments.reduce((sum, a) => sum + a.attemptCount, 0);
@@ -214,10 +257,49 @@ function AssessmentsPage() {
           </Select>
         </div>
 
+        <div className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-border/60 bg-background/30 px-3 py-2">
+          <button
+            type="button"
+            onClick={toggleAllVisible}
+            className="inline-flex items-center gap-2 text-xs font-medium hover:text-primary"
+          >
+            {allVisibleSelected ? (
+              <CheckSquare className="h-4 w-4" />
+            ) : (
+              <Square className="h-4 w-4" />
+            )}
+            {allVisibleSelected ? "Deselect all" : "Select all"}
+          </button>
+          <div className="flex items-center gap-3">
+            {selectedCount > 0 && (
+              <span className="text-xs text-muted-foreground">{selectedCount} selected</span>
+            )}
+            <Button
+              size="sm"
+              variant="outline"
+              disabled={selectedCount === 0 || bulkDeleteMutation.isPending}
+              className="border-destructive/40 text-destructive hover:bg-destructive/10 hover:text-destructive"
+              onClick={() => setBulkDeleteOpen(true)}
+            >
+              {bulkDeleteMutation.isPending ? "Deleting..." : "Delete selected"}
+            </Button>
+          </div>
+        </div>
+
         <div className="mt-4 overflow-x-auto">
           <Table>
             <TableHeader>
               <TableRow>
+                <TableHead className="w-10">
+                  <button
+                    type="button"
+                    onClick={toggleAllVisible}
+                    aria-label={allVisibleSelected ? "Deselect all visible assessments" : "Select all visible assessments"}
+                    className="text-muted-foreground hover:text-primary"
+                  >
+                    {allVisibleSelected ? <CheckSquare className="h-4 w-4" /> : <Square className="h-4 w-4" />}
+                  </button>
+                </TableHead>
                 <TableHead>Title</TableHead>
                 <TableHead>Status</TableHead>
                 <TableHead className="text-right">Questions</TableHead>
@@ -230,6 +312,16 @@ function AssessmentsPage() {
             <TableBody>
               {filtered.map((a) => (
                 <TableRow key={a.id} className="hover:bg-accent/40">
+                  <TableCell>
+                    <button
+                      type="button"
+                      onClick={() => toggleAssessment(a.id)}
+                      aria-label={`${selectedIds.has(a.id) ? "Deselect" : "Select"} ${a.title}`}
+                      className="text-muted-foreground hover:text-primary"
+                    >
+                      {selectedIds.has(a.id) ? <CheckSquare className="h-4 w-4 text-primary" /> : <Square className="h-4 w-4" />}
+                    </button>
+                  </TableCell>
                   <TableCell className="max-w-[16rem]">
                     <p className="truncate font-medium">{a.title}</p>
                     <p className="truncate font-mono text-xs text-primary">
@@ -343,7 +435,7 @@ function AssessmentsPage() {
               ))}
               {filtered.length === 0 && (
                 <TableRow>
-                  <TableCell colSpan={7} className="py-12 text-center">
+                  <TableCell colSpan={8} className="py-12 text-center">
                     <p className="font-display text-sm">
                       {assessments.length === 0
                         ? "No assessments yet"
@@ -380,11 +472,39 @@ function AssessmentsPage() {
               className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
               onClick={() => {
                 if (pendingDelete) {
-                  deleteMutation.mutate({ id: pendingDelete.id });
+                            deleteMutation.mutate({ id: pendingDelete.id, code: pendingDelete.code });
                 }
               }}
             >
               Delete
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      <AlertDialog open={bulkDeleteOpen} onOpenChange={setBulkDeleteOpen}>
+        <AlertDialogContent className="glass-strong">
+          <AlertDialogHeader>
+            <AlertDialogTitle>
+              Delete {selectedCount} assessment{selectedCount === 1 ? "" : "s"}?
+            </AlertDialogTitle>
+            <AlertDialogDescription>
+              The selected assessments and their share links will be removed.
+              Candidates who already submitted keep access to their reports.
+              This cannot be undone.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              onClick={() =>
+                bulkDeleteMutation.mutate(
+                  assessments.filter((assessment) => selectedIds.has(assessment.id)),
+                )
+              }
+            >
+              Delete selected
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

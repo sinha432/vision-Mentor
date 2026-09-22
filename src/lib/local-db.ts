@@ -275,3 +275,52 @@ export function updateReportLocal(
   write(KEYS.reports, all);
   return next;
 }
+
+export function deleteCandidateLocal(
+  individualUserId: string,
+  assessmentIds: Set<string>,
+): void {
+  const attempts = readAttempts();
+  const removedAttemptIds = new Set(
+    attempts
+      .filter(
+        (attempt) =>
+          attempt.individualUserId === individualUserId &&
+          assessmentIds.has(attempt.assessmentId),
+      )
+      .map((attempt) => attempt._id),
+  );
+
+  write(
+    KEYS.attempts,
+    attempts.filter((attempt) => !removedAttemptIds.has(attempt._id)),
+  );
+  write(
+    KEYS.reports,
+    readReports().filter((report) => !removedAttemptIds.has(report.attemptId)),
+  );
+}
+
+export function deleteIndividualReportsLocal(
+  individualUserId: string,
+  attemptIds: Set<string>,
+): void {
+  const ownedAttemptIds = new Set(
+    readAttempts()
+      .filter(
+        (attempt) =>
+          attempt.individualUserId === individualUserId &&
+          attemptIds.has(attempt._id),
+      )
+      .map((attempt) => attempt._id),
+  );
+
+  write(
+    KEYS.attempts,
+    readAttempts().filter((attempt) => !ownedAttemptIds.has(attempt._id)),
+  );
+  write(
+    KEYS.reports,
+    readReports().filter((report) => !ownedAttemptIds.has(report.attemptId)),
+  );
+}
