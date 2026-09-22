@@ -204,6 +204,7 @@ function ReportPage() {
   const [report, setReport] = useState<InterviewReport | null>(null);
   const [appearance, setAppearance] = useState<AppearanceReview | null>(null);
   const [appearanceLoading, setAppearanceLoading] = useState(false);
+  const [appearanceError, setAppearanceError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [coaching, setCoaching] = useState<Record<string, AnswerCoaching>>({});
   const [coachingLoading, setCoachingLoading] = useState(false);
@@ -221,6 +222,7 @@ function ReportPage() {
     if (!stored.snapshot) return;
     let cancelled = false;
     setAppearanceLoading(true);
+    setAppearanceError(null);
     (async () => {
       try {
         const result = await reviewAppearance({
@@ -242,7 +244,7 @@ function ReportPage() {
           snapshot: normalized.assessed ? null : latest.snapshot,
         });
       } catch {
-        /* appearance review is optional — never block the report */
+        if (!cancelled) setAppearanceError("Appearance analysis could not be completed.");
       } finally {
         if (!cancelled) setAppearanceLoading(false);
       }
@@ -830,6 +832,42 @@ function ReportPage() {
                 </p>
               ) : !appearance ? (
                 <div className="mt-3 space-y-3">
+                  {appearanceError && (
+                    <div className="rounded-xl border border-warning/25 bg-warning/5 p-4">
+                      <p className="text-sm text-muted-foreground">{appearanceError}</p>
+                      {session?.snapshot && (
+                        <Button
+                          size="sm"
+                          variant="secondary"
+                          className="mt-3"
+                          onClick={() => {
+                            const current = getSession(sessionId);
+                            if (!current?.snapshot) return;
+                            setAppearanceError(null);
+                            setAppearanceLoading(true);
+                            void reviewAppearance({
+                              data: {
+                                dataUrl: current.snapshot,
+                                companyId: current.config.companyId,
+                                role: current.config.role,
+                              },
+                            })
+                              .then((result) => {
+                                const normalized = normalizeAppearance(result);
+                                setAppearance(normalized);
+                                if (!normalized.assessed) {
+                                  setAppearanceError(normalized.reason || "Appearance analysis was inconclusive.");
+                                }
+                              })
+                              .catch(() => setAppearanceError("Appearance analysis could not be completed."))
+                              .finally(() => setAppearanceLoading(false));
+                          }}
+                        >
+                          Review camera frame again
+                        </Button>
+                      )}
+                    </div>
+                  )}
                   {forensicsLoading ? (
                     <p className="flex items-center gap-2 text-sm text-muted-foreground">
                       <Loader2 className="h-4 w-4 animate-spin text-primary" /> Reviewing recorded interview frames for appearance and grooming…
@@ -874,6 +912,11 @@ function ReportPage() {
                             .then((result) => {
                               const normalized = normalizeAppearance(result);
                               setAppearance(normalized);
+                              setAppearanceError(
+                                normalized.assessed
+                                  ? null
+                                  : normalized.reason || "Appearance analysis was inconclusive.",
+                              );
                               const latest = getSession(sessionId) ?? current;
                               saveSession({
                                 ...latest,
@@ -881,6 +924,7 @@ function ReportPage() {
                                 snapshot: normalized.assessed ? null : latest.snapshot,
                               });
                             })
+                            .catch(() => setAppearanceError("Appearance analysis could not be completed."))
                             .finally(() => setAppearanceLoading(false));
                         }
                       }}

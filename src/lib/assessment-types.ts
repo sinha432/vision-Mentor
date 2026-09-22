@@ -3,6 +3,7 @@
 // so the types are in a plain, import-anywhere module.
 
 export type QType = "text" | "mcq" | "code";
+export type CodeLanguage = "java" | "javascript" | "python";
 
 export type StoredQuestion = {
   id: string;
@@ -13,6 +14,7 @@ export type StoredQuestion = {
   maxLength?: number | null;
   choices?: { id: string; text: string }[];
   correctChoiceId?: string;
+  language?: CodeLanguage;
   starterCode?: string;
   testCases?: { input: string; expectedStdout: string }[];
 };

@@ -394,6 +394,101 @@ export async function getCompanyAssessments(
     .toArray();
 }
 
+export async function deleteAssessment(
+  code: string,
+  companyUserId: string,
+): Promise<boolean> {
+  const collection = await getCollection<StoredAssessment>("assessments");
+  const result = await collection.deleteOne({ code, companyUserId });
+  return result.deletedCount > 0;
+}
+
+export async function deleteCandidateData(
+  individualUserId: string,
+  companyUserId: string,
+): Promise<{ attempts: number; reports: number }> {
+  const assessments = await getCollection<StoredAssessment>("assessments");
+  const ownedAssessments = await assessments
+    .find({ companyUserId })
+    .project({ _id: 1, code: 1 })
+    .toArray();
+  const assessmentKeys = ownedAssessments.flatMap((assessment) => [
+    String(assessment._id),
+    assessment.code,
+  ]);
+
+  if (!assessmentKeys.length) return { attempts: 0, reports: 0 };
+
+  const attempts = await getCollection<any>("attempts");
+  const reports = await getCollection<any>("reports");
+  const candidateAttempts = await attempts
+    .find({
+      individualUserId,
+      assessmentId: { $in: assessmentKeys },
+    })
+    .project({ _id: 1 })
+    .toArray();
+  const attemptIds = candidateAttempts.map((attempt) => String(attempt._id));
+
+  const reportResult = attemptIds.length
+    ? await reports.deleteMany({ attemptId: { $in: attemptIds } })
+    : { deletedCount: 0 };
+  const attemptResult = await attempts.deleteMany({
+    individualUserId,
+    assessmentId: { $in: assessmentKeys },
+  });
+
+  return {
+    attempts: attemptResult.deletedCount,
+    reports: reportResult.deletedCount,
+  };
+}
+
+export async function saveAssessmentSubmission(
+  attempt: Document,
+  report: Document,
+): Promise<void> {
+  const attempts = await getCollection("attempts");
+  const reports = await getCollection("reports");
+
+  await attempts.updateOne(
+    { _id: attempt._id },
+    { $set: attempt },
+    { upsert: true },
+  );
+  await reports.updateOne(
+    { _id: report._id },
+    { $set: report },
+    { upsert: true },
+  );
+}
+
+export async function deleteIndividualReports(
+  individualUserId: string,
+  attemptIds: string[],
+): Promise<{ attempts: number; reports: number }> {
+  const attempts = await getCollection<any>("attempts");
+  const reports = await getCollection<any>("reports");
+  const ownedAttempts = await attempts
+    .find({ individualUserId, _id: { $in: attemptIds } })
+    .project({ _id: 1 })
+    .toArray();
+  const ownedIds = ownedAttempts.map((attempt) => attempt._id);
+
+  if (!ownedIds.length) return { attempts: 0, reports: 0 };
+
+  const reportResult = await reports.deleteMany({ attemptId: { $in: ownedIds } });
+  const attemptResult = await attempts.deleteMany({
+    individualUserId,
+    _id: { $in: ownedIds },
+  });
+
+  return {
+    attempts: attemptResult.deletedCount,
+    reports: reportResult.deletedCount,
+  };
+}
+
 // ============================================================
 // User Profile operations
 // ============================================================

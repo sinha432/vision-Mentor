@@ -19,6 +19,12 @@ export interface GeneratedQuestion {
   text: string;
   weight: number;
   keywords: string[];
+  maxLength?: number | null;
+  choices?: { id: string; text: string }[];
+  correctChoiceId?: string;
+  language?: "java" | "javascript" | "python";
+  starterCode?: string;
+  testCases?: { input: string; expectedStdout: string }[];
 }
 
 export interface CompanyQuestionGeneratorConfig {
@@ -317,6 +323,19 @@ export function CompanyQuestionGenerator({
     });
   };
 
+  const updateGeneratedQuestion = (
+    id: string,
+    patch: Partial<GeneratedQuestion>,
+  ) => {
+    setQuestions((current) => {
+      const updated = current.map((question) =>
+        question.id === id ? { ...question, ...patch } : question,
+      );
+      syncQuestionsWithNova(updated);
+      return updated;
+    });
+  };
+
   /*
    * Delete a question.
    */
@@ -417,6 +436,36 @@ export function CompanyQuestionGenerator({
       return false;
     }
 
+    const invalidMcq = questions.find(
+      (question) =>
+        question.type === "mcq" &&
+        ((!question.choices || question.choices.filter((choice) => choice.text.trim()).length < 2) ||
+          !question.correctChoiceId ||
+          !question.choices?.some(
+            (choice) => choice.id === question.correctChoiceId && choice.text.trim(),
+          )),
+    );
+
+    if (invalidMcq) {
+      toast.error("Each MCQ needs at least two options and a selected correct answer.");
+      return false;
+    }
+
+    const invalidCode = questions.find(
+      (question) =>
+        question.type === "code" &&
+        (!question.language ||
+          !question.starterCode?.trim() ||
+          !question.testCases?.some(
+            (testCase) => testCase.input.trim() || testCase.expectedStdout.trim(),
+          )),
+    );
+
+    if (invalidCode) {
+      toast.error("Each coding question needs a language, example script, and test case.");
+      return false;
+    }
+
     return true;
   };
 
@@ -457,6 +506,12 @@ export function CompanyQuestionGenerator({
           )
             ? question.keywords
             : [],
+          maxLength: question.maxLength ?? null,
+          choices: question.choices,
+          correctChoiceId: question.correctChoiceId,
+          language: question.language,
+          starterCode: question.starterCode,
+          testCases: question.testCases,
         }),
       );
 
@@ -752,6 +807,180 @@ export function CompanyQuestionGenerator({
                   rows={3}
                   className="w-full resize-none rounded-lg border border-border bg-background px-3 py-2 text-sm outline-none focus:border-cyber disabled:cursor-not-allowed disabled:opacity-70"
                 />
+
+                {question.type === "mcq" && (
+                  <div className="mt-3 space-y-2">
+                    <div className="text-[10px] uppercase tracking-widest text-muted-foreground">
+                      Options · select the correct answer
+                    </div>
+                    {(question.choices ?? []).map((choice, choiceIndex) => (
+                      <div key={choice.id} className="flex items-center gap-2">
+                        <input
+                          type="radio"
+                          name={`ai-correct-${question.id}`}
+                          checked={question.correctChoiceId === choice.id}
+                          onChange={() =>
+                            updateGeneratedQuestion(question.id, {
+                              correctChoiceId: choice.id,
+                            })
+                          }
+                          disabled={publishing}
+                          className="accent-primary"
+                        />
+                        <input
+                          value={choice.text}
+                          onChange={(event) =>
+                            updateGeneratedQuestion(question.id, {
+                              choices: (question.choices ?? []).map((item, index) =>
+                                index === choiceIndex
+                                  ? { ...item, text: event.target.value }
+                                  : item,
+                              ),
+                            })
+                          }
+                          disabled={publishing}
+                          placeholder={`Option ${choiceIndex + 1}`}
+                          className="min-w-0 flex-1 rounded-lg border border-border bg-background px-3 py-2 text-xs outline-none focus:border-cyber disabled:opacity-70"
+                        />
+                        {(question.choices ?? []).length > 2 && (
+                          <button
+                            type="button"
+                            disabled={publishing}
+                            onClick={() =>
+                              updateGeneratedQuestion(question.id, {
+                                choices: (question.choices ?? []).filter(
+                                  (_, index) => index !== choiceIndex,
+                                ),
+                                correctChoiceId:
+                                  question.correctChoiceId === choice.id
+                                    ? undefined
+                                    : question.correctChoiceId,
+                              })
+                            }
+                            className="text-muted-foreground hover:text-destructive disabled:opacity-40"
+                            title="Remove option"
+                          >
+                            <Trash2 className="size-3.5" />
+                          </button>
+                        )}
+                      </div>
+                    ))}
+                    {(question.choices ?? []).length < 8 && (
+                      <button
+                        type="button"
+                        disabled={publishing}
+                        onClick={() =>
+                          updateGeneratedQuestion(question.id, {
+                            choices: [
+                              ...(question.choices ?? []),
+                              {
+                                id: `choice-${Date.now()}`,
+                                text: "",
+                              },
+                            ],
+                          })
+                        }
+                        className="text-xs text-primary hover:underline disabled:opacity-40"
+                      >
+                        + Add option
+                      </button>
+                    )}
+                  </div>
+                )}
+
+                {question.type === "code" && (
+                  <div className="mt-3 space-y-3">
+                    <label className="block space-y-1">
+                      <span className="text-[10px] uppercase tracking-widest text-muted-foreground">
+                        Language
+                      </span>
+                      <select
+                        value={question.language ?? "java"}
+                        onChange={(event) =>
+                          updateGeneratedQuestion(question.id, {
+                            language: event.target.value as GeneratedQuestion["language"],
+                          })
+                        }
+                        disabled={publishing}
+                        className="w-full rounded-lg border border-border bg-background px-3 py-2 text-xs outline-none focus:border-cyber disabled:opacity-70"
+                      >
+                        <option value="java">Java</option>
+                        <option value="javascript">JavaScript</option>
+                        <option value="python">Python</option>
+                      </select>
+                    </label>
+                    <label className="block space-y-1">
+                      <span className="text-[10px] uppercase tracking-widest text-muted-foreground">
+                        Example script / starter logic
+                      </span>
+                      <textarea
+                        value={question.starterCode ?? ""}
+                        onChange={(event) =>
+                          updateGeneratedQuestion(question.id, {
+                            starterCode: event.target.value,
+                          })
+                        }
+                        disabled={publishing}
+                        rows={7}
+                        className="w-full rounded-lg border border-border bg-background px-3 py-2 font-mono text-xs outline-none focus:border-cyber disabled:opacity-70"
+                      />
+                    </label>
+                    <div className="text-[10px] uppercase tracking-widest text-muted-foreground">
+                      Test cases (input → expected output)
+                    </div>
+                    {(question.testCases ?? []).map((testCase, testIndex) => (
+                      <div key={testIndex} className="grid gap-2 sm:grid-cols-2">
+                        <textarea
+                          value={testCase.input}
+                          onChange={(event) =>
+                            updateGeneratedQuestion(question.id, {
+                              testCases: (question.testCases ?? []).map((item, index) =>
+                                index === testIndex
+                                  ? { ...item, input: event.target.value }
+                                  : item,
+                              ),
+                            })
+                          }
+                          disabled={publishing}
+                          placeholder="Input"
+                          rows={2}
+                          className="rounded-lg border border-border bg-background px-3 py-2 font-mono text-xs outline-none focus:border-cyber disabled:opacity-70"
+                        />
+                        <textarea
+                          value={testCase.expectedStdout}
+                          onChange={(event) =>
+                            updateGeneratedQuestion(question.id, {
+                              testCases: (question.testCases ?? []).map((item, index) =>
+                                index === testIndex
+                                  ? { ...item, expectedStdout: event.target.value }
+                                  : item,
+                              ),
+                            })
+                          }
+                          disabled={publishing}
+                          placeholder="Expected output"
+                          rows={2}
+                          className="rounded-lg border border-border bg-background px-3 py-2 font-mono text-xs outline-none focus:border-cyber disabled:opacity-70"
+                        />
+                      </div>
+                    ))}
+                    <button
+                      type="button"
+                      disabled={publishing}
+                      onClick={() =>
+                        updateGeneratedQuestion(question.id, {
+                          testCases: [
+                            ...(question.testCases ?? []),
+                            { input: "", expectedStdout: "" },
+                          ],
+                        })
+                      }
+                      className="text-xs text-primary hover:underline disabled:opacity-40"
+                    >
+                      + Add test case
+                    </button>
+                  </div>
+                )}
 
                 {question.keywords.length > 0 && (
                   <div className="mt-2 flex flex-wrap gap-1.5">

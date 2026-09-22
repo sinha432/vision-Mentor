@@ -25,6 +25,7 @@ import { Shell } from "./index";
 export const Route = createFileRoute("/_authenticated/company/new")({ component: NewAssessment });
 
 type QType = "text" | "mcq" | "code";
+type CodeLanguage = "java" | "javascript" | "python";
 type Choice = { id: string; text: string };
 type TC = { input: string; expectedStdout: string };
 type Q = {
@@ -38,6 +39,7 @@ type Q = {
   choices: Choice[];
   correctChoiceId: string;
   // code
+  language: CodeLanguage;
   starterCode: string;
   testCases: TC[];
 };
@@ -48,6 +50,29 @@ type QuestionIssue = {
 };
 
 const newCid = () => Math.random().toString(36).slice(2, 8);
+
+const starterTemplates: Record<CodeLanguage, string> = {
+  java: `import java.util.*;
+
+public class Main {
+    public static void main(String[] args) {
+        Scanner scanner = new Scanner(System.in);
+        // Read input, implement the solution, and print the result.
+    }
+}`,
+  javascript: `const fs = require("fs");
+const input = fs.readFileSync(0, "utf8").trim();
+
+// Parse input, implement the solution, and print the result.
+console.log(input);`,
+  python: `import sys
+
+def solve(input_text: str) -> str:
+    # Parse input, implement the solution, and return the result.
+    return input_text.strip()
+
+print(solve(sys.stdin.read()))`,
+};
 
 const blankQ = (): Q => ({
   type: "text",
@@ -60,7 +85,8 @@ const blankQ = (): Q => ({
     { id: newCid(), text: "" },
   ],
   correctChoiceId: "",
-  starterCode: `public class Main {\n    public static void main(String[] args) {\n        // read input, print output\n    }\n}\n`,
+  language: "java",
+  starterCode: starterTemplates.java,
   testCases: [{ input: "", expectedStdout: "" }],
 });
 
@@ -78,27 +104,44 @@ function NewAssessment() {
   const questionIssues = useMemo<QuestionIssue[]>(() => {
     const issues: QuestionIssue[] = [];
 
+    const completedQuestions = questions.filter((question) => question.text.trim().length >= 3);
+
+    if (completedQuestions.length === 0) {
+      issues.push({ question: 0, message: "Add at least one question prompt." });
+      return issues;
+    }
+
     questions.forEach((question, index) => {
-      if (question.text.trim().length < 3) {
-        issues.push({ question: index, message: "Add a question prompt." });
-      }
+      if (question.text.trim().length < 3) return;
 
       if (
         question.type === "mcq" &&
-        (question.choices.filter((choice) => choice.text.trim()).length < 2 ||
-          !question.correctChoiceId)
+        question.choices.filter((choice) => choice.text.trim()).length < 2
       ) {
         issues.push({
           question: index,
-          message: "Complete the choices and correct answer.",
+          message: "Add at least two answer choices.",
+        });
+      } else if (
+        question.type === "mcq" &&
+        (!question.correctChoiceId ||
+          !question.choices.some(
+            (choice) => choice.id === question.correctChoiceId && choice.text.trim(),
+          ))
+      ) {
+        issues.push({
+          question: index,
+          message: "Select the correct answer using the radio button.",
         });
       }
 
       if (
         question.type === "code" &&
-        question.testCases.every(
-          (testCase) => !testCase.input.trim() && !testCase.expectedStdout.trim(),
-        )
+        (!question.language ||
+          !question.starterCode.trim() ||
+          question.testCases.every(
+            (testCase) => !testCase.input.trim() && !testCase.expectedStdout.trim(),
+          ))
       ) {
         issues.push({ question: index, message: "Add at least one test case." });
       }
@@ -152,6 +195,15 @@ function NewAssessment() {
   const onSubmit = async (e: FormEvent) => {
     e.preventDefault();
     if (!user) return;
+    if (!readyToPublish) {
+      const firstIssue = questionIssues[0]?.message;
+      toast.error(
+        title.trim().length < 2
+          ? "Add an assessment title before publishing."
+          : firstIssue ?? "Complete the assessment before publishing.",
+      );
+      return;
+    }
     const cleaned = questions
       .map((q) => {
         const base = {
@@ -185,7 +237,14 @@ function NewAssessment() {
         const testCases = q.testCases.filter(
           (t) => t.expectedStdout.trim() !== "" || t.input.trim() !== "",
         );
-        return { ...base, starterCode: q.starterCode, testCases, keywords: [], maxLength: null };
+        return {
+          ...base,
+          language: q.language,
+          starterCode: q.starterCode.trim(),
+          testCases,
+          keywords: [],
+          maxLength: null,
+        };
       })
       .filter((q) => q.text.length >= 3);
 
@@ -199,8 +258,8 @@ function NewAssessment() {
         )
           return toast.error("Pick the correct MCQ option");
       }
-      if (q.type === "code" && (!q.testCases || q.testCases.length === 0))
-        return toast.error("Coding question needs at least 1 test case");
+      if (q.type === "code" && (!q.language || !q.starterCode || !q.testCases || q.testCases.length === 0))
+        return toast.error("Coding question needs a language, starter code, and at least 1 test case");
     }
     if (!cleaned.length) return toast.error("Add at least one question");
 
@@ -551,9 +610,26 @@ function NewAssessment() {
 
               {q.type === "code" && (
                 <div className="space-y-2">
+                  <label className="block space-y-1">
+                    <span className="text-[10px] uppercase tracking-widest text-muted-foreground">
+                      Language
+                    </span>
+                    <select
+                      value={q.language}
+                      onChange={(e) => {
+                        const language = e.target.value as CodeLanguage;
+                        setQ(i, { language, starterCode: starterTemplates[language] });
+                      }}
+                      className="w-full glass rounded-md px-3 py-2 bg-transparent outline-none text-sm"
+                    >
+                      <option value="java">Java</option>
+                      <option value="javascript">JavaScript</option>
+                      <option value="python">Python</option>
+                    </select>
+                  </label>
                   <div>
                     <div className="text-[10px] uppercase tracking-widest text-muted-foreground mb-1">
-                      Starter code (Java)
+                      Complete starter scaffold
                     </div>
                     <textarea
                       value={q.starterCode}
@@ -662,7 +738,7 @@ function NewAssessment() {
           </div>
           <Button
             type="submit"
-            disabled={busy || !readyToPublish}
+            disabled={busy}
             className="min-w-44 glow-primary"
             style={{ background: "var(--gradient-aurora)" }}
           >

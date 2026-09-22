@@ -38,6 +38,8 @@ import type {
   DetectionSummary,
   DetectionSignals,
 } from "@/interviewer/lib/detection-types";
+import { runJavaCode } from "@/lib/code-runner.functions";
+import type { CodeLanguage, RunResult } from "@/lib/assessment-types";
 
 export const Route = createFileRoute("/a/$code")({
   component: AssessmentPage,
@@ -48,6 +50,7 @@ type AnswerValue = {
   textAnswer?: string;
   choiceId?: string;
   code?: string;
+  runResults?: RunResult | null;
 };
 
 type AssessmentQuestion = {
@@ -62,6 +65,7 @@ type AssessmentQuestion = {
     text: string;
   }[];
   correctChoiceId?: string;
+  language?: CodeLanguage;
   starterCode?: string;
   testCases?: {
     input: string;
@@ -95,6 +99,8 @@ function AssessmentPage() {
   const submittingRef = useRef(false);
   const endedRef = useRef(false);
   const terminationReasonRef = useRef<string | null>(null);
+  const signalsRef = useRef<DetectionSignals | null>(null);
+  const phoneSeenRef = useRef(false);
 
   // submitAssessment is declared later in this component. The ref lets
   // integrity handlers invoke the latest submit function safely.
@@ -140,6 +146,9 @@ function AssessmentPage() {
 
   const [integrityEvents, setIntegrityEvents] =
     useState<DetectionEvent[]>([]);
+
+  const [runningCode, setRunningCode] = useState(false);
+  const [codeRunError, setCodeRunError] = useState<string | null>(null);
 
   const [leftPageWarning, setLeftPageWarning] =
     useState(false);
@@ -368,6 +377,20 @@ function AssessmentPage() {
         event,
       );
 
+      if (event.kind === "device_visible") {
+        phoneSeenRef.current = true;
+
+        if ((signalsRef.current?.noiseLevel ?? 0) >= 75) {
+          const reason = "Assessment ended because a phone was detected while the environment was too noisy.";
+          terminationReasonRef.current = reason;
+          setTerminationReason(reason);
+          setFinished(true);
+          toast.error(reason);
+          void submitAssessmentRef.current?.(true);
+          return;
+        }
+      }
+
       setSignals((previous) => previous);
 
       setIntegrityEvents((previous) =>
@@ -444,8 +467,23 @@ function AssessmentPage() {
    */
 
   useEffect(() => {
+    signalsRef.current = detection.signals;
     setSignals(detection.signals);
-  }, [detection.signals]);
+
+    if (
+      !finished &&
+      !submitting &&
+      phoneSeenRef.current &&
+      (detection.signals?.noiseLevel ?? 0) >= 75
+    ) {
+      const reason = "Assessment ended because a phone was detected while the environment was too noisy.";
+      terminationReasonRef.current = reason;
+      setTerminationReason(reason);
+      setFinished(true);
+      toast.error(reason);
+      void submitAssessmentRef.current?.(true);
+    }
+  }, [detection.signals, finished, submitting]);
 
   /*
    * ---------------------------------------------------------
@@ -552,6 +590,7 @@ function AssessmentPage() {
 
   const currentQuestion =
     assessment?.questions[currentIndex] ?? null;
+  const answer = currentQuestion ? answers[currentQuestion.id] : undefined;
 
   const setTextAnswer = useCallback(
     (questionId: string, value: string) => {
@@ -574,6 +613,52 @@ function AssessmentPage() {
     },
     [currentQuestion?.type],
   );
+
+  const runCurrentCode = useCallback(async () => {
+    if (!currentQuestion || currentQuestion.type !== "code") return;
+
+    const sourceCode =
+      answer?.code?.trim() || currentQuestion.starterCode?.trim() || "";
+
+    if (!sourceCode) {
+      setCodeRunError("Add code before running the tests.");
+      return;
+    }
+
+    setRunningCode(true);
+    setCodeRunError(null);
+
+    try {
+      const result = await runJavaCode({
+        data: {
+          sourceCode,
+          language: currentQuestion.language ?? "java",
+          cases: currentQuestion.testCases ?? [],
+        },
+      });
+
+      const runResults: RunResult = {
+        passed: result.passed,
+        total: result.total,
+        cases: result.cases,
+      };
+
+      setAnswers((previous) => ({
+        ...previous,
+        [currentQuestion.id]: {
+          type: "code",
+          code: sourceCode,
+          runResults,
+        },
+      }));
+    } catch (error) {
+      setCodeRunError(
+        error instanceof Error ? error.message : "Code execution failed.",
+      );
+    } finally {
+      setRunningCode(false);
+    }
+  }, [answer?.code, currentQuestion]);
 
   const setChoiceAnswer = useCallback(
     (
@@ -750,35 +835,6 @@ function AssessmentPage() {
    * ---------------------------------------------------------
    */
 
-  useEffect(() => {
-    if (
-      warningCount < 3 ||
-      finished ||
-      submitting ||
-      !assessment
-    ) {
-      return;
-    }
-
-    if (!endedRef.current) {
-      endedRef.current = true;
-      const reason = "Assessment ended because repeated integrity violations were detected.";
-      terminationReasonRef.current = reason;
-      setTerminationReason(reason);
-
-      toast.error(
-        reason,
-      );
-
-      void submitAssessment();
-    }
-  }, [
-    warningCount,
-    finished,
-    submitting,
-    assessment,
-    submitAssessment,
-  ]);
 
   /*
    * ---------------------------------------------------------
@@ -1032,11 +1088,6 @@ function AssessmentPage() {
    * ---------------------------------------------------------
    */
 
-  const answer =
-    currentQuestion
-      ? answers[currentQuestion.id]
-      : undefined;
-
   const progress =
     assessment.questions.length > 0
       ? Math.round(
@@ -1232,7 +1283,7 @@ function AssessmentPage() {
                   </span>
 
                   <span className="rounded-md border border-border/60 px-2 py-1 text-xs">
-                    Python / JavaScript
+                    {currentQuestion.language ?? "Java"}
                   </span>
                 </div>
 
@@ -1243,7 +1294,7 @@ function AssessmentPage() {
                     currentQuestion.starterCode ??
                     "Write your solution here..."
                   }
-                  value={answer?.code ?? ""}
+                  value={answer?.code ?? currentQuestion.starterCode ?? ""}
                  onChange={(event) => {
   if (!currentQuestion) return;
 
@@ -1253,6 +1304,93 @@ function AssessmentPage() {
   );
 }}
                 />
+                <div className="mt-4 rounded-xl border border-border/60 bg-background/30 p-4">
+                  <div className="mb-3 flex items-center justify-between gap-3">
+                    <div className="text-xs font-semibold uppercase tracking-widest text-muted-foreground">
+                      Test cases
+                    </div>
+                    <span className="text-xs text-muted-foreground">
+                      {currentQuestion.testCases?.length ?? 0} case{currentQuestion.testCases?.length === 1 ? "" : "s"}
+                    </span>
+                  </div>
+                  <div className="space-y-3">
+                    {(currentQuestion.testCases ?? []).map((testCase, index) => {
+                      const result = answer?.runResults?.cases[index];
+                      return (
+                        <div
+                          key={index}
+                          className="rounded-lg border border-border/60 bg-background/40 p-3"
+                        >
+                          <div className="mb-2 flex items-center justify-between gap-3 text-xs">
+                            <span className="font-medium">Case {index + 1}</span>
+                            {result ? (
+                              <span
+                                className={
+                                  result.ok
+                                    ? "font-semibold text-emerald-400"
+                                    : "font-semibold text-destructive"
+                                }
+                              >
+                                {result.ok ? "Passed" : "Failed"}
+                              </span>
+                            ) : (
+                              <span className="text-muted-foreground">Not run</span>
+                            )}
+                          </div>
+                          <div className="grid gap-2 text-xs sm:grid-cols-2">
+                            <div>
+                              <div className="mb-1 text-muted-foreground">Input</div>
+                              <pre className="min-h-8 whitespace-pre-wrap rounded-md bg-background p-2 font-mono">
+                                {testCase.input || "(empty)"}
+                              </pre>
+                            </div>
+                            <div>
+                              <div className="mb-1 text-muted-foreground">Expected output</div>
+                              <pre className="min-h-8 whitespace-pre-wrap rounded-md bg-background p-2 font-mono">
+                                {testCase.expectedStdout || "(empty)"}
+                              </pre>
+                            </div>
+                          </div>
+                          {result && !result.ok && (
+                            <div className="mt-2 text-xs text-destructive">
+                              {result.stderr || `Received: ${result.actual || "(empty)"}`}
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+                <div className="mt-3 flex flex-wrap items-center gap-3">
+                  <Button
+                    type="button"
+                    disabled={finished || submitting || runningCode}
+                    onClick={() => void runCurrentCode()}
+                  >
+                    {runningCode ? (
+                      <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                    ) : null}
+                    {runningCode ? "Running tests" : "Run tests"}
+                  </Button>
+                  {codeRunError && (
+                    <span className="text-sm text-destructive">{codeRunError}</span>
+                  )}
+                  {answer?.runResults && (
+                    <span
+                      className={
+                        answer.runResults.total > 0 &&
+                        answer.runResults.passed === answer.runResults.total
+                          ? "text-sm font-semibold text-emerald-400"
+                          : "text-sm text-muted-foreground"
+                      }
+                    >
+                      {answer.runResults.total > 0 &&
+                      answer.runResults.passed === answer.runResults.total
+                        ? `All ${answer.runResults.total} tests passed`
+                        : `Passed ${answer.runResults.passed}/${answer.runResults.total} tests`}
+                    </span>
+                  )}
+                </div>
               </div>
             )}
 

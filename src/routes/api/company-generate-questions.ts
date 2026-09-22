@@ -21,6 +21,7 @@ interface GeneratedQuestion {
     text: string;
   }[];
   correctChoiceId?: string;
+  language?: "java" | "javascript" | "python";
   starterCode?: string;
   testCases?: {
     input: string;
@@ -115,7 +116,12 @@ Required format:
       "type": "text",
       "text": "Question text",
       "weight": 10,
-      "keywords": ["keyword1", "keyword2"]
+      "keywords": ["keyword1", "keyword2"],
+      "choices": [{"id": "a", "text": "Option A"}, {"id": "b", "text": "Option B"}],
+      "correctChoiceId": "a",
+      "language": "java",
+      "starterCode": "complete runnable scaffold",
+      "testCases": [{"input": "example input", "expectedStdout": "example output"}]
     }
   ]
 }
@@ -125,7 +131,9 @@ Rules:
 - Generate exactly ${count} questions.
 - Use "text" for normal interview/assessment questions.
 - Use "mcq" only when appropriate.
-- Use "code" only for programming/code questions.
+- For every "mcq", provide 2-8 useful choices and set correctChoiceId to one choice id.
+- Use "code" only for programming/code questions. Provide language, complete runnable starterCode, and at least one test case.
+- Coding prompts must describe a concrete problem with input/output behavior, like a local LeetCode-style problem.
 - Every question must have meaningful text.
 - Every question must have weight 10.
 - keywords must always be an array.
@@ -184,7 +192,29 @@ Rules:
             parsed.questions
               .slice(0, count)
               .map(
-                (question, index) => ({
+                (question, index) => {
+                  const choices = Array.isArray(question.choices)
+                    ? question.choices
+                        .filter(
+                          (choice) =>
+                            typeof choice?.text === "string" && choice.text.trim(),
+                        )
+                        .slice(0, 8)
+                        .map((choice, choiceIndex) => ({
+                          id:
+                            typeof choice.id === "string" && choice.id.trim()
+                              ? choice.id.trim()
+                              : `q-${index}-choice-${choiceIndex}`,
+                          text: choice.text.trim(),
+                        }))
+                    : [];
+                  const correctChoiceId = choices.some(
+                    (choice) => choice.id === question.correctChoiceId,
+                  )
+                    ? question.correctChoiceId
+                    : choices[0]?.id;
+
+                  return {
                   id:
                     typeof question.id ===
                       "string" &&
@@ -235,26 +265,30 @@ Rules:
                     question.maxLength ??
                     null,
 
-                  choices:
-                    Array.isArray(
-                      question.choices,
-                    )
-                      ? question.choices
-                      : undefined,
+                  choices: choices.length ? choices : undefined,
 
-                  correctChoiceId:
-                    question.correctChoiceId,
+                  correctChoiceId,
+
+                  language:
+                    question.language === "javascript" ||
+                    question.language === "python"
+                      ? question.language
+                      : "java",
 
                   starterCode:
                     question.starterCode,
 
-                  testCases:
-                    Array.isArray(
-                      question.testCases,
-                    )
-                      ? question.testCases
-                      : undefined,
-                }),
+                  testCases: Array.isArray(question.testCases)
+                    ? question.testCases
+                        .filter(
+                          (testCase) =>
+                            typeof testCase?.input === "string" &&
+                            typeof testCase?.expectedStdout === "string",
+                        )
+                        .slice(0, 10)
+                    : undefined,
+                };
+                },
               )
               .filter(
                 (question) =>

@@ -116,6 +116,74 @@ export async function fetchCompanyAssessmentsFromMongoDB(companyUserId: string):
   }
 }
 
+export async function deleteAssessmentFromMongoDB(
+  code: string,
+  companyUserId: string,
+): Promise<boolean> {
+  try {
+    const response = await fetch(
+      `/api/db/assessment?code=${encodeURIComponent(code)}&companyUserId=${encodeURIComponent(companyUserId)}`,
+      { method: "DELETE" },
+    );
+    if (!response.ok) return false;
+    const result = (await response.json()) as { deleted?: boolean };
+    return result.deleted === true;
+  } catch (error) {
+    console.warn("Failed to delete assessment from MongoDB:", error);
+    return false;
+  }
+}
+
+export async function deleteCandidateFromMongoDB(
+  individualUserId: string,
+  companyUserId: string,
+): Promise<boolean> {
+  try {
+    const response = await fetch(
+      `/api/db/candidate?individualUserId=${encodeURIComponent(individualUserId)}&companyUserId=${encodeURIComponent(companyUserId)}`,
+      { method: "DELETE" },
+    );
+    return response.ok;
+  } catch (error) {
+    console.warn("Failed to delete candidate data from MongoDB:", error);
+    return false;
+  }
+}
+
+export async function syncAssessmentSubmissionToMongoDB(
+  attempt: any,
+  report: any,
+): Promise<boolean> {
+  try {
+    const response = await fetch("/api/db/submission", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ attempt, report }),
+    });
+    return response.ok;
+  } catch (error) {
+    console.warn("Assessment submission MongoDB sync failed:", error);
+    return false;
+  }
+}
+
+export async function deleteIndividualReportsFromMongoDB(
+  individualUserId: string,
+  attemptIds: string[],
+): Promise<boolean> {
+  try {
+    const response = await fetch("/api/db/reports/delete", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ individualUserId, attemptIds }),
+    });
+    return response.ok;
+  } catch (error) {
+    console.warn("Failed to delete individual reports from MongoDB:", error);
+    return false;
+  }
+}
+
 export async function fetchUserFromMongoDB(email: string): Promise<any> {
   try {
     const response = await fetch(`/api/db/user?email=${encodeURIComponent(email)}`);

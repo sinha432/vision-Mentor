@@ -1093,16 +1093,33 @@ export interface AppearancePayload {
 const appearanceSchema = z.object({
   assessed: z.boolean(),
   reason: z.string(),
-  dressVerdict: z.enum(["appropriate", "acceptable", "not_appropriate"]),
+  dressVerdict: z.string(),
   dressNote: z.string(),
-  hairVerdict: z.enum(["neat", "untidy"]),
+  hairVerdict: z.string(),
   hairNote: z.string(),
-  beardVerdict: z.enum(["neat", "needs_attention", "not_visible"]),
+  beardVerdict: z.string(),
   beardNote: z.string(),
   fixes: z.array(z.string()),
   confidence: z.number().min(0).max(100).default(70),
   limitations: z.array(z.string()).default([]),
 });
+
+function normalizeDressVerdict(value: string): AppearancePayload["dress"]["verdict"] {
+  const verdict = value.trim().toLowerCase();
+  if (/not|inappropriate|unprofessional|casual|unsuitable/.test(verdict)) return "not_appropriate";
+  if (/appropriate|formal|professional|smart|interview.?ready/.test(verdict)) return "appropriate";
+  return "acceptable";
+}
+
+function normalizeHairVerdict(value: string): AppearancePayload["hair"]["verdict"] {
+  return /untidy|messy|uncombed|needs|unprofessional/.test(value.trim().toLowerCase()) ? "untidy" : "neat";
+}
+
+function normalizeBeardVerdict(value: string): AppearancePayload["beard"]["verdict"] {
+  const verdict = value.trim().toLowerCase();
+  if (/not.?visible|no beard|cannot|unclear/.test(verdict)) return "not_visible";
+  return /needs|untidy|messy|untrimmed|unprofessional/.test(verdict) ? "needs_attention" : "neat";
+}
 
 /**
  * Grooming feedback from one webcam frame. Deliberately limited to clothing
@@ -1133,7 +1150,7 @@ export async function analyzeAppearance(
     `Never comment on the person's body, weight, skin, age, gender, ethnicity, attractiveness, identity, or anything unrelated to visible clothing, hair, and beard grooming.`,
     `${company.name}'s interview style is ${company.interviewStyle} — set the dress expectation accordingly (formal shirt for conservative firms, clean smart-casual for product companies).`,
     `Set assessed=false only when no person is visible at all, the image is completely blank, or the frame is unusable. Normal Mac webcam compression, mild blur, ordinary indoor lighting, or a partially visible outfit are still assessable; judge only what is visible and mention limitations in the notes.`,
-    `dressNote, hairNote, and beardNote are short second-person sentences. fixes = 2-4 actionable items. confidence reflects image clarity, and limitations lists only visible-frame limitations.`,
+    `For dress, explicitly say whether it looks formal, smart-casual, or too casual for the interview and explain why. For hair and beard, explicitly say whether they look neat/interview-ready or need attention. Natural verdict words are allowed; the application will normalize them. dressNote, hairNote, and beardNote are short second-person sentences. fixes = 2-4 actionable items. confidence reflects image clarity, and limitations lists only visible-frame limitations.`,
   ].join("\n");
 
   try {
@@ -1168,9 +1185,9 @@ export async function analyzeAppearance(
     }
     return {
       assessed: true,
-      dress: { verdict: r.dressVerdict, note: r.dressNote.trim() },
-      hair: { verdict: r.hairVerdict, note: r.hairNote.trim() },
-      beard: { verdict: r.beardVerdict, note: r.beardNote.trim() },
+      dress: { verdict: normalizeDressVerdict(r.dressVerdict), note: r.dressNote.trim() },
+      hair: { verdict: normalizeHairVerdict(r.hairVerdict), note: r.hairNote.trim() },
+      beard: { verdict: normalizeBeardVerdict(r.beardVerdict), note: r.beardNote.trim() },
       fixes: r.fixes.filter(Boolean).slice(0, 4),
       reason: "",
       confidence: r.confidence,
