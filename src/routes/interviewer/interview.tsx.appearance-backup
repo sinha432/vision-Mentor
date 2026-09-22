@@ -896,27 +896,13 @@ function InterviewRoom() {
         }
       }
       let appearance: InterviewSession["appearance"] = undefined;
-    let snapshot: string | null = null;
-
-if (camOn) {
-  snapshot = await vision.captureSnapshotNow();
-
-  // If the camera needs a little extra time, retry.
-  if (!snapshot) {
-    for (let attempt = 0; attempt < 3 && !snapshot; attempt += 1) {
-      await new Promise<void>((resolve) =>
-        window.setTimeout(resolve, 300),
-      );
-
-      snapshot = await vision.captureSnapshotNow();
-    }
-  }
-}
-
-// Fall back to the best frame collected during the interview.
-if (!snapshot) {
-  snapshot = vision.getSnapshot();
-}
+      let snapshot = vision.captureSnapshotNow() ?? vision.getSnapshot();
+      if (!snapshot && camOn) {
+        for (let attempt = 0; attempt < 3 && !snapshot; attempt += 1) {
+          await new Promise((resolve) => window.setTimeout(resolve, 250));
+          snapshot = vision.captureSnapshotNow() ?? vision.getSnapshot();
+        }
+      }
       let finalAppearanceObservation: InterviewSession["appearanceObservation"] = undefined;
       if (snapshot && config) {
         try {
