@@ -33,7 +33,6 @@ import {
   type ForensicsFinding,
   type ForensicsKind,
   type ForensicsReport,
-  type HairVerdict,
   type InterviewReport,
   type InterviewSession,
   PROCTOR_LABELS,
