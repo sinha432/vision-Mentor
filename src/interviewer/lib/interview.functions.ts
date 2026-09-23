@@ -203,21 +203,6 @@ export const analyzeResumeFit = createServerFn({ method: "POST" })
     return analyzeResumeFitForCompany(data.resume, data.companyId, data.role, data.experience);
   });
 
-export const reviewAppearance = createServerFn({ method: "POST" })
-  .inputValidator((input: unknown) =>
-    z
-      .object({
-        dataUrl: z.string().min(32),
-        companyId: z.string(),
-        role: z.string(),
-      })
-      .parse(input),
-  )
-  .handler(async ({ data }) => {
-    const { analyzeAppearance } = await import("./interview-engine.server");
-    return analyzeAppearance(data.dataUrl, data.companyId, data.role);
-  });
-
 export const coachPresenceNow = createServerFn({ method: "POST" })
   .inputValidator((input: unknown) =>
     z

@@ -7,10 +7,8 @@ import {
   Download,
   Loader2,
   MessageSquare,
-  Scissors,
   Shield,
   ShieldAlert,
-  Shirt,
   Sparkles,
   Target,
   TrendingUp,
@@ -19,6 +17,7 @@ import { toast } from "sonner";
 import { SiteHeader } from "@/interviewer/components/vmx/SiteHeader";
 import { ResumeFitCard } from "@/interviewer/components/vmx/ResumeFitCard";
 import { ReplayTimeline } from "@/interviewer/components/vmx/ReplayTimeline";
+import { AppearanceGroomingPanel } from "@/interviewer/components/vmx/AppearanceGroomingPanel";
 import { ScoreBar, ScoreRing } from "@/interviewer/components/vmx/ScoreRing";
 import { Button } from "@/components/ui/button";
 import { getCompany } from "@/interviewer/lib/companies";
@@ -26,16 +25,11 @@ import {
   analyzeReplayForensics,
   buildAnswerCoaching,
   buildInterviewReport,
-  reviewAppearance,
 } from "@/interviewer/lib/interview.functions";
 import {
   type AnswerCoaching,
-  DRESS_LABELS,
-  HAIR_LABELS,
+  type AppearanceAssessmentStatus,
   type AppearanceReview,
-  BEARD_LABELS,
-  type BeardVerdict,
-  type DressVerdict,
   type ForensicsFinding,
   type ForensicsKind,
   type ForensicsReport,
@@ -115,35 +109,6 @@ function normalizeReport(raw: unknown): InterviewReport {
   };
 }
 
-/** Same defensive treatment as the report — the model owns this shape too. */
-function normalizeAppearance(raw: unknown): AppearanceReview {
-  const a = (raw ?? {}) as Partial<AppearanceReview>;
-  const dressVerdicts: DressVerdict[] = ["appropriate", "acceptable", "not_appropriate"];
-  const hairVerdicts: HairVerdict[] = ["neat", "untidy"];
-  const beardVerdicts: BeardVerdict[] = ["neat", "needs_attention", "not_visible"];
-  const dressVerdict = a.dress?.verdict;
-  const hairVerdict = a.hair?.verdict;
-  return {
-    assessed: a.assessed === true,
-    dress: {
-      verdict: dressVerdict && dressVerdicts.includes(dressVerdict) ? dressVerdict : "acceptable",
-      note: typeof a.dress?.note === "string" ? a.dress.note : "",
-    },
-    hair: {
-      verdict: hairVerdict && hairVerdicts.includes(hairVerdict) ? hairVerdict : "neat",
-      note: typeof a.hair?.note === "string" ? a.hair.note : "",
-    },
-    beard: {
-      verdict: a.beard?.verdict && beardVerdicts.includes(a.beard.verdict) ? a.beard.verdict : "not_visible",
-      note: typeof a.beard?.note === "string" ? a.beard.note : "Beard was not visible enough to assess.",
-    },
-    fixes: list(a.fixes),
-    reason: typeof a.reason === "string" ? a.reason : "",
-    confidence: typeof a.confidence === "number" ? a.confidence : undefined,
-    limitations: list(a.limitations),
-  };
-}
-
 /** Cached forensics reports are user-controlled localStorage — never trust their shape either. */
 function normalizeForensics(raw: unknown): ForensicsReport {
   const f = (raw ?? {}) as Partial<ForensicsReport>;
@@ -156,6 +121,26 @@ function normalizeForensics(raw: unknown): ForensicsReport {
     "appearance",
   ];
   const severities = ["low", "medium", "high"] as const;
+  const statuses: AppearanceAssessmentStatus[] = [
+    "positive",
+    "needs_attention",
+    "uncertain",
+    "not_visible",
+  ];
+  const normalizeAssessment = (value: unknown) => {
+    const assessment = (value ?? {}) as Partial<AppearanceReview["grooming"]>;
+    return {
+      status: statuses.includes(assessment.status as AppearanceAssessmentStatus)
+        ? (assessment.status as AppearanceAssessmentStatus)
+        : "not_visible",
+      confidence: num(assessment.confidence),
+      evidence: typeof assessment.evidence === "string" ? assessment.evidence : "",
+      recommendation:
+        typeof assessment.recommendation === "string" ? assessment.recommendation : "",
+      t: typeof assessment.t === "number" && Number.isFinite(assessment.t) ? assessment.t : null,
+    };
+  };
+  const appearance = (f as Partial<ForensicsReport>).appearance;
   return {
     assessed: f.assessed === true,
     groomingSummary: typeof f.groomingSummary === "string" ? f.groomingSummary : "",
@@ -170,6 +155,15 @@ function normalizeForensics(raw: unknown): ForensicsReport {
             severity: severities.includes(x.severity) ? x.severity : "low",
           }))
       : [],
+    appearance:
+      appearance && typeof appearance === "object"
+        ? {
+            assessed: appearance.assessed === true,
+            grooming: normalizeAssessment(appearance.grooming),
+            hair: normalizeAssessment(appearance.hair),
+            attire: normalizeAssessment(appearance.attire),
+          }
+        : undefined,
   };
 }
 
@@ -202,57 +196,11 @@ function ReportPage() {
   const navigate = useNavigate();
   const [session, setSession] = useState<InterviewSession | null>(null);
   const [report, setReport] = useState<InterviewReport | null>(null);
-  const [appearance, setAppearance] = useState<AppearanceReview | null>(null);
-  const [appearanceLoading, setAppearanceLoading] = useState(false);
-  const [appearanceError, setAppearanceError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [coaching, setCoaching] = useState<Record<string, AnswerCoaching>>({});
   const [coachingLoading, setCoachingLoading] = useState(false);
   const [forensics, setForensics] = useState<ForensicsReport | null>(null);
   const [forensicsLoading, setForensicsLoading] = useState(false);
-
-  // Dress & hair review: runs once per session, then is stored with it.
-  useEffect(() => {
-    const stored = getSession(sessionId);
-    if (!stored) return;
-    if (stored.appearance?.assessed) {
-      setAppearance(normalizeAppearance(stored.appearance));
-      return;
-    }
-    if (!stored.snapshot) return;
-    let cancelled = false;
-    setAppearanceLoading(true);
-    setAppearanceError(null);
-    (async () => {
-      try {
-        const result = await reviewAppearance({
-          data: {
-            dataUrl: stored.snapshot!,
-            companyId: stored.config.companyId,
-            role: stored.config.role,
-          },
-        });
-        if (cancelled) return;
-        const normalized = normalizeAppearance(result);
-        setAppearance(normalized);
-        const latest = getSession(sessionId) ?? stored;
-        // Keep the frame when the model could not assess it so the report can
-        // retry instead of permanently losing the only appearance sample.
-        saveSession({
-          ...latest,
-          appearance: normalized.assessed ? normalized : undefined,
-          snapshot: normalized.assessed ? null : latest.snapshot,
-        });
-      } catch {
-        if (!cancelled) setAppearanceError("Appearance analysis could not be completed.");
-      } finally {
-        if (!cancelled) setAppearanceLoading(false);
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [sessionId]);
 
   useEffect(() => {
     const stored = getSession(sessionId);
@@ -407,7 +355,34 @@ function ReportPage() {
       setForensics(normalizeForensics(stored.forensics));
       return;
     }
-    if (!stored.recording?.id) return;
+    if (!stored.recording?.id) {
+      if (!stored.snapshot?.startsWith("data:image/")) return;
+      let cancelled = false;
+      setForensicsLoading(true);
+      analyzeReplayForensics({
+        data: {
+          frames: [{ t: 0, dataUrl: stored.snapshot }],
+          companyId: stored.config.companyId,
+          role: stored.config.role,
+        },
+      })
+        .then((result) => {
+          if (cancelled) return;
+          const normalized = normalizeForensics(result);
+          setForensics(normalized);
+          const latest = getSession(sessionId) ?? stored;
+          saveSession({ ...latest, forensics: normalized });
+        })
+        .catch(() => {
+          /* forensics is a bonus panel — never block the report */
+        })
+        .finally(() => {
+          if (!cancelled) setForensicsLoading(false);
+        });
+      return () => {
+        cancelled = true;
+      };
+    }
     let cancelled = false;
     setForensicsLoading(true);
     (async () => {
@@ -435,8 +410,8 @@ function ReportPage() {
             .sort((a, b) => a - b)
             .slice(0, 8);
           const canvas = document.createElement("canvas");
-          canvas.width = 320;
-          canvas.height = 240;
+          canvas.width = 640;
+          canvas.height = 360;
           const ctx = canvas.getContext("2d");
           const frames: { t: number; dataUrl: string }[] = [];
           for (const t of candidateTimes) {
@@ -451,7 +426,7 @@ function ReportPage() {
               });
               if (ctx) {
                 ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-                frames.push({ t, dataUrl: canvas.toDataURL("image/jpeg", 0.6) });
+                frames.push({ t, dataUrl: canvas.toDataURL("image/jpeg", 0.8) });
               }
             } catch {
               /* skip a bad seek */
@@ -595,6 +570,13 @@ function ReportPage() {
                 ))}
               </div>
             </section>
+
+            <AppearanceGroomingPanel
+              appearance={forensics?.appearance}
+              legacySummary={forensics?.groomingSummary}
+              loading={forensicsLoading}
+              hasRecording={Boolean(session?.recording?.id)}
+            />
 
             {/* Topics */}
             <div className="grid gap-6 lg:grid-cols-3">
@@ -778,242 +760,6 @@ function ReportPage() {
                   value={voiceCaptured(session) ? String(session!.voice.pauseCount) : "not captured"}
                 />
               </div>
-            </section>
-
-            {/* Appearance & grooming */}
-            <section className="rounded-2xl glass p-6">
-              <h2 className="flex items-center gap-2 font-display text-lg font-semibold">
-                <Shirt className="h-4 w-4 text-primary" /> Appearance & grooming
-              </h2>
-              {groomingEvents.length > 0 && (
-                <div className="mt-4 rounded-xl border border-warning/25 bg-warning/5 p-4">
-                  <h3 className="text-[10px] uppercase tracking-widest text-warning">
-                    Live interview observations
-                  </h3>
-                  <ul className="mt-2 space-y-2">
-                    {groomingEvents.map((event, index) => (
-                      <li key={`${event.t}-${event.area}-${index}`} className="text-sm text-muted-foreground">
-                        <span className="font-medium text-foreground">
-                          {event.area === "hair" ? "Hair" : "Grooming"}:
-                        </span>{" "}
-                        {event.instruction}
-                        {event.reason ? ` ${event.reason}` : ""}
-                      </li>
-                    ))}
-                  </ul>
-                </div>
-              )}
-              {session?.appearanceObservation && (
-                <div className="mt-4 rounded-xl border border-primary/25 bg-primary/5 p-4">
-                  <h3 className="text-[10px] uppercase tracking-widest text-primary">
-                    Detected from the interview video
-                  </h3>
-                  {session.appearanceObservation.attire && (
-                    <p className="mt-2 text-sm text-muted-foreground">
-                      <span className="font-medium text-foreground">Detected outfit:</span>{" "}
-                      {session.appearanceObservation.attire}
-                    </p>
-                  )}
-                  {session.appearanceObservation.grooming && (
-                    <p className="mt-1 text-sm text-muted-foreground">
-                      <span className="font-medium text-foreground">Detected grooming:</span>{" "}
-                      {session.appearanceObservation.grooming}
-                    </p>
-                  )}
-                  {session.appearanceObservation.notes && (
-                    <p className="mt-1 text-xs text-muted-foreground">{session.appearanceObservation.notes}</p>
-                  )}
-                </div>
-              )}
-              {appearanceLoading ? (
-                <p className="mt-3 flex items-center gap-2 text-sm text-muted-foreground">
-                  <Loader2 className="h-4 w-4 animate-spin text-primary" /> Reviewing your dress and
-                  hair…
-                </p>
-              ) : !appearance ? (
-                <div className="mt-3 space-y-3">
-                  {appearanceError && (
-                    <div className="rounded-xl border border-warning/25 bg-warning/5 p-4">
-                      <p className="text-sm text-muted-foreground">{appearanceError}</p>
-                      {session?.snapshot && (
-                        <Button
-                          size="sm"
-                          variant="secondary"
-                          className="mt-3"
-                          onClick={() => {
-                            const current = getSession(sessionId);
-                            if (!current?.snapshot) return;
-                            setAppearanceError(null);
-                            setAppearanceLoading(true);
-                            void reviewAppearance({
-                              data: {
-                                dataUrl: current.snapshot,
-                                companyId: current.config.companyId,
-                                role: current.config.role,
-                              },
-                            })
-                              .then((result) => {
-                                const normalized = normalizeAppearance(result);
-                                setAppearance(normalized);
-                                if (!normalized.assessed) {
-                                  setAppearanceError(normalized.reason || "Appearance analysis was inconclusive.");
-                                }
-                              })
-                              .catch(() => setAppearanceError("Appearance analysis could not be completed."))
-                              .finally(() => setAppearanceLoading(false));
-                          }}
-                        >
-                          Review camera frame again
-                        </Button>
-                      )}
-                    </div>
-                  )}
-                  {forensicsLoading ? (
-                    <p className="flex items-center gap-2 text-sm text-muted-foreground">
-                      <Loader2 className="h-4 w-4 animate-spin text-primary" /> Reviewing recorded interview frames for appearance and grooming…
-                    </p>
-                  ) : !session?.appearanceObservation && !forensics?.assessed ? (
-                    <p className="text-sm text-muted-foreground">
-                      Camera was off or no usable appearance evidence was saved.
-                    </p>
-                  ) : null}
-                  {forensics?.assessed && forensics.groomingSummary && (
-                    <div className="rounded-xl border border-primary/25 bg-primary/5 p-4">
-                      <h3 className="text-[10px] uppercase tracking-widest text-primary">
-                        Post-interview grooming read (from replay)
-                      </h3>
-                      <p className="mt-1.5 text-sm text-muted-foreground">
-                        {forensics.groomingSummary}
-                      </p>
-                    </div>
-                  )}
-                </div>
-              ) : !appearance.assessed ? (
-                <div className="mt-3 space-y-3">
-                  <p className="text-sm text-muted-foreground">
-                    {appearance.reason || "Appearance not assessed."}
-                  </p>
-                  {session?.snapshot && (
-                    <Button
-                      size="sm"
-                      variant="secondary"
-                      onClick={() => {
-                        const current = getSession(sessionId);
-                        if (current) {
-                          setAppearance(null);
-                          setAppearanceLoading(true);
-                          void reviewAppearance({
-                            data: {
-                              dataUrl: current.snapshot!,
-                              companyId: current.config.companyId,
-                              role: current.config.role,
-                            },
-                          })
-                            .then((result) => {
-                              const normalized = normalizeAppearance(result);
-                              setAppearance(normalized);
-                              setAppearanceError(
-                                normalized.assessed
-                                  ? null
-                                  : normalized.reason || "Appearance analysis was inconclusive.",
-                              );
-                              const latest = getSession(sessionId) ?? current;
-                              saveSession({
-                                ...latest,
-                                appearance: normalized.assessed ? normalized : undefined,
-                                snapshot: normalized.assessed ? null : latest.snapshot,
-                              });
-                            })
-                            .catch(() => setAppearanceError("Appearance analysis could not be completed."))
-                            .finally(() => setAppearanceLoading(false));
-                        }
-                      }}
-                    >
-                      Review camera frame again
-                    </Button>
-                  )}
-                </div>
-              ) : (
-                <div className="mt-4 space-y-4">
-                  <div className="rounded-xl border border-primary/25 bg-primary/5 p-4">
-                    <p className="text-[10px] uppercase tracking-widest text-primary">
-                      Overall presentation
-                    </p>
-                    <p className="mt-1 text-sm font-medium">
-                      {appearance.dress.verdict === "not_appropriate" || appearance.hair.verdict === "untidy"
-                        ? "Needs improvement"
-                        : "Neat and interview-ready"}
-                    </p>
-                    <p className="mt-1 text-xs text-muted-foreground">
-                      Based only on visible clothing, hair, and grooming details from the camera frame.
-                    </p>
-                  </div>
-                  <div className="grid gap-4 sm:grid-cols-2">
-                    <AppearanceItem
-                      icon={Shirt}
-                      title="Dress"
-                      label={DRESS_LABELS[appearance.dress.verdict]}
-                      tone={
-                        appearance.dress.verdict === "appropriate"
-                          ? "success"
-                          : appearance.dress.verdict === "acceptable"
-                            ? "warning"
-                            : "danger"
-                      }
-                      note={appearance.dress.note}
-                    />
-                    <AppearanceItem
-                      icon={Scissors}
-                      title="Hair"
-                      label={HAIR_LABELS[appearance.hair.verdict]}
-                      tone={appearance.hair.verdict === "neat" ? "success" : "warning"}
-                      note={appearance.hair.note}
-                    />
-                    <AppearanceItem
-                      icon={Scissors}
-                      title="Beard grooming"
-                      label={BEARD_LABELS[appearance.beard.verdict]}
-                      tone={
-                        appearance.beard.verdict === "neat"
-                          ? "success"
-                          : "warning"
-                      }
-                      note={appearance.beard.note}
-                    />
-                  </div>
-                  {typeof appearance.confidence === "number" && (
-                    <p className="text-xs text-muted-foreground">
-                      Appearance confidence: {appearance.confidence}/100
-                      {appearance.limitations?.length ? ` · ${appearance.limitations.join(" ")}` : ""}
-                    </p>
-                  )}
-                  {forensics?.assessed && forensics.groomingSummary && (
-                    <div className="rounded-xl border border-primary/25 bg-primary/5 p-4">
-                      <h3 className="text-[10px] uppercase tracking-widest text-primary">
-                        Post-interview grooming read (from replay)
-                      </h3>
-                      <p className="mt-1.5 text-sm text-muted-foreground">
-                        {forensics.groomingSummary}
-                      </p>
-                    </div>
-                  )}
-                  {appearance.fixes.length > 0 && (
-                    <div className="rounded-xl bg-secondary/35 p-4">
-                      <h3 className="text-[10px] uppercase tracking-widest text-muted-foreground">
-                        Fix before your next interview
-                      </h3>
-                      <ol className="mt-2 space-y-1.5 text-sm text-muted-foreground">
-                        {appearance.fixes.map((fix, i) => (
-                          <li key={fix} className="flex gap-2">
-                            <span className="text-primary">{i + 1}.</span>
-                            {fix}
-                          </li>
-                        ))}
-                      </ol>
-                    </div>
-                  )}
-                </div>
-              )}
             </section>
 
             {/* Plan */}
@@ -1209,35 +955,3 @@ function Stat({ label, value }: { label: string; value: string }) {
   );
 }
 
-function AppearanceItem({
-  icon: Icon,
-  title,
-  label,
-  tone,
-  note,
-}: {
-  icon: React.ElementType;
-  title: string;
-  label: string;
-  tone: "success" | "warning" | "danger";
-  note: string;
-}) {
-  const toneClass =
-    tone === "success"
-      ? "bg-success/15 text-success"
-      : tone === "warning"
-        ? "bg-warning/15 text-warning"
-        : "bg-destructive/15 text-destructive";
-  return (
-    <div className="rounded-xl border border-border/70 p-4">
-      <div className="flex items-center gap-2">
-        <Icon className="h-4 w-4 text-muted-foreground" />
-        <span className="text-[10px] uppercase tracking-widest text-muted-foreground">{title}</span>
-        <span className={`ml-auto rounded-full px-2.5 py-0.5 text-[11px] font-medium ${toneClass}`}>
-          {label}
-        </span>
-      </div>
-      {note && <p className="mt-2 text-sm text-muted-foreground">{note}</p>}
-    </div>
-  );
-}

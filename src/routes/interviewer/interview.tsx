@@ -37,7 +37,7 @@ import { useVisionMetrics } from "@/interviewer/hooks/useVisionMetrics";
 import { useSessionRecorder } from "@/interviewer/hooks/useSessionRecorder";
 import { saveRecording } from "@/interviewer/lib/recording-store";
 import { getCompany } from "@/interviewer/lib/companies";
-import { coachPresenceNow, nextInterviewTurn, reviewAppearance } from "@/interviewer/lib/interview.functions";
+import { coachPresenceNow, nextInterviewTurn } from "@/interviewer/lib/interview.functions";
 import {
   EMPTY_VOICE,
   PHASE_LABELS,
@@ -302,7 +302,7 @@ function InterviewRoom() {
     streamRef.current = sharedStream;
     setLiveStream(sharedStream);
     setClipAudio(micConnected);
-    if (sharedStream && micConnected) clipRecorder.start(sharedStream);
+    if (sharedStream && (cameraConnected || micConnected)) clipRecorder.start(sharedStream);
     if (videoRef.current && sharedStream && cameraConnected) {
       videoRef.current.srcObject = sharedStream;
       void videoRef.current.play().catch(() => undefined);
@@ -452,7 +452,7 @@ function InterviewRoom() {
     async function runCheck() {
       const state = coachStateRef.current;
       if (state.busy || cancelled) return;
-      const frame = vision.grabFrame();
+      const frame = vision.getSnapshot();
       if (!frame) return;
       setLastPresenceCaptureAt(Date.now());
       state.busy = true;
@@ -565,7 +565,7 @@ function InterviewRoom() {
     async function checkPhone() {
       if (checking) return;
       checking = true;
-      const frame = vision.grabFrame();
+      const frame = vision.getSnapshot();
       if (!frame) {
         checking = false;
         return;
@@ -687,12 +687,7 @@ function InterviewRoom() {
   }, [recorder.recording, liveStream, flagIntegrity, escalate]);
 
   const persist = useCallback(
-    (
-      allTurns: Turn[],
-      completed: boolean,
-      appearance?: InterviewSession["appearance"],
-      appearanceObservation?: InterviewSession["appearanceObservation"],
-    ) => {
+    (allTurns: Turn[], completed: boolean) => {
       if (!config) return;
       const session: InterviewSession = {
         id: sessionId,
@@ -703,17 +698,7 @@ function InterviewRoom() {
         vision: vision.summarize(),
         voice,
         report: undefined,
-        // One webcam frame, used once on the report to review dress and hair.
         snapshot: vision.getSnapshot(),
-        appearance,
-        appearanceObservation: appearanceObservation ?? (lastVisionResult
-          ? {
-              attire: lastVisionResult.attire,
-              grooming: lastVisionResult.grooming,
-              notes: lastVisionResult.notes,
-              t: elapsedRef.current,
-            }
-          : undefined),
         coaching,
         presence: presenceRef.current.slice(-1800),
         proctor,
@@ -895,57 +880,7 @@ function InterviewRoom() {
           recordingRef.current = { id, duration: clip.duration, mimeType: clip.mimeType };
         }
       }
-      let appearance: InterviewSession["appearance"] = undefined;
-    let snapshot: string | null = null;
-
-if (camOn) {
-  snapshot = await vision.captureSnapshotNow();
-
-  // If the camera needs a little extra time, retry.
-  if (!snapshot) {
-    for (let attempt = 0; attempt < 3 && !snapshot; attempt += 1) {
-      await new Promise<void>((resolve) =>
-        window.setTimeout(resolve, 300),
-      );
-
-      snapshot = await vision.captureSnapshotNow();
-    }
-  }
-}
-
-// Fall back to the best frame collected during the interview.
-if (!snapshot) {
-  snapshot = vision.getSnapshot();
-}
-      let finalAppearanceObservation: InterviewSession["appearanceObservation"] = undefined;
-      if (snapshot && config) {
-        try {
-          const liveReview = await analyzeProctoringFrame({ data: { dataUrl: snapshot } });
-          finalAppearanceObservation = {
-            attire: liveReview.attire,
-            grooming: liveReview.grooming,
-            notes: liveReview.notes,
-            t: elapsedRef.current,
-          };
-        } catch {
-          finalAppearanceObservation = {
-            attire: "",
-            grooming: "",
-            notes: "The final appearance review was unavailable, but the interview frame was saved for report retry.",
-            t: elapsedRef.current,
-          };
-        }
-      }
-      if (snapshot && config) {
-        try {
-          appearance = await reviewAppearance({
-            data: { dataUrl: snapshot, companyId: config.companyId, role: config.role },
-          });
-        } catch {
-          appearance = undefined;
-        }
-      }
-      persist(turns, true, appearance, finalAppearanceObservation);
+      persist(turns, true);
       if (reason) toast.error(reason);
       navigate({ to: "/interviewer/report/$sessionId", params: { sessionId } });
     },

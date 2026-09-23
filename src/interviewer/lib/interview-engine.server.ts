@@ -765,7 +765,6 @@ export interface BehaviourInput {
   proctor?: { kind: string; detail: string; severity?: string }[];
   warnings?: number;
   endedEarly?: boolean;
-  appearance?: { dress: string; hair: string } | null;
 }
 
 export type VoiceReportStatus =
@@ -1073,129 +1072,6 @@ export async function analyzeResumeFitForCompany(
     actions: (raw.actions ?? []).filter((a) => a?.title).slice(0, 6),
     keywords: (raw.keywords ?? []).filter(Boolean).slice(0, 12),
   };
-}
-
-/* ------------------------------------------------------------------ */
-/* appearance & grooming (report only)                                 */
-/* ------------------------------------------------------------------ */
-
-export interface AppearancePayload {
-  assessed: boolean;
-  dress: { verdict: "appropriate" | "acceptable" | "not_appropriate"; note: string };
-  hair: { verdict: "neat" | "untidy"; note: string };
-  beard: { verdict: "neat" | "needs_attention" | "not_visible"; note: string };
-  fixes: string[];
-  reason: string;
-  confidence: number;
-  limitations: string[];
-}
-
-const appearanceSchema = z.object({
-  assessed: z.boolean(),
-  reason: z.string(),
-  dressVerdict: z.string(),
-  dressNote: z.string(),
-  hairVerdict: z.string(),
-  hairNote: z.string(),
-  beardVerdict: z.string(),
-  beardNote: z.string(),
-  fixes: z.array(z.string()),
-  confidence: z.number().min(0).max(100).default(70),
-  limitations: z.array(z.string()).default([]),
-});
-
-function normalizeDressVerdict(value: string): AppearancePayload["dress"]["verdict"] {
-  const verdict = value.trim().toLowerCase();
-  if (/not|inappropriate|unprofessional|casual|unsuitable/.test(verdict)) return "not_appropriate";
-  if (/appropriate|formal|professional|smart|interview.?ready/.test(verdict)) return "appropriate";
-  return "acceptable";
-}
-
-function normalizeHairVerdict(value: string): AppearancePayload["hair"]["verdict"] {
-  return /untidy|messy|uncombed|needs|unprofessional/.test(value.trim().toLowerCase()) ? "untidy" : "neat";
-}
-
-function normalizeBeardVerdict(value: string): AppearancePayload["beard"]["verdict"] {
-  const verdict = value.trim().toLowerCase();
-  if (/not.?visible|no beard|cannot|unclear/.test(verdict)) return "not_visible";
-  return /needs|untidy|messy|untrimmed|unprofessional/.test(verdict) ? "needs_attention" : "neat";
-}
-
-/**
- * Grooming feedback from one webcam frame. Deliberately limited to clothing
- * and hair tidiness — nothing about the person's body or looks.
- */
-export async function analyzeAppearance(
-  dataUrl: string,
-  companyId: string,
-  role: string,
-): Promise<AppearancePayload> {
-  const company = getCompany(companyId);
-  const notAssessed: AppearancePayload = {
-    assessed: false,
-    dress: { verdict: "acceptable", note: "" },
-    hair: { verdict: "neat", note: "" },
-    beard: { verdict: "not_visible", note: "A beard was not visible enough to assess." },
-    fixes: [],
-    reason: "The camera frame was not clear enough to review your appearance.",
-    confidence: 0,
-    limitations: ["No usable appearance frame was available."],
-  };
-
-  if (!dataUrl.startsWith("data:image/")) return notAssessed;
-
-  const system = [
-    `You review interview presentation for candidates interviewing at ${company.name} for a ${role} role.`,
-    `Judge ONLY visible presentation: (1) clothing and formality for this company; (2) hair grooming; (3) visible beard grooming. For a beard, use not_visible when it cannot be seen clearly.`,
-    `Never comment on the person's body, weight, skin, age, gender, ethnicity, attractiveness, identity, or anything unrelated to visible clothing, hair, and beard grooming.`,
-    `${company.name}'s interview style is ${company.interviewStyle} — set the dress expectation accordingly (formal shirt for conservative firms, clean smart-casual for product companies).`,
-    `Set assessed=false only when no person is visible at all, the image is completely blank, or the frame is unusable. Normal Mac webcam compression, mild blur, ordinary indoor lighting, or a partially visible outfit are still assessable; judge only what is visible and mention limitations in the notes.`,
-    `For dress, explicitly say whether it looks formal, smart-casual, or too casual for the interview and explain why. For hair and beard, explicitly say whether they look neat/interview-ready or need attention. Natural verdict words are allowed; the application will normalize them. dressNote, hairNote, and beardNote are short second-person sentences. fixes = 2-4 actionable items. confidence reflects image clarity, and limitations lists only visible-frame limitations.`,
-  ].join("\n");
-
-  try {
-    const result = await runStructured({
-      schema: appearanceSchema,
-      system,
-      prompt: `Review this candidate's visible clothing, hair, and beard grooming for a ${company.name} ${role} interview.`,
-      images: [dataUrl],
-      vision: true,
-      fallback: {
-        assessed: false,
-        reason: "The appearance service could not analyse this camera frame. Try reviewing the frame again.",
-        dressVerdict: "acceptable",
-        dressNote: "",
-        hairVerdict: "neat",
-        hairNote: "",
-        beardVerdict: "not_visible",
-        beardNote: "",
-        fixes: [],
-        confidence: 0,
-        limitations: ["The appearance service could not analyse this frame."],
-      },
-    });
-    const parsed = appearanceSchema.safeParse(result.value);
-    if (!parsed.success) return notAssessed;
-    const r = parsed.data;
-    if (!r.assessed) {
-      return {
-        ...notAssessed,
-        reason: r.reason || (result.error ? `${result.error.title}: ${result.error.fix}` : notAssessed.reason),
-      };
-    }
-    return {
-      assessed: true,
-      dress: { verdict: normalizeDressVerdict(r.dressVerdict), note: r.dressNote.trim() },
-      hair: { verdict: normalizeHairVerdict(r.hairVerdict), note: r.hairNote.trim() },
-      beard: { verdict: normalizeBeardVerdict(r.beardVerdict), note: r.beardNote.trim() },
-      fixes: r.fixes.filter(Boolean).slice(0, 4),
-      reason: "",
-      confidence: r.confidence,
-      limitations: r.limitations.filter(Boolean).slice(0, 4),
-    };
-  } catch {
-    return notAssessed;
-  }
 }
 
 /* ------------------------------------------------------------------ */
@@ -1717,6 +1593,20 @@ export interface ForensicsReportPayload {
   assessed: boolean;
   findings: ForensicsFindingPayload[];
   groomingSummary: string;
+  appearance: {
+    assessed: boolean;
+    grooming: AppearanceAssessmentPayload;
+    hair: AppearanceAssessmentPayload;
+    attire: AppearanceAssessmentPayload;
+  };
+}
+
+export interface AppearanceAssessmentPayload {
+  status: "positive" | "needs_attention" | "uncertain" | "not_visible";
+  confidence: number;
+  evidence: string;
+  recommendation: string;
+  t: number | null;
 }
 
 const forensicsFindingSchema = z.object({
@@ -1737,12 +1627,42 @@ const forensicsFindingSchema = z.object({
 const forensicsSchema = z.object({
   findings: z.array(forensicsFindingSchema),
   groomingSummary: z.string(),
+  appearance: z.object({
+    assessed: z.boolean(),
+    grooming: z.object({
+      status: z.enum(["positive", "needs_attention", "uncertain", "not_visible"]),
+      confidence: z.number().min(0).max(100),
+      evidence: z.string(),
+      recommendation: z.string(),
+      t: z.number().nullable(),
+    }),
+    hair: z.object({
+      status: z.enum(["positive", "needs_attention", "uncertain", "not_visible"]),
+      confidence: z.number().min(0).max(100),
+      evidence: z.string(),
+      recommendation: z.string(),
+      t: z.number().nullable(),
+    }),
+    attire: z.object({
+      status: z.enum(["positive", "needs_attention", "uncertain", "not_visible"]),
+      confidence: z.number().min(0).max(100),
+      evidence: z.string(),
+      recommendation: z.string(),
+      t: z.number().nullable(),
+    }),
+  }),
 });
 
 const NO_FORENSICS: ForensicsReportPayload = {
   assessed: false,
   findings: [],
   groomingSummary: "",
+  appearance: {
+    assessed: false,
+    grooming: { status: "not_visible", confidence: 0, evidence: "", recommendation: "", t: null },
+    hair: { status: "not_visible", confidence: 0, evidence: "", recommendation: "", t: null },
+    attire: { status: "not_visible", confidence: 0, evidence: "", recommendation: "", t: null },
+  },
 };
 
 /**
@@ -1770,11 +1690,13 @@ export async function generateReplayForensics(
     `You are a proctoring and presentation reviewer auditing a recorded interview for a ${company.name} ${role} role, after the fact, from a handful of sampled webcam frames.`,
     `You are given ${valid.length} frames, in chronological order, timestamped in seconds from the start of the recording: ${timestamps.join(", ")}.`,
     `For each frame that shows an integrity concern, add one finding using EXACTLY one of the given timestamps: "multiple_people" (a second person visible), "phone_use" (a phone or second screen visible), "background_voice" or "second_speaker" ONLY if something in the frame itself suggests it (someone else visible or gesturing as if speaking) — never guess sound you cannot see.`,
-    `Always add exactly one "grooming" finding and, only if dress is notably off for this company's interview style (${company.interviewStyle}), one "appearance" finding — each using the timestamp of whichever frame shows the candidate most clearly.`,
+    `Assess the candidate's visible presentation separately in appearance.grooming, appearance.hair, and appearance.attire. Grooming means observable tidiness and readiness; hair means whether the visible hairstyle is presented neatly for this formal-office context; attire means whether the visible clothing reads as formal/professional for this company's interview style (${company.interviewStyle}). These are advisory observations, not hiring scores.`,
+    `For each appearance assessment, use status "positive" when the visible presentation is clearly suitable, "needs_attention" only for a concrete observable improvement, "uncertain" when the image is usable but evidence is ambiguous, and "not_visible" when the relevant feature cannot be seen. Never guess. Use the clearest frame timestamp or null when not visible.`,
+    `Each appearance assessment must include one short observable evidence sentence and one practical, neutral recommendation. Do not mention attractiveness, body, weight, skin, age, gender, ethnicity, identity, or personal worth.`,
     `If a frame is empty, too dark, or shows nothing notable, do not invent a finding for it — findings should only cover real observations.`,
     `Never comment on body, weight, skin, age, gender, ethnicity or attractiveness — clothing and grooming (hair, tidiness) only.`,
     `detail is one short, concrete, second-person sentence. confidence is 0-100 for how sure you are. severity is low/medium/high for integrity findings; use "low" for grooming/appearance reads.`,
-    `groomingSummary is one or two plain sentences summarising overall grooming and appearance across all frames, written for a recruiter reading this after the interview.`,
+    `groomingSummary is one or two plain sentences summarising only visible, job-relevant presentation across all frames.`,
     `If nothing at all is notable across every frame, return an empty findings array and a short reassuring groomingSummary, but never fabricate an issue to fill the list.`,
   ].join("\n");
 
@@ -1789,12 +1711,28 @@ export async function generateReplayForensics(
     if (!parsed.success) return NO_FORENSICS;
     const nearestT = (t: number) =>
       timestamps.reduce((best, cur) => (Math.abs(cur - t) < Math.abs(best - t) ? cur : best), timestamps[0]);
+    const clamp = (value: number) => Math.max(0, Math.min(100, Math.round(value)));
+    const nearestOrNull = (t: number | null) =>
+      typeof t === "number" && Number.isFinite(t) ? nearestT(t) : null;
+    const normalizeAssessment = (assessment: (typeof parsed.data.appearance)["grooming"]) => ({
+      ...assessment,
+      confidence: clamp(assessment.confidence),
+      t: nearestOrNull(assessment.t),
+      evidence: assessment.evidence.trim(),
+      recommendation: assessment.recommendation.trim(),
+    });
     return {
       assessed: true,
       findings: parsed.data.findings
         .map((f) => ({ ...f, t: nearestT(f.t) }))
         .slice(0, 16),
       groomingSummary: parsed.data.groomingSummary.trim(),
+      appearance: {
+        assessed: parsed.data.appearance.assessed,
+        grooming: normalizeAssessment(parsed.data.appearance.grooming),
+        hair: normalizeAssessment(parsed.data.appearance.hair),
+        attire: normalizeAssessment(parsed.data.appearance.attire),
+      },
     };
   } catch {
     return NO_FORENSICS;
