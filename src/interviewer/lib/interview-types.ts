@@ -143,7 +143,7 @@ export const SEVERITY_LABELS: Record<FlagSeverity, string> = {
 
 export const SEVERITY_RANK: Record<FlagSeverity, number> = { high: 3, medium: 2, low: 1 };
 
-export type CoachArea = "posture" | "eye_contact" | "hair" | "grooming" | "framing" | "delivery";
+export type CoachArea = "posture" | "eye_contact" | "hair" | "grooming" | "attire" | "framing" | "delivery";
 
 /** One real-time presentation nudge shown during the interview. */
 export interface CoachingEvent {
@@ -163,6 +163,7 @@ export const COACH_AREA_LABELS: Record<CoachingEvent["area"], string> = {
   eye_contact: "Eye contact",
   hair: "Hair",
   grooming: "Grooming",
+  attire: "Attire",
   framing: "Framing",
   delivery: "Delivery",
 };
@@ -339,6 +340,19 @@ export interface AppearanceReview {
   attire: AppearanceAssessment;
 }
 
+export type AppearanceAnalysisStatus =
+  | "pending"
+  | "checking"
+  | "assessed"
+  | "frame_unusable"
+  | "analysis_failed";
+
+export interface AppearanceAnalysisResult {
+  status: Exclude<AppearanceAnalysisStatus, "pending" | "checking">;
+  appearance?: AppearanceReview;
+  message?: string;
+}
+
 /** Cached result of the post-interview Groq pass over sampled replay frames. */
 export interface ForensicsReport {
   assessed: boolean;
@@ -363,6 +377,17 @@ export interface InterviewSession {
   turns: Turn[];
   vision: VisionMetrics;
   voice: VoiceMetrics;
+  /** Candidate opted in to sending camera/audio samples to the configured AI provider. */
+  cloudMediaAnalysisConsent?: boolean;
+  /** Candidate opted in to post-interview camera-only appearance review. */
+  appearanceReviewConsent?: boolean;
+  /** Latest explicit live camera assessment, separate from presentation score. */
+  liveAppearance?: AppearanceReview | null;
+  liveAppearanceStatus?: AppearanceAnalysisStatus;
+  liveAppearanceError?: string | null;
+  replayAppearance?: AppearanceReview | null;
+  replayAppearanceStatus?: AppearanceAnalysisStatus;
+  replayAppearanceError?: string | null;
   report?: InterviewReport;
   /** Base64 webcam frame kept only until the appearance review is generated. */
   snapshot?: string | null;

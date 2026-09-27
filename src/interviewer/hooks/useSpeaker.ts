@@ -113,34 +113,41 @@ export function useSpeaker() {
       utterance.volume = 1;
       utteranceRef.current = utterance;
 
-      setSpeaking(true);
-      rafRef.current = requestAnimationFrame(tick);
-
       await new Promise<void>((resolve) => {
         let settled = false;
-        const finish = () => {
+        let started = false;
+        const begin = () => {
+          if (started || utteranceRef.current !== utterance) return;
+          started = true;
+          startedAtRef.current = performance.now();
+          setSpeaking(true);
+          rafRef.current = requestAnimationFrame(tick);
+        };
+        function finish() {
           if (settled) return;
           settled = true;
+          if (timeoutId !== undefined) window.clearTimeout(timeoutId);
           doneRef.current = null;
           if (utteranceRef.current === utterance) {
             utteranceRef.current = null;
             settle();
           }
           resolve();
-        };
+        }
+        const timeoutId = window.setTimeout(finish, expectedMsRef.current * 2 + 8000);
         doneRef.current = finish;
+        utterance.onstart = begin;
         utterance.onend = finish;
         utterance.onerror = finish;
-        // Word boundaries are the most accurate progress signal when available.
         utterance.onboundary = (event) => {
+          // Some engines omit onstart but still report boundaries once audio begins.
+          begin();
           if (!clean.length) return;
           const ratio = Math.min(1, (event.charIndex || 0) / clean.length);
           const elapsed = performance.now() - startedAtRef.current;
           if (ratio > 0.02) expectedMsRef.current = Math.max(600, elapsed / ratio);
         };
         window.speechSynthesis.speak(utterance);
-        // Safety net: some browsers never fire onend if the tab is backgrounded.
-        window.setTimeout(finish, expectedMsRef.current * 2 + 8000);
       });
     },
     [muted, settle, stop, tick, voicePref],

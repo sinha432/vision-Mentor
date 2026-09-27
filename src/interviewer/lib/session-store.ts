@@ -2,6 +2,7 @@ import type { InterviewSession } from "./interview-types";
 
 const KEY = "vmx.sessions.v1";
 const CONFIG_KEY = "vmx.draft-config.v1";
+export const SESSION_UPDATED_EVENT = "vmx:session-updated";
 
 function canUse() {
   return typeof window !== "undefined" && !!window.localStorage;
@@ -25,6 +26,7 @@ export function saveSession(session: InterviewSession) {
   all.unshift(session);
   try {
     window.localStorage.setItem(KEY, JSON.stringify(all.slice(0, 40)));
+    window.dispatchEvent(new CustomEvent(SESSION_UPDATED_EVENT, { detail: session.id }));
   } catch {
     /* storage full */
   }

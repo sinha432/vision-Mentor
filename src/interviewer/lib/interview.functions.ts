@@ -180,9 +180,7 @@ export const analyzeResume = createServerFn({ method: "POST" })
     if (text.trim().length < 60) {
       throw new Error("We could not extract enough readable text from this resume. Paste the resume text instead.");
     }
-    const { analyzeResumeText, classifyResumeDocument } = await import("./interview-engine.server");
-    const check = classifyResumeDocument(text ?? "");
-    if (check.verdict !== "resume") throw new Error(check.reason);
+    const { analyzeResumeText } = await import("./interview-engine.server");
     const insights = await analyzeResumeText(text);
     return { ...insights, resumeText: text };
   });
@@ -286,4 +284,22 @@ export const analyzeReplayForensics = createServerFn({ method: "POST" })
   .handler(async ({ data }) => {
     const { generateReplayForensics } = await import("./interview-engine.server");
     return generateReplayForensics(data.frames, data.companyId, data.role);
+  });
+
+export const analyzeAppearanceFrames = createServerFn({ method: "POST" })
+  .inputValidator((input: unknown) =>
+    z
+      .object({
+        frames: z
+          .array(z.object({ t: z.number(), dataUrl: z.string().min(16) }))
+          .min(1)
+          .max(8),
+        companyId: z.string(),
+        role: z.string(),
+      })
+      .parse(input),
+  )
+  .handler(async ({ data }) => {
+    const { analyzeAppearanceFrames } = await import("./interview-engine.server");
+    return analyzeAppearanceFrames(data.frames, data.companyId, data.role);
   });

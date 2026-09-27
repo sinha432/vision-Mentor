@@ -37,11 +37,17 @@ import { useVisionMetrics } from "@/interviewer/hooks/useVisionMetrics";
 import { useSessionRecorder } from "@/interviewer/hooks/useSessionRecorder";
 import { saveRecording } from "@/interviewer/lib/recording-store";
 import { getCompany } from "@/interviewer/lib/companies";
-import { coachPresenceNow, nextInterviewTurn } from "@/interviewer/lib/interview.functions";
+import {
+  analyzeAppearanceFrames,
+  coachPresenceNow,
+  nextInterviewTurn,
+} from "@/interviewer/lib/interview.functions";
 import {
   EMPTY_VOICE,
   PHASE_LABELS,
   PHASE_ORDER,
+  type AppearanceAnalysisStatus,
+  type AppearanceReview,
   type CoachingEvent,
   type CodeLanguage,
   type InterviewConfig,
@@ -86,7 +92,14 @@ export const Route = createFileRoute("/interviewer/interview")({
 function InterviewRoom() {
   const navigate = useNavigate();
   const { user } = useDemoAuth();
-  const { stream: sharedStream, cameraConnected, micConnected } = useMedia();
+  const {
+    stream: sharedStream,
+    cameraConnected,
+    micConnected,
+    cameraStatus,
+    micStatus,
+    error: mediaError,
+  } = useMedia();
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const transcriptRef = useRef<HTMLDivElement | null>(null);
@@ -108,9 +121,14 @@ function InterviewRoom() {
   }));
   const [camOn, setCamOn] = useState(false);
   const [clipAudio, setClipAudio] = useState(false);
+  const [cloudMediaAnalysisConsent] = useState(true);
   const [elapsed, setElapsed] = useState(0);
   const [finishing, setFinishing] = useState(false);
   const [coaching, setCoaching] = useState<CoachingEvent[]>([]);
+  const [liveAppearance, setLiveAppearance] = useState<AppearanceReview | null>(null);
+  const [liveAppearanceStatus, setLiveAppearanceStatus] =
+    useState<AppearanceAnalysisStatus>("pending");
+  const [liveAppearanceError, setLiveAppearanceError] = useState<string | null>(null);
   const [coachChecking, setCoachChecking] = useState(false);
   const [proctor, setProctor] = useState<ProctorEvent[]>([]);
   const [tabWarnings, setTabWarnings] = useState(0);
@@ -136,6 +154,7 @@ function InterviewRoom() {
   });
   const multiFaceStreakRef = useRef(0);
   const lastVisionCheckRef = useRef(0);
+  const lastAppearanceReviewAtRef = useRef(0);
   const presenceRef = useRef<PresenceSample[]>([]);
   const recordingRef = useRef<RecordingMeta | null>(null);
   const pendingCoachRef = useRef<CoachingEvent[]>([]);
@@ -157,6 +176,8 @@ function InterviewRoom() {
     [],
   );
   const vision = useVisionMetrics(videoRef, camOn, sampleTick);
+  const visionApiRef = useRef(vision);
+  visionApiRef.current = vision;
 
   /** Log an integrity flag once — repeats of the same kind are throttled. */
   const seenProctorRef = useRef(new Map<ProctorKind, number>());
@@ -446,18 +467,58 @@ function InterviewRoom() {
   coachStateRef.current.voice = voice;
 
   useEffect(() => {
-    if (!camOn || !config) return;
+    if (!camOn || !config || !cloudMediaAnalysisConsent) return;
     let cancelled = false;
 
     async function runCheck() {
       const state = coachStateRef.current;
       if (state.busy || cancelled) return;
-      const frame = vision.getSnapshot();
-      if (!frame) return;
+      const frame = await visionApiRef.current.captureSnapshotNow();
+      if (!frame) {
+        setLiveAppearanceStatus("frame_unusable");
+        setLiveAppearanceError("The camera did not provide a readable frame. Check camera access and framing.");
+        return;
+      }
       setLastPresenceCaptureAt(Date.now());
       state.busy = true;
       setCoachChecking(true);
       try {
+        const appearanceCheckAt = Date.now();
+        if (appearanceCheckAt - lastAppearanceReviewAtRef.current >= 30_000) {
+          lastAppearanceReviewAtRef.current = appearanceCheckAt;
+          setLiveAppearanceStatus("checking");
+          setLiveAppearanceError(null);
+          try {
+            const appearanceResult = await analyzeAppearanceFrames({
+              data: {
+                frames: [{ t: elapsedRef.current, dataUrl: frame }],
+                companyId: config!.companyId,
+                role: config!.role,
+              },
+            });
+            if (cancelled) return;
+            setLiveAppearanceStatus(appearanceResult.status);
+            if (appearanceResult.status === "assessed" && appearanceResult.appearance) {
+              const timestamp = elapsedRef.current;
+              setLiveAppearance({
+                ...appearanceResult.appearance,
+                grooming: { ...appearanceResult.appearance.grooming, t: timestamp },
+                hair: { ...appearanceResult.appearance.hair, t: timestamp },
+                attire: { ...appearanceResult.appearance.attire, t: timestamp },
+              });
+            } else {
+              setLiveAppearanceError(appearanceResult.message ?? "Appearance could not be assessed.");
+            }
+          } catch (error) {
+            if (!cancelled) {
+              setLiveAppearanceStatus("analysis_failed");
+              setLiveAppearanceError(
+                error instanceof Error ? error.message : "Appearance analysis failed.",
+              );
+            }
+          }
+        }
+
         const result = await coachPresenceNow({
           data: {
             dataUrl: frame,
@@ -554,18 +615,18 @@ function InterviewRoom() {
       window.clearTimeout(first);
       window.clearInterval(id);
     };
-  }, [camOn, config, vision, flagIntegrity, escalate]);
+  }, [camOn, config, cloudMediaAnalysisConsent, flagIntegrity, escalate]);
 
   // Groq vision phone check: samples a frame every ~6s while the candidate is
   // in the interview, on top of the continuous on-device object detector.
   useEffect(() => {
-    if (!camOn || !config) return;
+    if (!camOn || !config || !cloudMediaAnalysisConsent) return;
     let cancelled = false;
     let checking = false;
     async function checkPhone() {
       if (checking) return;
       checking = true;
-      const frame = vision.getSnapshot();
+      const frame = await visionApiRef.current.captureSnapshotNow();
       if (!frame) {
         checking = false;
         return;
@@ -601,11 +662,11 @@ function InterviewRoom() {
       cancelled = true;
       window.clearInterval(id);
     };
-  }, [camOn, config, vision, flagIntegrity, escalate]);
+  }, [camOn, config, cloudMediaAnalysisConsent, flagIntegrity, escalate]);
 
   // Rolling ~10s audio chunks while answering, checked for music/second voice.
   useEffect(() => {
-    if (!recorder.recording) return;
+    if (!recorder.recording || !cloudMediaAnalysisConsent) return;
     const stream = liveStream;
     if (!stream || !stream.getAudioTracks().length || typeof MediaRecorder === "undefined") return;
     let cancelled = false;
@@ -684,10 +745,10 @@ function InterviewRoom() {
         /* already stopped */
       }
     };
-  }, [recorder.recording, liveStream, flagIntegrity, escalate]);
+  }, [recorder.recording, liveStream, cloudMediaAnalysisConsent, flagIntegrity, escalate]);
 
   const persist = useCallback(
-    (allTurns: Turn[], completed: boolean) => {
+    (allTurns: Turn[], completed: boolean, syncRemote = true) => {
       if (!config) return;
       const session: InterviewSession = {
         id: sessionId,
@@ -697,6 +758,10 @@ function InterviewRoom() {
         turns: allTurns,
         vision: vision.summarize(),
         voice,
+        cloudMediaAnalysisConsent,
+        liveAppearance,
+        liveAppearanceStatus,
+        liveAppearanceError,
         report: undefined,
         snapshot: vision.getSnapshot(),
         coaching,
@@ -711,7 +776,7 @@ function InterviewRoom() {
       saveSession(session);
 
            // Sync interview to MongoDB if user is logged in
-      if (user?.email) {
+      if (syncRemote && user?.email) {
         const mongoInterview = {
           sessionId,
           email: user.email,
@@ -763,8 +828,33 @@ function InterviewRoom() {
         void syncInterviewToMongoDB(mongoInterview);
       }
     },
-    [config, sessionId, elapsed, vision, voice, coaching, proctor, detection, endReason, lastVisionResult, user],
+    [
+      config,
+      sessionId,
+      elapsed,
+      vision,
+      voice,
+      cloudMediaAnalysisConsent,
+      liveAppearance,
+      liveAppearanceStatus,
+      liveAppearanceError,
+      coaching,
+      proctor,
+      detection,
+      endReason,
+      lastVisionResult,
+      user,
+    ],
   );
+
+  const persistLiveRef = useRef<() => void>(() => undefined);
+  persistLiveRef.current = () => persist(turns, false, false);
+
+  useEffect(() => {
+    if (!config) return;
+    const id = window.setInterval(() => persistLiveRef.current(), 3000);
+    return () => window.clearInterval(id);
+  }, [config]);
 
   const submitAnswer = useCallback(
     async (text: string) => {
@@ -806,7 +896,7 @@ function InterviewRoom() {
           "Interview ended — a second voice kept answering after two warnings.",
         );
       }
-      if (result.audioBlob) {
+          if (result.audioBlob && cloudMediaAnalysisConsent) {
         void (async () => {
           try {
             const audioBase64 = await blobToBase64(result.audioBlob!);
@@ -973,6 +1063,16 @@ function InterviewRoom() {
               <Circle className="h-2 w-2 fill-destructive text-destructive" />
               {formatTime(elapsed)}
             </span>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => {
+                persist(turns, false, false);
+                window.open(`/interviewer/report/${sessionId}`, "_blank", "noopener,noreferrer");
+              }}
+            >
+              Live report
+            </Button>
             <Button variant="destructive" size="sm" onClick={() => void endInterview()}>
               <PhoneOff className="mr-1.5 h-3.5 w-3.5" /> End & report
             </Button>
@@ -1161,6 +1261,9 @@ function InterviewRoom() {
         <aside className="flex min-w-0 flex-col gap-5">
           <PresenceCoach
             events={coaching}
+            appearance={liveAppearance}
+            appearanceStatus={liveAppearanceStatus}
+            appearanceError={liveAppearanceError}
             checking={coachChecking}
             enabled={camOn}
             lastCaptureAt={lastPresenceCaptureAt}
@@ -1204,6 +1307,21 @@ function InterviewRoom() {
               <Metric icon={Mic} label="Pace" value={voice.wordsPerMinute} suffix=" wpm" />
               <Metric icon={Activity} label="Fillers" value={voice.fillerWords} />
             </div>
+            <div className="mt-3 grid grid-cols-2 gap-2 text-[11px]">
+              <div className="rounded-lg bg-secondary/35 px-3 py-2">
+                Camera access:{" "}
+                <span className="font-semibold">{cameraStatus.replaceAll("_", " ")}</span>
+              </div>
+              <div className="rounded-lg bg-secondary/35 px-3 py-2">
+                Microphone:{" "}
+                <span className="font-semibold">{micStatus.replaceAll("_", " ")}</span>
+              </div>
+            </div>
+            {mediaError && <p className="mt-2 text-xs text-warning">{mediaError}</p>}
+            <p className="mt-3 text-[11px] text-muted-foreground">
+              Live AI checks are active. Camera and microphone samples may be sent to the configured
+              provider.
+            </p>
             {!camOn && (
               <p className="mt-3 text-xs text-muted-foreground">
                 Camera off — presence analytics are disabled for this session.
