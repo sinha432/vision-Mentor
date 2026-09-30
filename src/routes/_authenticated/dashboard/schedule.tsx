@@ -20,6 +20,11 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 import { getCompanyProfile } from "@/lib/assessments-data";
+import {
+  deleteScheduledInterviewFromMongoDB,
+  fetchScheduledInterviewsFromMongoDB,
+  syncScheduledInterviewToMongoDB,
+} from "@/lib/mongodb-sync";
 
 export const Route = createFileRoute(
   "/_authenticated/dashboard/schedule",
@@ -82,8 +87,12 @@ const WEEKDAYS = [
 ];
 
 function getCompanyStorageKey(): string {
+  return `${STORAGE_PREFIX}:${getCompanyId()}`;
+}
+
+function getCompanyId(): string {
   if (typeof window === "undefined") {
-    return STORAGE_PREFIX;
+    return "default-company";
   }
 
   try {
@@ -101,14 +110,13 @@ function getCompanyStorageKey(): string {
       role?: string;
     };
 
-    const companyId =
+    return (
       user.id ||
       user.email ||
-      "default-company";
-
-    return `${STORAGE_PREFIX}:${companyId}`;
+      "default-company"
+    );
   } catch {
-    return STORAGE_PREFIX;
+    return "default-company";
   }
 }
 
@@ -475,15 +483,56 @@ function ScheduleInterviewPage() {
       );
     });
 
-    const loaded =
-      readInterviews();
+  }, []);
 
-    setScheduled(loaded);
-
+  useEffect(() => {
     if (browserRemindersEnabled) {
       requestBrowserNotificationPermission();
     }
   }, [browserRemindersEnabled]);
+
+  useEffect(() => {
+    const companyUserId = getCompanyId();
+    let active = true;
+
+    const loadInterviews = async () => {
+      const remoteInterviews =
+        await fetchScheduledInterviewsFromMongoDB<ScheduledInterview>(companyUserId);
+
+      if (!active) return;
+
+      if (remoteInterviews === null) {
+        setScheduled(readInterviews());
+        return;
+      }
+
+      if (remoteInterviews.length === 0) {
+        const legacyInterviews = readInterviews();
+        if (legacyInterviews.length > 0) {
+          const migrated = await Promise.all(
+            legacyInterviews.map((interview) =>
+              syncScheduledInterviewToMongoDB(companyUserId, interview),
+            ),
+          );
+          if (!active) return;
+          if (migrated.every(Boolean)) {
+            saveInterviews(legacyInterviews);
+            setScheduled(legacyInterviews);
+            return;
+          }
+        }
+      }
+
+      saveInterviews(remoteInterviews);
+      setScheduled(remoteInterviews);
+    };
+
+    void loadInterviews();
+
+    return () => {
+      active = false;
+    };
+  }, []);
 
   /*
    * Check scheduled interviews every
@@ -538,6 +587,14 @@ function ScheduleInterviewPage() {
         if (changed) {
           saveInterviews(updated);
           setScheduled(updated);
+          const newlyNotified = updated.filter(
+            (interview, index) => interview.notified && !current[index]?.notified,
+          );
+          void Promise.all(
+            newlyNotified.map((interview) =>
+              syncScheduledInterviewToMongoDB(getCompanyId(), interview),
+            ),
+          );
           setNotificationTick(
             (value) => value + 1,
           );
@@ -938,6 +995,13 @@ function ScheduleInterviewPage() {
 
     saveInterviews(updated);
     setScheduled(updated);
+    const mongoSynced = await syncScheduledInterviewToMongoDB(
+      getCompanyId(),
+      interview,
+    );
+    if (!mongoSynced) {
+      toast.warning("Interview saved locally, but MongoDB sync failed.");
+    }
 
     if (notificationsEnabled && browserRemindersEnabled) {
       requestBrowserNotificationPermission();
@@ -1032,7 +1096,16 @@ function ScheduleInterviewPage() {
 
   const removeInterview =
     useCallback(
-      (id: string) => {
+      async (id: string) => {
+        const deleted = await deleteScheduledInterviewFromMongoDB(
+          getCompanyId(),
+          id,
+        );
+        if (!deleted) {
+          toast.error("Could not delete this interview from MongoDB.");
+          return;
+        }
+
         const updated =
           scheduled.filter(
             (interview) =>

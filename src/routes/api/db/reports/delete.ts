@@ -1,5 +1,6 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { deleteIndividualReports } from "@/lib/mongodb.server";
+import { getAuthSession } from "@/lib/auth-session.server";
 
 export const Route = createFileRoute("/api/db/reports/delete")({
   server: {
@@ -15,6 +16,11 @@ export const Route = createFileRoute("/api/db/reports/delete")({
               status: 400,
               headers: { "Content-Type": "application/json" },
             });
+          }
+
+          const session = getAuthSession(request);
+          if (!session || session.role !== "individual" || session.id !== body.individualUserId) {
+            return Response.json({ error: "Individual session required" }, { status: 403 });
           }
 
           const result = await deleteIndividualReports(

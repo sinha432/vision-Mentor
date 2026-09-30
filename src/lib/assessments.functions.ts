@@ -6,9 +6,14 @@
 // server is AI grading, because the model key must stay server-side.
 
 import { z } from "zod";
-import { newId, type StoredReport } from "./assessment-types";
+import {
+  newId,
+  type StoredAssessment,
+  type StoredReport,
+} from "./assessment-types";
 import {
   deleteAssessmentLocal,
+  deleteAttemptLocal,
   deleteCandidateLocal,
   deleteIndividualReportsLocal,
   findUserById,
@@ -27,10 +32,14 @@ import {
   deleteAssessmentFromMongoDB,
   deleteCandidateFromMongoDB,
   deleteIndividualReportsFromMongoDB,
+  fetchAssessmentReportFromMongoDB,
   fetchAssessmentFromMongoDB,
+  fetchCompanyAssessmentSubmissionsFromMongoDB,
   fetchCompanyAssessmentsFromMongoDB,
   fetchUserFromMongoDB,
+  hasAssessmentSubmissionInMongoDB,
   syncAssessmentSubmissionToMongoDB,
+  updateAssessmentStatusInMongoDB,
 } from "./mongodb-sync";
 
 const choiceSchema = z.object({ id: z.string().min(1), text: z.string().trim().min(1).max(300) });
@@ -100,6 +109,33 @@ function identityFor(userId: string): { name: string; email: string } {
   return u ? { name: u.name, email: u.email } : { name: "Unknown candidate", email: "" };
 }
 
+function normalizeRemoteAssessment(assessment: any): StoredAssessment {
+  return {
+    ...assessment,
+    _id: String(assessment._id ?? assessment.code),
+    status: assessment.status === "archived" ? "closed" : assessment.status,
+  } as StoredAssessment;
+}
+
+async function companyAssessmentData(companyUserId: string) {
+  const [remoteAssessments, remoteSubmissions] = await Promise.all([
+    fetchCompanyAssessmentsFromMongoDB(companyUserId),
+    fetchCompanyAssessmentSubmissionsFromMongoDB(companyUserId),
+  ]);
+
+  const assessments = remoteAssessments === null
+    ? readAssessments().filter((assessment) => assessment.companyUserId === companyUserId)
+    : remoteAssessments
+        .filter((assessment) => assessment?.companyUserId === companyUserId && Array.isArray(assessment.questions))
+        .map(normalizeRemoteAssessment);
+
+  return {
+    assessments,
+    attempts: remoteSubmissions?.attempts ?? readAttempts(),
+    reports: remoteSubmissions?.reports ?? readReports(),
+  };
+}
+
 export async function createAssessment({ data }: { data: unknown }) {
   const input = createSchema.parse(data);
   return insertAssessment({
@@ -113,59 +149,63 @@ export async function createAssessment({ data }: { data: unknown }) {
 
 export async function listCompanyAssessments({ data }: { data: unknown }) {
   const { companyUserId } = z.object({ companyUserId: z.string().min(1) }).parse(data);
-  const local = readAssessments().filter((a) => a.companyUserId === companyUserId);
-  let remote: any[] = [];
-  try {
-    remote = await fetchCompanyAssessmentsFromMongoDB(companyUserId);
-  } catch {
-    // Local assessments must remain visible when MongoDB is unavailable.
-  }
-  const merged = new Map<string, (typeof local)[number]>();
-  local.forEach((assessment) => merged.set(assessment.code, assessment));
-  remote.forEach((assessment) => {
-    if (!assessment?.code || assessment.companyUserId !== companyUserId || !Array.isArray(assessment.questions)) return;
-    merged.set(assessment.code, {
-      ...assessment,
-      _id: String(assessment._id ?? assessment.code),
-      status: assessment.status === "archived" ? "closed" : assessment.status,
-    } as (typeof local)[number]);
-  });
-  const mine = [...merged.values()];
-  const attempts = readAttempts();
-  const reports = readReports();
-  return mine.map((a) => {
-    const mineAttempts = attempts.filter((t) => t.assessmentId === a._id);
-    const scores = mineAttempts
-      .map((t) => reports.find((r) => r.attemptId === t._id)?.overallScore)
+  const { assessments, attempts, reports } = await companyAssessmentData(companyUserId);
+  return assessments.map((assessment) => {
+    const assessmentAttempts = attempts.filter(
+      (attempt) => attempt.assessmentId === assessment._id || attempt.assessmentId === assessment.code,
+    );
+    const attemptIds = new Set(assessmentAttempts.map((attempt) => String(attempt._id)));
+    const scores = reports
+      .filter((report) => attemptIds.has(String(report.attemptId)))
+      .map((report) => report.overallScore)
       .filter((s): s is number => typeof s === "number");
     const avgScore = scores.length ? Math.round(scores.reduce((s, x) => s + x, 0) / scores.length) : null;
-    return { ...a, attemptCount: mineAttempts.length, avgScore };
+    return {
+      ...assessment,
+      attemptCount: assessmentAttempts.length,
+      uniqueCandidateCount: new Set(assessmentAttempts.map((attempt) => attempt.individualUserId)).size,
+      avgScore,
+    };
   });
 }
 
 export async function getAssessmentByCode({ data }: { data: unknown }) {
   const { code } = z.object({ code: z.string().trim().min(1) }).parse(data);
-  const local = readAssessments().find((a) => a.code.toUpperCase() === code.toUpperCase());
-  if (local) return local;
-
   const shared = await fetchAssessmentFromMongoDB(code.toUpperCase());
-  if (!shared) return null;
+  if (shared !== undefined) {
+    return shared
+      ? normalizeRemoteAssessment(shared)
+      : null;
+  }
 
-  return {
-    ...shared,
-    status: shared.status === "archived" ? "closed" : shared.status,
-  };
+  return readAssessments().find((assessment) =>
+    assessment.code.toUpperCase() === code.toUpperCase(),
+  ) ?? null;
 }
 
 export async function hasIndividualAttempt({ data }: { data: unknown }) {
   const input = z
-    .object({ assessmentId: z.string().min(1), individualUserId: z.string().min(1) })
+    .object({
+      assessmentId: z.string().min(1),
+      individualUserId: z.string().min(1),
+      code: z.string().min(1).optional(),
+    })
     .parse(data);
-  return readAttempts().some(
+  const localMatch = readAttempts().some(
     (attempt) =>
       attempt.assessmentId === input.assessmentId &&
       attempt.individualUserId === input.individualUserId,
   );
+  const assessmentCode = input.code ?? readAssessments().find(
+    (assessment) => assessment._id === input.assessmentId,
+  )?.code;
+  if (!assessmentCode) return localMatch;
+
+  const remoteMatch = await hasAssessmentSubmissionInMongoDB(
+    assessmentCode,
+    input.individualUserId,
+  );
+  return remoteMatch ?? localMatch;
 }
 
 export async function setAssessmentStatus({ data }: { data: unknown }) {
@@ -173,12 +213,30 @@ export async function setAssessmentStatus({ data }: { data: unknown }) {
     .object({
       assessmentId: z.string().min(1),
       companyUserId: z.string().min(1),
+      code: z.string().min(1).optional(),
       status: z.enum(["active", "closed"]),
     })
     .parse(data);
   const a = readAssessments().find((x) => x._id === input.assessmentId);
-  if (!a || a.companyUserId !== input.companyUserId) throw new Error("Not authorized");
-  return setAssessmentStatusLocal(input.assessmentId, input.status);
+  if (a && a.companyUserId !== input.companyUserId) throw new Error("Not authorized");
+  const code = input.code ?? a?.code;
+  if (!code) throw new Error("Assessment not found");
+
+  const updated = await updateAssessmentStatusInMongoDB(
+    code,
+    input.companyUserId,
+    input.status,
+  );
+  if (!updated) throw new Error("MongoDB did not confirm the assessment status update");
+
+  return a
+    ? setAssessmentStatusLocal(input.assessmentId, input.status)
+    : {
+        _id: input.assessmentId,
+        companyUserId: input.companyUserId,
+        code,
+        status: input.status,
+      };
 }
 
 export async function deleteAssessment({ data }: { data: unknown }) {
@@ -220,7 +278,7 @@ export async function submitAttempt({ data }: { data: unknown }) {
     })
     .parse(data);
 
-  const assessment = readAssessments().find((a) => a.code.toUpperCase() === input.code.toUpperCase());
+  const assessment = await getAssessmentByCode({ data: { code: input.code } });
   if (!assessment) throw new Error("Assessment not found");
   if (assessment.status === "closed") {
     throw new Error("This assessment is closed and no longer accepting submissions.");
@@ -230,7 +288,13 @@ export async function submitAttempt({ data }: { data: unknown }) {
   if (!candidate || candidate.role !== "individual" || String(candidate._id ?? candidate.id ?? candidate.email) !== input.individualUserId) {
     throw new Error("Only a registered individual user can submit this assessment.");
   }
-  if (readAttempts().some((attempt) => attempt.assessmentId === assessment._id && attempt.individualUserId === input.individualUserId)) {
+  if (await hasIndividualAttempt({
+    data: {
+      assessmentId: assessment._id,
+      individualUserId: input.individualUserId,
+      code: assessment.code,
+    },
+  })) {
     throw new Error("You have already submitted this assessment.");
   }
 
@@ -283,7 +347,14 @@ export async function submitAttempt({ data }: { data: unknown }) {
     vision: input.vision,
   });
 
-  await syncAssessmentSubmissionToMongoDB(attempt, report);
+  const synced = await syncAssessmentSubmissionToMongoDB(attempt, report);
+  if (!synced) {
+    deleteAttemptLocal(attempt._id);
+    if (await hasAssessmentSubmissionInMongoDB(assessment.code, input.individualUserId)) {
+      throw new Error("You have already submitted this assessment.");
+    }
+    throw new Error("Your submission could not be saved to MongoDB. Please try again.");
+  }
 
   return { attemptId: attempt._id, reportId: report._id };
 }
@@ -293,15 +364,18 @@ export async function rescoreAssessmentAttempts({ data }: { data: unknown }) {
     .object({ assessmentId: z.string().min(1), companyUserId: z.string().min(1) })
     .parse(data);
 
-  const assessment = readAssessments().find((a) => a._id === input.assessmentId);
+  const { assessments, attempts: allAttempts, reports } =
+    await companyAssessmentData(input.companyUserId);
+  const assessment = assessments.find((item) => item._id === input.assessmentId);
   if (!assessment || assessment.companyUserId !== input.companyUserId) throw new Error("Not authorized");
 
-  const attempts = readAttempts().filter((t) => t.assessmentId === assessment._id);
-  const reports = readReports();
+  const attempts = allAttempts.filter(
+    (attempt) => attempt.assessmentId === assessment._id || attempt.assessmentId === assessment.code,
+  );
   const results: { attemptId: string; reportId: string; before: number; after: number }[] = [];
 
   for (const attempt of attempts) {
-    const report = reports.find((r) => r.attemptId === attempt._id);
+    const report = reports.find((item) => String(item.attemptId) === String(attempt._id));
     if (!report) continue;
     const before = report.overallScore;
 
@@ -339,8 +413,14 @@ export async function rescoreAssessmentAttempts({ data }: { data: unknown }) {
     });
 
     const after = weightedOverall(per.map((p) => ({ score: p.score, weight: p.weight })));
-    updateReportLocal(report._id, { perQuestionFeedback: per, overallScore: after });
-    results.push({ attemptId: attempt._id, reportId: report._id, before, after });
+    const updatedReport = { ...report, perQuestionFeedback: per, overallScore: after };
+    const synced = await syncAssessmentSubmissionToMongoDB(attempt, updatedReport);
+    if (!synced) throw new Error("Could not save rescored report to MongoDB");
+
+    if (readReports().some((item) => item._id === report._id)) {
+      updateReportLocal(String(report._id), { perQuestionFeedback: per, overallScore: after });
+    }
+    results.push({ attemptId: String(attempt._id), reportId: String(report._id), before, after });
   }
 
   return { rescored: results.length, results };
@@ -400,21 +480,22 @@ export async function listAssessmentAttempts({ data }: { data: unknown }) {
   const input = z
     .object({ assessmentId: z.string().min(1), companyUserId: z.string().min(1) })
     .parse(data);
-  const a = readAssessments().find((x) => x._id === input.assessmentId);
+  const { assessments, attempts: allAttempts, reports } =
+    await companyAssessmentData(input.companyUserId);
+  const a = assessments.find((assessment) => assessment._id === input.assessmentId);
   if (!a || a.companyUserId !== input.companyUserId) throw new Error("Not authorized");
-  const reports = readReports();
-  const attempts = readAttempts()
-    .filter((t) => t.assessmentId === a._id)
+  const attempts = allAttempts
+    .filter((attempt) => attempt.assessmentId === a._id || attempt.assessmentId === a.code)
     .map((t) => {
-      const r = reports.find((x) => x.attemptId === t._id);
+      const r = reports.find((report) => String(report.attemptId) === String(t._id));
       const candidate = identityFor(t.individualUserId);
       return {
-        attemptId: t._id,
+        attemptId: String(t._id),
         individualUserId: t.individualUserId,
         candidateName: t.candidateName?.trim() || candidate.name || "Unknown candidate",
         candidateEmail: t.candidateEmail?.trim() || candidate.email || "",
         submittedAt: t.submittedAt,
-        reportId: r?._id ?? null,
+        reportId: r?._id ? String(r._id) : null,
         overallScore: r?.overallScore ?? 0,
       };
     })
@@ -424,10 +505,13 @@ export async function listAssessmentAttempts({ data }: { data: unknown }) {
 
 export async function listCompanyCandidates({ data }: { data: unknown }) {
   const { companyUserId } = z.object({ companyUserId: z.string().min(1) }).parse(data);
-  const mine = readAssessments().filter((a) => a.companyUserId === companyUserId);
+  const { assessments: mine, attempts: allAttempts, reports } =
+    await companyAssessmentData(companyUserId);
   const mineIds = new Set(mine.map((a) => a._id));
-  const reports = readReports();
-  const relevant = readAttempts().filter((t) => mineIds.has(t.assessmentId));
+  const mineCodes = new Set(mine.map((assessment) => assessment.code));
+  const relevant = allAttempts.filter(
+    (attempt) => mineIds.has(attempt.assessmentId) || mineCodes.has(attempt.assessmentId),
+  );
 
   const byCandidate = new Map<string, typeof relevant>();
   for (const t of relevant) {
@@ -444,7 +528,9 @@ export async function listCompanyCandidates({ data }: { data: unknown }) {
       const candidateName = latestAttempt?.candidateName?.trim() || identity.name || "Unknown candidate";
       const candidateEmail = latestAttempt?.candidateEmail?.trim() || identity.email || "";
       const scores = list
-        .map((t) => reports.find((r) => r.attemptId === t._id)?.overallScore)
+        .map((attempt) =>
+          reports.find((report) => String(report.attemptId) === String(attempt._id))?.overallScore,
+        )
         .filter((s): s is number => typeof s === "number");
       return {
         individualUserId: userId,
@@ -455,10 +541,23 @@ export async function listCompanyCandidates({ data }: { data: unknown }) {
         bestScore: scores.length ? Math.max(...scores) : null,
         lastSubmittedAt: sorted[0]?.submittedAt ?? "",
         assessments: [
-          ...new Set(sorted.map((t) => mine.find((a) => a._id === t.assessmentId)?.title ?? "Untitled")),
+          ...new Set(
+            sorted.map((attempt) =>
+              mine.find(
+                (assessment) =>
+                  assessment._id === attempt.assessmentId ||
+                  assessment.code === attempt.assessmentId,
+              )?.title ?? "Untitled",
+            ),
+          ),
         ],
         latestReportId:
-          sorted.map((t) => reports.find((r) => r.attemptId === t._id)?._id ?? null).find((id): id is string => Boolean(id)) ??
+          sorted
+            .map((attempt) =>
+              reports.find((report) => String(report.attemptId) === String(attempt._id))?._id ?? null,
+            )
+            .find((id): id is string => Boolean(id))
+            ?.toString() ??
           null,
       };
     })
@@ -472,28 +571,29 @@ export async function deleteCompanyCandidate({ data }: { data: unknown }) {
       individualUserId: z.string().min(1),
     })
     .parse(data);
-  const mine = readAssessments().filter((assessment) => assessment.companyUserId === input.companyUserId);
+  const { assessments: mine } = await companyAssessmentData(input.companyUserId);
   const assessmentIds = new Set(mine.map((assessment) => assessment._id));
-  const hasCandidateAttempt = readAttempts().some(
-    (attempt) =>
-      attempt.individualUserId === input.individualUserId &&
-      assessmentIds.has(attempt.assessmentId),
-  );
-
   const mongoDeleted = await deleteCandidateFromMongoDB(
     input.individualUserId,
     input.companyUserId,
   );
-
-  if (hasCandidateAttempt) {
-    deleteCandidateLocal(input.individualUserId, assessmentIds);
+  if (!mongoDeleted) {
+    throw new Error("MongoDB did not confirm candidate deletion. No local data was removed.");
   }
+
+  deleteCandidateLocal(input.individualUserId, assessmentIds);
 
   return { ok: true, mongoDeleted };
 }
 
 export async function getReport({ data }: { data: unknown }) {
   const input = z.object({ reportId: z.string().min(1), userId: z.string().min(1) }).parse(data);
+  const remote = await fetchAssessmentReportFromMongoDB(input.reportId, input.userId);
+  if (remote !== undefined) {
+    if (!remote) throw new Error("Report not found");
+    return remote;
+  }
+
   const report = readReports().find((r) => r._id === input.reportId);
   if (!report) throw new Error("Report not found");
   const attempt = readAttempts().find((t) => t._id === report.attemptId);

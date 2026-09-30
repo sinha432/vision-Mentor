@@ -42,6 +42,9 @@ function AttemptsPage() {
   const { data: attempts = [] } = useQuery({
     queryKey: ["assessment-attempts", code],
     queryFn: () => listAssessmentAttempts({ code }),
+    refetchInterval: 5_000,
+    refetchIntervalInBackground: false,
+    refetchOnWindowFocus: true,
   });
 
   const rescoreMutation = useMutation({
@@ -54,6 +57,7 @@ function AttemptsPage() {
       );
       void queryClient.invalidateQueries({ queryKey: ["assessment-attempts", code] });
       void queryClient.invalidateQueries({ queryKey: ["company-assessments"] });
+      void queryClient.invalidateQueries({ queryKey: ["company-candidates"] });
     },
     onError: (e: any) => toast.error(e?.message ?? "Could not re-score"),
   });
@@ -62,6 +66,9 @@ function AttemptsPage() {
     name: a.candidateName,
     score: a.score,
   }));
+  const uniqueCandidates = new Set(
+    attempts.map((attempt) => attempt.individualUserId),
+  ).size;
 
   return (
     <div className="mx-auto w-full max-w-5xl space-y-8">
@@ -91,8 +98,7 @@ function AttemptsPage() {
           Attempts
         </h1>
         <p className="text-sm text-muted-foreground">
-          Share code <span className="font-mono text-primary">{code}</span> ·{" "}
-          {attempts.length} attempts
+          Share code <span className="font-mono text-primary">{code}</span> · {uniqueCandidates} candidates · {attempts.length} attempts
         </p>
       </header>
 

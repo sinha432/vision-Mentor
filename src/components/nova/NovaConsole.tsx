@@ -1,4 +1,4 @@
-import { useCallback, useRef, useState, type FormEvent } from "react";
+import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
 import { useNavigate } from "@tanstack/react-router";
 import { useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
@@ -23,6 +23,10 @@ import {
 import type { CompanyNovaCommand } from "@/lib/nova/company-command";
 
 import { createAssessment } from "@/lib/assessments.functions";
+import {
+  fetchScheduledInterviewsFromMongoDB,
+  syncScheduledInterviewToMongoDB,
+} from "@/lib/mongodb-sync";
 
 import { useNovaSenses } from "@/hooks/use-nova-senses";
 
@@ -182,6 +186,47 @@ export function NovaConsole({
         return [];
       }
     });
+
+  useEffect(() => {
+    let active = true;
+    const companyId = companyUserId.trim();
+
+    const loadInterviews = async () => {
+      const remoteInterviews =
+        await fetchScheduledInterviewsFromMongoDB<ScheduledInterview>(companyId);
+      if (!active || remoteInterviews === null) return;
+
+      const storageKey =
+        `${SCHEDULED_INTERVIEWS_KEY_PREFIX}:${companyId}`;
+      let localInterviews: ScheduledInterview[] = [];
+      try {
+        const stored = window.localStorage.getItem(storageKey);
+        const parsed: unknown = stored ? JSON.parse(stored) : [];
+        localInterviews = Array.isArray(parsed) ? parsed : [];
+      } catch {
+        localInterviews = [];
+      }
+
+      let interviews = remoteInterviews;
+      if (remoteInterviews.length === 0 && localInterviews.length > 0) {
+        const migrated = await Promise.all(
+          localInterviews.map((interview) =>
+            syncScheduledInterviewToMongoDB(companyId, interview),
+          ),
+        );
+        if (migrated.every(Boolean)) interviews = localInterviews;
+      }
+
+      if (!active) return;
+      setScheduledInterviews(interviews);
+      window.localStorage.setItem(storageKey, JSON.stringify(interviews));
+    };
+
+    void loadInterviews();
+    return () => {
+      active = false;
+    };
+  }, [companyUserId]);
 
   const [candidateName, setCandidateName] =
     useState("");
@@ -510,6 +555,15 @@ export function NovaConsole({
 
       setScheduledInterviews(next);
 
+      void syncScheduledInterviewToMongoDB(
+        companyUserId.trim(),
+        interview,
+      ).then((synced) => {
+        if (!synced) {
+          toast.warning("Interview saved locally, but MongoDB sync failed.");
+        }
+      });
+
       try {
         const storageKey =
           `${SCHEDULED_INTERVIEWS_KEY_PREFIX}:${companyUserId.trim()}`;
@@ -552,6 +606,7 @@ export function NovaConsole({
       interviewDuration,
       interviewNotes,
       scheduledInterviews,
+      companyUserId,
     ],
   );
 

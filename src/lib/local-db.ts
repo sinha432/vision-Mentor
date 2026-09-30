@@ -263,6 +263,17 @@ export function insertReport(r: Omit<StoredReport, "_id" | "createdAt">): Stored
   return rec;
 }
 
+export function deleteAttemptLocal(attemptId: string): void {
+  write(
+    KEYS.attempts,
+    readAttempts().filter((attempt) => attempt._id !== attemptId),
+  );
+  write(
+    KEYS.reports,
+    readReports().filter((report) => report.attemptId !== attemptId),
+  );
+}
+
 export function updateReportLocal(
   id: string,
   patch: Partial<Omit<StoredReport, "_id" | "createdAt">>,

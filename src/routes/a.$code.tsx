@@ -333,7 +333,11 @@ function AssessmentPage() {
         throw new Error("The name must exactly match your registered individual account.");
       }
       const alreadyAttempted = await hasIndividualAttempt({
-        data: { assessmentId: assessment?._id, individualUserId: authenticated.id },
+        data: {
+          assessmentId: assessment?._id,
+          individualUserId: authenticated.id,
+          code: assessment?.code,
+        },
       });
       if (alreadyAttempted) {
         throw new Error("You have already submitted this assessment. Open your reports to view the result.");

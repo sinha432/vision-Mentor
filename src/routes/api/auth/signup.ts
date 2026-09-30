@@ -4,6 +4,7 @@ import {
   type StoredUser,
 } from "@/lib/mongodb.server";
 import { hashPassword } from "@/lib/auth-password";
+import { createSessionCookie } from "@/lib/auth-session.server";
 
 export const Route = createFileRoute("/api/auth/signup")({
   server: {
@@ -25,7 +26,7 @@ export const Route = createFileRoute("/api/auth/signup")({
               ? body.password
               : "";
 
-          const role =
+          const role: "company" | "individual" =
             body.role === "company"
               ? "company"
               : "individual";
@@ -105,17 +106,22 @@ export const Route = createFileRoute("/api/auth/signup")({
             updatedAt: now,
           });
 
+          const authenticatedUser = {
+            id: result.insertedId.toString(),
+            email,
+            name,
+            role,
+          };
+
           return Response.json(
             {
               success: true,
-              user: {
-                id: result.insertedId.toString(),
-                email,
-                name,
-                role,
-              },
+              user: authenticatedUser,
             },
-            { status: 201 },
+            {
+              status: 201,
+              headers: { "Set-Cookie": createSessionCookie(authenticatedUser) },
+            },
           );
         } catch (error) {
           console.error("Signup error:", error);
