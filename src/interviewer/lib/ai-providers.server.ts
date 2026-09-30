@@ -42,7 +42,7 @@ export const PROVIDER_SPECS: ProviderSpec[] = [
     keyUrl: "https://console.groq.com/keys",
     baseURL: "https://api.groq.com/openai/v1",
     textModel: "openai/gpt-oss-120b",
-    visionModel: "meta-llama/llama-4-scout-17b-16e-instruct",
+    visionModel: "qwen/qwen3.8-27b",
     modelEnv: "GROQ_MODEL",
     supportsVision: true,
     structuredOutputs: true,

@@ -20,11 +20,13 @@ export interface CompanyAssessment {
   status: AssessmentStatus;
   questionCount: number;
   attemptCount: number;
+  uniqueCandidateCount: number;
   avgScore: number;
 }
 
 export interface AssessmentAttempt {
   id: string;
+  individualUserId: string;
   candidateName: string;
   candidateEmail: string;
   submittedAt: string;
@@ -168,12 +170,14 @@ export async function listCompanyAssessments(): Promise<
     status: a.status,
     questionCount: Array.isArray(a.questions) ? a.questions.length : 0,
     attemptCount: a.attemptCount,
+    uniqueCandidateCount: a.uniqueCandidateCount,
     avgScore: a.avgScore ?? 0,
   }));
 }
 
 export async function setAssessmentStatus(input: {
   id: string;
+  code?: string;
   status: AssessmentStatus;
 }): Promise<void> {
   const companyUserId =
@@ -189,6 +193,7 @@ export async function setAssessmentStatus(input: {
     data: {
       assessmentId: input.id,
       companyUserId,
+      code: input.code,
       status: input.status,
     },
   });
@@ -246,6 +251,7 @@ export async function listAssessmentAttempts(
 
   return result.attempts.map((a) => ({
     id: a.attemptId,
+    individualUserId: a.individualUserId,
     candidateName: a.candidateName,
     candidateEmail: a.candidateEmail,
     submittedAt: a.submittedAt,

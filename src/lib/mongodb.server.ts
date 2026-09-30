@@ -112,6 +112,13 @@ export interface StoredInterview {
   updatedAt: string;
 }
 
+export interface StoredScheduledInterview {
+  _id?: ObjectId | string;
+  companyUserId: string;
+  id: string;
+  [key: string]: unknown;
+}
+
 export interface StoredAssessment {
   _id?: ObjectId | string;
 
@@ -346,6 +353,50 @@ export async function getUserInterviews(
     .toArray();
 }
 
+export async function saveScheduledInterview(
+  interview: StoredScheduledInterview,
+): Promise<StoredScheduledInterview> {
+  const collection =
+    await getCollection<StoredScheduledInterview>("scheduled_interviews");
+
+  const { _id, ...interviewFields } = interview;
+  const doc = {
+    ...interviewFields,
+    updatedAt: new Date().toISOString(),
+  };
+
+  await collection.updateOne(
+    { companyUserId: doc.companyUserId, id: doc.id },
+    { $set: doc },
+    { upsert: true },
+  );
+
+  return doc;
+}
+
+export async function getScheduledInterviews(
+  companyUserId: string,
+): Promise<StoredScheduledInterview[]> {
+  const collection =
+    await getCollection<StoredScheduledInterview>("scheduled_interviews");
+
+  return collection
+    .find({ companyUserId })
+    .sort({ createdAt: -1 })
+    .toArray();
+}
+
+export async function deleteScheduledInterview(
+  companyUserId: string,
+  id: string,
+): Promise<boolean> {
+  const collection =
+    await getCollection<StoredScheduledInterview>("scheduled_interviews");
+
+  const result = await collection.deleteOne({ companyUserId, id });
+  return result.deletedCount > 0;
+}
+
 // ============================================================
 // Assessment operations
 // ============================================================
@@ -392,6 +443,19 @@ export async function getCompanyAssessments(
     .find({ companyUserId })
     .sort({ createdAt: -1 })
     .toArray();
+}
+
+export async function updateAssessmentStatus(
+  code: string,
+  companyUserId: string,
+  status: "active" | "closed",
+): Promise<boolean> {
+  const collection = await getCollection<StoredAssessment>("assessments");
+  const result = await collection.updateOne(
+    { code, companyUserId },
+    { $set: { status: status === "closed" ? "archived" : "active" } },
+  );
+  return result.matchedCount > 0;
 }
 
 export async function deleteAssessment(
@@ -447,20 +511,127 @@ export async function deleteCandidateData(
 export async function saveAssessmentSubmission(
   attempt: Document,
   report: Document,
-): Promise<void> {
-  const attempts = await getCollection("attempts");
+): Promise<boolean> {
+  const attempts = await getCollection<Document>("attempts");
   const reports = await getCollection("reports");
 
-  await attempts.updateOne(
-    { _id: attempt._id },
-    { $set: attempt },
-    { upsert: true },
+  await attempts.createIndex(
+    { assessmentId: 1, individualUserId: 1 },
+    { unique: true, name: "assessment_candidate_unique" },
   );
+
+  const existing = await attempts.findOne({
+    assessmentId: attempt.assessmentId,
+    individualUserId: attempt.individualUserId,
+  });
+
+  if (existing && String(existing._id) !== String(attempt._id)) {
+    return false;
+  }
+
+  if (!existing) {
+    try {
+      await attempts.insertOne(attempt);
+    } catch (error) {
+      if (
+        error &&
+        typeof error === "object" &&
+        "code" in error &&
+        error.code === 11000
+      ) {
+        return false;
+      }
+      throw error;
+    }
+  }
+
   await reports.updateOne(
     { _id: report._id },
     { $set: report },
     { upsert: true },
   );
+  return true;
+}
+
+export async function getCompanyAssessmentSubmissions(
+  companyUserId: string,
+  code?: string,
+): Promise<{ attempts: Document[]; reports: Document[] }> {
+  const assessments = await getCollection<StoredAssessment>("assessments");
+  const ownedAssessments = await assessments
+    .find({ companyUserId, ...(code ? { code } : {}) })
+    .project({ _id: 1, code: 1 })
+    .toArray();
+
+  const assessmentIds = [
+    ...new Set(
+      ownedAssessments.flatMap((assessment) => [
+        String(assessment._id),
+        assessment.code,
+      ]),
+    ),
+  ];
+
+  if (!assessmentIds.length) {
+    return { attempts: [], reports: [] };
+  }
+
+  const attemptCollection = await getCollection<Document>("attempts");
+  const attempts = await attemptCollection
+    .find({ assessmentId: { $in: assessmentIds } })
+    .sort({ submittedAt: -1 })
+    .toArray();
+
+  const attemptIds = attempts.map((attempt) => String(attempt._id));
+  const reportCollection = await getCollection<Document>("reports");
+  const reports = attemptIds.length
+    ? await reportCollection
+        .find({ attemptId: { $in: attemptIds } })
+        .toArray()
+    : [];
+
+  return { attempts, reports };
+}
+
+export async function hasAssessmentSubmission(
+  code: string,
+  individualUserId: string,
+): Promise<boolean> {
+  const assessments = await getCollection<StoredAssessment>("assessments");
+  const assessment = await assessments.findOne({ code });
+  if (!assessment) return false;
+
+  const attempts = await getCollection<Document>("attempts");
+  const existing = await attempts.findOne({
+    assessmentId: { $in: [String(assessment._id), assessment.code] },
+    individualUserId,
+  });
+  return existing !== null;
+}
+
+export async function getAuthorizedAssessmentReport(
+  reportId: string,
+  userId: string,
+): Promise<{ report: Document; attempt: Document; assessment: StoredAssessment } | null> {
+  const reports = await getCollection<Document>("reports");
+  const report = await reports.findOne({ _id: reportId as unknown as ObjectId });
+  if (!report) return null;
+
+  const attempts = await getCollection<Document>("attempts");
+  const attempt = await attempts.findOne({ _id: report.attemptId as ObjectId });
+  if (!attempt) return null;
+
+  const assessments = await getCollection<StoredAssessment>("assessments");
+  const assessment = await assessments.findOne({
+    $or: [{ _id: attempt.assessmentId }, { code: attempt.assessmentId }],
+  });
+  if (!assessment) return null;
+
+  if (attempt.individualUserId !== userId && assessment.companyUserId !== userId) {
+    throw new Error("Not authorized to view this report");
+  }
+
+  return { report, attempt, assessment };
 }
 
 export async function deleteIndividualReports(

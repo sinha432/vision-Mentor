@@ -552,11 +552,13 @@ export class VisionDetector {
         ) {
           this.lastPose = now;
 
-          this.lastPoseResult =
-            this.pose.detectForVideo(
-              video,
-              now,
-            );
+         if (this.pose) {
+  this.lastPoseResult =
+    this.pose.detectForVideo(
+      video,
+      now,
+    );
+}
         }
 
         // ---------------------------------------------------------------------

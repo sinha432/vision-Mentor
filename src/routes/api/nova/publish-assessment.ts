@@ -3,6 +3,7 @@ import {
   saveAssessment,
   type StoredAssessment,
 } from "@/lib/mongodb.server";
+import { getAuthSession } from "@/lib/auth-session.server";
 
 type PublishQuestion = {
   id: string;
@@ -46,6 +47,11 @@ export const Route = createFileRoute(
                 },
               },
             );
+          }
+
+          const session = getAuthSession(request);
+          if (!session || session.role !== "company" || session.id !== body.companyUserId) {
+            return Response.json({ error: "Company session required" }, { status: 403 });
           }
 
           if (!body.title?.trim()) {

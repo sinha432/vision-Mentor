@@ -1,7 +1,15 @@
 import { z } from "zod";
 import { runStructured } from "./ai-providers.server";
 import { getCompany, getHiring } from "./companies";
-import type { FlagSeverity, InterviewConfig, InterviewPhase, Turn } from "./interview-types";
+import type {
+  AppearanceAnalysisResult,
+  AppearanceAssessment,
+  AppearanceReview,
+  FlagSeverity,
+  InterviewConfig,
+  InterviewPhase,
+  Turn,
+} from "./interview-types";
 import { deriveSeverity } from "./coach-priority";
 import {
   gradeMcq,
@@ -667,6 +675,7 @@ export async function generateReport(
       grammarNote: "",
       professionalismNote: "",
     } satisfies ReportRaw,
+    throwOnError: true,
   });
 
   const normalized = normalizeReport(raw, fallback, verifiedAverage, measured);
@@ -765,7 +774,6 @@ export interface BehaviourInput {
   proctor?: { kind: string; detail: string; severity?: string }[];
   warnings?: number;
   endedEarly?: boolean;
-  appearance?: { dress: string; hair: string } | null;
 }
 
 export type VoiceReportStatus =
@@ -909,6 +917,8 @@ function normalizeReport(
 }
 
 const resumeSchema = z.object({
+  isResume: z.boolean(),
+  rejectionReason: z.string(),
   name: z.string(),
   headline: z.string(),
   skills: z.array(z.string()),
@@ -940,19 +950,32 @@ export async function analyzeResumeText(text: string): Promise<ResumePayload> {
     gaps: [],
     atsScore: 0,
   };
+  const fallbackResult = {
+    ...fallback,
+    isResume: false,
+    rejectionReason:
+      "We could not verify that this document is a resume. Please upload a resume or CV.",
+  };
 
   const raw = await structured({
     schema: resumeSchema,
     system:
-      "You extract structured data from resumes for an interview platform. Never invent facts that are not in the resume. atsScore is an integer 0-100 for how well-structured and keyword-ready the resume is. Keep each list to at most 10 items.",
-    prompt: `Resume content:\n\n${text.slice(0, 24000)}`,
-    fallback,
+      "Review the supplied document line by line before extracting anything. First determine whether its overall content is a person's resume or CV. Do not rely on exact keywords or a fixed section order: accept varied headings, international formats, education-first and skills-based resumes, career changers, and plain-text or imperfectly extracted layouts. A resume should contain coherent evidence of an individual's background, such as work history, education, skills, projects, or achievements; it need not contain every section or contact details. Reject unrelated documents such as invoices, job descriptions, cover letters, certificates, transcripts, manuals, forms, and articles. If it is not a resume, set isResume to false and give a short, specific rejectionReason. If it is a resume, set isResume to true and leave rejectionReason empty. Extract only facts actually stated; never invent or infer missing details. atsScore is an integer 0-100 for resume structure and keyword readiness. Keep each list to at most 10 items.",
+    prompt: `Inspect the full supplied text and classify the document before extracting resume facts. Use the document's meaning and structure, not keyword counting.\n\nDocument content:\n\n${text}`,
+    fallback: fallbackResult,
     throwOnError: true,
   });
+  const { isResume, rejectionReason, ...resumeData } = raw;
+  if (!isResume) {
+    throw new Error(
+      rejectionReason ||
+        "This document does not appear to be a resume or CV. Please upload a resume.",
+    );
+  }
 
   return {
     ...fallback,
-    ...raw,
+    ...resumeData,
     resumeText: text,
     sourceLines,
     skills: (raw.skills ?? []).slice(0, 10),
@@ -1076,133 +1099,17 @@ export async function analyzeResumeFitForCompany(
 }
 
 /* ------------------------------------------------------------------ */
-/* appearance & grooming (report only)                                 */
-/* ------------------------------------------------------------------ */
-
-export interface AppearancePayload {
-  assessed: boolean;
-  dress: { verdict: "appropriate" | "acceptable" | "not_appropriate"; note: string };
-  hair: { verdict: "neat" | "untidy"; note: string };
-  beard: { verdict: "neat" | "needs_attention" | "not_visible"; note: string };
-  fixes: string[];
-  reason: string;
-  confidence: number;
-  limitations: string[];
-}
-
-const appearanceSchema = z.object({
-  assessed: z.boolean(),
-  reason: z.string(),
-  dressVerdict: z.string(),
-  dressNote: z.string(),
-  hairVerdict: z.string(),
-  hairNote: z.string(),
-  beardVerdict: z.string(),
-  beardNote: z.string(),
-  fixes: z.array(z.string()),
-  confidence: z.number().min(0).max(100).default(70),
-  limitations: z.array(z.string()).default([]),
-});
-
-function normalizeDressVerdict(value: string): AppearancePayload["dress"]["verdict"] {
-  const verdict = value.trim().toLowerCase();
-  if (/not|inappropriate|unprofessional|casual|unsuitable/.test(verdict)) return "not_appropriate";
-  if (/appropriate|formal|professional|smart|interview.?ready/.test(verdict)) return "appropriate";
-  return "acceptable";
-}
-
-function normalizeHairVerdict(value: string): AppearancePayload["hair"]["verdict"] {
-  return /untidy|messy|uncombed|needs|unprofessional/.test(value.trim().toLowerCase()) ? "untidy" : "neat";
-}
-
-function normalizeBeardVerdict(value: string): AppearancePayload["beard"]["verdict"] {
-  const verdict = value.trim().toLowerCase();
-  if (/not.?visible|no beard|cannot|unclear/.test(verdict)) return "not_visible";
-  return /needs|untidy|messy|untrimmed|unprofessional/.test(verdict) ? "needs_attention" : "neat";
-}
-
-/**
- * Grooming feedback from one webcam frame. Deliberately limited to clothing
- * and hair tidiness — nothing about the person's body or looks.
- */
-export async function analyzeAppearance(
-  dataUrl: string,
-  companyId: string,
-  role: string,
-): Promise<AppearancePayload> {
-  const company = getCompany(companyId);
-  const notAssessed: AppearancePayload = {
-    assessed: false,
-    dress: { verdict: "acceptable", note: "" },
-    hair: { verdict: "neat", note: "" },
-    beard: { verdict: "not_visible", note: "A beard was not visible enough to assess." },
-    fixes: [],
-    reason: "The camera frame was not clear enough to review your appearance.",
-    confidence: 0,
-    limitations: ["No usable appearance frame was available."],
-  };
-
-  if (!dataUrl.startsWith("data:image/")) return notAssessed;
-
-  const system = [
-    `You review interview presentation for candidates interviewing at ${company.name} for a ${role} role.`,
-    `Judge ONLY visible presentation: (1) clothing and formality for this company; (2) hair grooming; (3) visible beard grooming. For a beard, use not_visible when it cannot be seen clearly.`,
-    `Never comment on the person's body, weight, skin, age, gender, ethnicity, attractiveness, identity, or anything unrelated to visible clothing, hair, and beard grooming.`,
-    `${company.name}'s interview style is ${company.interviewStyle} — set the dress expectation accordingly (formal shirt for conservative firms, clean smart-casual for product companies).`,
-    `Set assessed=false only when no person is visible at all, the image is completely blank, or the frame is unusable. Normal Mac webcam compression, mild blur, ordinary indoor lighting, or a partially visible outfit are still assessable; judge only what is visible and mention limitations in the notes.`,
-    `For dress, explicitly say whether it looks formal, smart-casual, or too casual for the interview and explain why. For hair and beard, explicitly say whether they look neat/interview-ready or need attention. Natural verdict words are allowed; the application will normalize them. dressNote, hairNote, and beardNote are short second-person sentences. fixes = 2-4 actionable items. confidence reflects image clarity, and limitations lists only visible-frame limitations.`,
-  ].join("\n");
-
-  try {
-    const result = await runStructured({
-      schema: appearanceSchema,
-      system,
-      prompt: `Review this candidate's visible clothing, hair, and beard grooming for a ${company.name} ${role} interview.`,
-      images: [dataUrl],
-      vision: true,
-      fallback: {
-        assessed: false,
-        reason: "The appearance service could not analyse this camera frame. Try reviewing the frame again.",
-        dressVerdict: "acceptable",
-        dressNote: "",
-        hairVerdict: "neat",
-        hairNote: "",
-        beardVerdict: "not_visible",
-        beardNote: "",
-        fixes: [],
-        confidence: 0,
-        limitations: ["The appearance service could not analyse this frame."],
-      },
-    });
-    const parsed = appearanceSchema.safeParse(result.value);
-    if (!parsed.success) return notAssessed;
-    const r = parsed.data;
-    if (!r.assessed) {
-      return {
-        ...notAssessed,
-        reason: r.reason || (result.error ? `${result.error.title}: ${result.error.fix}` : notAssessed.reason),
-      };
-    }
-    return {
-      assessed: true,
-      dress: { verdict: normalizeDressVerdict(r.dressVerdict), note: r.dressNote.trim() },
-      hair: { verdict: normalizeHairVerdict(r.hairVerdict), note: r.hairNote.trim() },
-      beard: { verdict: normalizeBeardVerdict(r.beardVerdict), note: r.beardNote.trim() },
-      fixes: r.fixes.filter(Boolean).slice(0, 4),
-      reason: "",
-      confidence: r.confidence,
-      limitations: r.limitations.filter(Boolean).slice(0, 4),
-    };
-  } catch {
-    return notAssessed;
-  }
-}
-
-/* ------------------------------------------------------------------ */
 /* real-time presence coaching (during the interview)                  */
 /* ------------------------------------------------------------------ */
 
-export type CoachArea = "posture" | "eye_contact" | "hair" | "grooming" | "framing" | "delivery";
+export type CoachArea =
+  | "posture"
+  | "eye_contact"
+  | "hair"
+  | "grooming"
+  | "attire"
+  | "framing"
+  | "delivery";
 
 export interface CoachIntegrity {
   people: number;
@@ -1231,6 +1138,30 @@ export interface CoachPayload {
   visible: boolean;
   items: CoachItem[];
   integrity: CoachIntegrity;
+  appearance: AppearanceReview;
+}
+
+const appearanceAssessmentSchema = z.object({
+  status: z.enum(["positive", "needs_attention", "uncertain", "not_visible"]),
+  confidence: z.number().min(0).max(100),
+  evidence: z.string(),
+  recommendation: z.string(),
+});
+
+function emptyLiveAppearance(): AppearanceReview {
+  const assessment: AppearanceAssessment = {
+    status: "not_visible",
+    confidence: 0,
+    evidence: "",
+    recommendation: "",
+    t: null,
+  };
+  return {
+    assessed: false,
+    grooming: { ...assessment },
+    hair: { ...assessment },
+    attire: { ...assessment },
+  };
 }
 
 const coachSchema = z.object({
@@ -1247,6 +1178,9 @@ const coachSchema = z.object({
   grooming: z.string(),
   groomingReason: z.string(),
   groomingConfidence: z.number(),
+  attire: z.string(),
+  attireReason: z.string(),
+  attireConfidence: z.number(),
   framing: z.string(),
   framingReason: z.string(),
   framingConfidence: z.number(),
@@ -1257,6 +1191,12 @@ const coachSchema = z.object({
   deviceVisible: z.boolean(),
   deviceConfidence: z.number(),
   deviceReason: z.string(),
+  appearance: z.object({
+    assessed: z.boolean(),
+    grooming: appearanceAssessmentSchema,
+    hair: appearanceAssessmentSchema,
+    attire: appearanceAssessmentSchema,
+  }),
 });
 
 const NO_INTEGRITY: CoachIntegrity = {
@@ -1320,18 +1260,22 @@ export async function coachPresence(
     });
   }
 
-  if (!dataUrl.startsWith("data:image/")) return { visible: false, items, integrity: NO_INTEGRITY };
+  if (!dataUrl.startsWith("data:image/")) {
+    return { visible: false, items, integrity: NO_INTEGRITY, appearance: emptyLiveAppearance() };
+  }
 
   const system = [
     `You are a live interview presentation coach for a candidate interviewing at ${company.name} for a ${role} role.`,
-    `Look at the webcam frame and judge ONLY: posture (slouching, leaning into the lens, sideways body), gaze/eye contact (looking away from the camera, down at notes), hair (grown out, uncombed, falling over the face), facial grooming (unkempt beard/stubble, needs a trim), and framing/lighting (too close, too low, backlit, cut off).`,
-    `Never comment on the person's body, weight, skin, age, gender, ethnicity, attractiveness, clothing brand, or anything unrelated to those five areas. Never guess identity.`,
+    `Give a separate appearance assessment for attire, scalp hair, and facial grooming. Attire must say whether the visible clothing is suitable for this company's formal interview style; use a concrete clothing observation, not assumptions about unseen clothing. Hair means visible scalp hair neatness and whether it obscures the face. Grooming means visible beard/facial-hair tidiness and whether it looks maintained, not whether the person should remove facial hair.`,
+    `Also assess posture (slouching, leaning into the lens, sideways body), gaze/eye contact (looking away from the camera, down at notes), and framing/lighting (too close, too low, backlit, cut off).`,
+    `Never comment on body, weight, skin, age, gender, ethnicity, attractiveness, clothing brand, religion, or identity. Do not treat a beard or a particular hairstyle as inherently unprofessional. Never guess details that are not visible.`,
     `${company.name}'s interview style is ${company.interviewStyle}; keep the bar professional for that.`,
+    `For appearance assessments, status is positive only when clearly suitable, needs_attention only for a concrete visible improvement, uncertain when the feature is visible but ambiguous, and not_visible when the frame cannot support a judgment. State one short observable evidence sentence and one neutral, practical recommendation. When suitable, recommendation may say no change is needed.`,
     `Assess every area on every frame. If it already looks correct, return an EMPTY STRING for the instruction and 0 for the confidence. Only write an instruction when there is something to fix.`,
     `When you do write an instruction, use one short second-person sentence in professional language, max 16 words, e.g. "Sit back and square your shoulders to the camera."`,
     `Each <area>Reason must state the visual evidence you actually saw, max 18 words, e.g. "Shoulders rolled forward and head about 20cm from the lens."`,
     `Each <area>Confidence is an integer 0-100: how certain you are the problem is really present. Use below 55 only when unsure.`,
-    `Set visible=false with all instructions empty if the frame is too dark, too blurry, or no person is visible.`,
+    `Set visible=false with all correction instructions empty and appearance.assessed=false if the frame is too dark, too blurry, or no person is visible.`,
     `Also report interview integrity, factually: people = how many distinct people are visible in the frame (peopleConfidence 0-100); faceVisible = whether the candidate's face is clearly in frame; lookingAway = whether they are clearly reading something off-camera; deviceVisible = whether a mobile phone, tablet, smartwatch screen, printed notes or a second screen is visible in their hands or frame, with deviceConfidence 0-100 and deviceReason describing exactly what you saw.`,
   ].join("\n");
 
@@ -1344,10 +1288,25 @@ export async function coachPresence(
     });
 
     const parsed = coachSchema.safeParse(output);
-    if (!parsed.success) return { visible: false, items, integrity: NO_INTEGRITY };
+    if (!parsed.success) {
+      return { visible: false, items, integrity: NO_INTEGRITY, appearance: emptyLiveAppearance() };
+    }
     const r = parsed.data;
     const pct = (value: number) =>
       Number.isFinite(value) ? Math.max(0, Math.min(100, Math.round(value))) : 0;
+    const normalizeAppearance = (assessment: (typeof r.appearance)["grooming"]): AppearanceAssessment => ({
+      status: assessment.status,
+      confidence: pct(assessment.confidence),
+      evidence: assessment.evidence.trim(),
+      recommendation: assessment.recommendation.trim(),
+      t: null,
+    });
+    const appearance: AppearanceReview = {
+      assessed: r.appearance.assessed,
+      grooming: normalizeAppearance(r.appearance.grooming),
+      hair: normalizeAppearance(r.appearance.hair),
+      attire: normalizeAppearance(r.appearance.attire),
+    };
     const integrity: CoachIntegrity = {
       people: Number.isFinite(r.people) ? Math.max(0, Math.round(r.people)) : 1,
       faceVisible: r.faceVisible !== false,
@@ -1357,13 +1316,14 @@ export async function coachPresence(
       deviceReason: r.deviceReason.trim(),
       peopleConfidence: pct(r.peopleConfidence),
     };
-    if (!r.visible) return { visible: false, items, integrity };
+    if (!r.visible) return { visible: false, items, integrity, appearance };
 
     const map: [CoachArea, string, string, number][] = [
       ["posture", r.posture, r.postureReason, r.postureConfidence],
       ["eye_contact", r.eyeContact, r.eyeContactReason, r.eyeContactConfidence],
       ["hair", r.hair, r.hairReason, r.hairConfidence],
       ["grooming", r.grooming, r.groomingReason, r.groomingConfidence],
+      ["attire", r.attire, r.attireReason, r.attireConfidence],
       ["framing", r.framing, r.framingReason, r.framingConfidence],
     ];
     for (const [area, text, reason, confidence] of map) {
@@ -1378,68 +1338,10 @@ export async function coachPresence(
         severity: deriveSeverity(area, pct(confidence)),
       });
     }
-    return { visible: true, items, integrity };
+    return { visible: true, items, integrity, appearance };
   } catch {
-    return { visible: false, items, integrity: NO_INTEGRITY };
+    return { visible: false, items, integrity: NO_INTEGRITY, appearance: emptyLiveAppearance() };
   }
-}
-
-/* ------------------------------------------------------------------ */
-/* resume file sanity check                                           */
-/* ------------------------------------------------------------------ */
-
-const RESUME_SIGNALS = [
-  "experience",
-  "education",
-  "skills",
-  "project",
-  "internship",
-  "university",
-  "college",
-  "b.tech",
-  "bachelor",
-  "master",
-  "engineer",
-  "developer",
-  "certification",
-  "achievement",
-  "summary",
-  "objective",
-  "employment",
-  "responsibilities",
-  "curriculum vitae",
-  "resume",
-  "linkedin",
-  "github",
-];
-
-export type ResumeDocVerdict = "resume" | "unreadable" | "not_resume";
-
-/**
- * Deterministic guard so a random invoice, certificate or scanned image never
- * reaches the resume analyser. Cheap, offline, and explainable to the user.
- */
-export function classifyResumeDocument(text: string): {
-  verdict: ResumeDocVerdict;
-  reason: string;
-} {
-  const clean = text.replace(/\s+/g, " ").trim();
-  if (clean.length < 120) {
-    return {
-      verdict: "unreadable",
-      reason:
-        "We could not read any text from that file. If it is a scan or an image, upload a text-based PDF, DOCX or TXT resume.",
-    };
-  }
-  const lower = clean.toLowerCase();
-  const hits = RESUME_SIGNALS.filter((signal) => lower.includes(signal)).length;
-  const hasContact = /(@[a-z0-9.-]+\.[a-z]{2,})|(\+?\d[\d ()-]{7,})/i.test(clean);
-  if (hits >= 3 || (hits >= 2 && hasContact)) return { verdict: "resume", reason: "" };
-  return {
-    verdict: "not_resume",
-    reason:
-      "This doesn't look like a resume. Please upload the correct file — a PDF, DOCX or TXT resume with your skills, experience and education.",
-  };
 }
 
 /* ------------------------------------------------------------------ */
@@ -1717,6 +1619,20 @@ export interface ForensicsReportPayload {
   assessed: boolean;
   findings: ForensicsFindingPayload[];
   groomingSummary: string;
+  appearance: {
+    assessed: boolean;
+    grooming: AppearanceAssessmentPayload;
+    hair: AppearanceAssessmentPayload;
+    attire: AppearanceAssessmentPayload;
+  };
+}
+
+export interface AppearanceAssessmentPayload {
+  status: "positive" | "needs_attention" | "uncertain" | "not_visible";
+  confidence: number;
+  evidence: string;
+  recommendation: string;
+  t: number | null;
 }
 
 const forensicsFindingSchema = z.object({
@@ -1737,12 +1653,42 @@ const forensicsFindingSchema = z.object({
 const forensicsSchema = z.object({
   findings: z.array(forensicsFindingSchema),
   groomingSummary: z.string(),
+  appearance: z.object({
+    assessed: z.boolean(),
+    grooming: z.object({
+      status: z.enum(["positive", "needs_attention", "uncertain", "not_visible"]),
+      confidence: z.number().min(0).max(100),
+      evidence: z.string(),
+      recommendation: z.string(),
+      t: z.number().nullable(),
+    }),
+    hair: z.object({
+      status: z.enum(["positive", "needs_attention", "uncertain", "not_visible"]),
+      confidence: z.number().min(0).max(100),
+      evidence: z.string(),
+      recommendation: z.string(),
+      t: z.number().nullable(),
+    }),
+    attire: z.object({
+      status: z.enum(["positive", "needs_attention", "uncertain", "not_visible"]),
+      confidence: z.number().min(0).max(100),
+      evidence: z.string(),
+      recommendation: z.string(),
+      t: z.number().nullable(),
+    }),
+  }),
 });
 
 const NO_FORENSICS: ForensicsReportPayload = {
   assessed: false,
   findings: [],
   groomingSummary: "",
+  appearance: {
+    assessed: false,
+    grooming: { status: "not_visible", confidence: 0, evidence: "", recommendation: "", t: null },
+    hair: { status: "not_visible", confidence: 0, evidence: "", recommendation: "", t: null },
+    attire: { status: "not_visible", confidence: 0, evidence: "", recommendation: "", t: null },
+  },
 };
 
 /**
@@ -1770,11 +1716,13 @@ export async function generateReplayForensics(
     `You are a proctoring and presentation reviewer auditing a recorded interview for a ${company.name} ${role} role, after the fact, from a handful of sampled webcam frames.`,
     `You are given ${valid.length} frames, in chronological order, timestamped in seconds from the start of the recording: ${timestamps.join(", ")}.`,
     `For each frame that shows an integrity concern, add one finding using EXACTLY one of the given timestamps: "multiple_people" (a second person visible), "phone_use" (a phone or second screen visible), "background_voice" or "second_speaker" ONLY if something in the frame itself suggests it (someone else visible or gesturing as if speaking) — never guess sound you cannot see.`,
-    `Always add exactly one "grooming" finding and, only if dress is notably off for this company's interview style (${company.interviewStyle}), one "appearance" finding — each using the timestamp of whichever frame shows the candidate most clearly.`,
+    `Assess the candidate's visible presentation separately in appearance.grooming, appearance.hair, and appearance.attire. Grooming includes whether visible beard/facial hair looks neat and maintained, not whether the candidate should remove it; hair means whether visible scalp hair is neat and kept clear of the face; attire means whether the visible clothing reads as formal/professional for this company's interview style (${company.interviewStyle}). These are advisory observations, not hiring scores.`,
+    `For each appearance assessment, use status "positive" when the visible presentation is clearly suitable, "needs_attention" only for a concrete observable improvement, "uncertain" when the image is usable but evidence is ambiguous, and "not_visible" when the relevant feature cannot be seen. Never guess. Use the clearest frame timestamp or null when not visible.`,
+    `Each appearance assessment must include one short observable evidence sentence and one practical, neutral recommendation. Do not mention attractiveness, body, weight, skin, age, gender, ethnicity, identity, or personal worth.`,
     `If a frame is empty, too dark, or shows nothing notable, do not invent a finding for it — findings should only cover real observations.`,
-    `Never comment on body, weight, skin, age, gender, ethnicity or attractiveness — clothing and grooming (hair, tidiness) only.`,
+    `Never comment on body, weight, skin, age, gender, ethnicity or attractiveness — assess only visible clothing, hair and facial-hair tidiness.`,
     `detail is one short, concrete, second-person sentence. confidence is 0-100 for how sure you are. severity is low/medium/high for integrity findings; use "low" for grooming/appearance reads.`,
-    `groomingSummary is one or two plain sentences summarising overall grooming and appearance across all frames, written for a recruiter reading this after the interview.`,
+    `groomingSummary is one or two plain sentences summarising only visible, job-relevant presentation across all frames.`,
     `If nothing at all is notable across every frame, return an empty findings array and a short reassuring groomingSummary, but never fabricate an issue to fill the list.`,
   ].join("\n");
 
@@ -1789,14 +1737,137 @@ export async function generateReplayForensics(
     if (!parsed.success) return NO_FORENSICS;
     const nearestT = (t: number) =>
       timestamps.reduce((best, cur) => (Math.abs(cur - t) < Math.abs(best - t) ? cur : best), timestamps[0]);
+    const clamp = (value: number) => Math.max(0, Math.min(100, Math.round(value)));
+    const nearestOrNull = (t: number | null) =>
+      typeof t === "number" && Number.isFinite(t) ? nearestT(t) : null;
+    const normalizeAssessment = (assessment: (typeof parsed.data.appearance)["grooming"]) => ({
+      ...assessment,
+      confidence: clamp(assessment.confidence),
+      t: nearestOrNull(assessment.t),
+      evidence: assessment.evidence.trim(),
+      recommendation: assessment.recommendation.trim(),
+    });
     return {
       assessed: true,
       findings: parsed.data.findings
         .map((f) => ({ ...f, t: nearestT(f.t) }))
         .slice(0, 16),
       groomingSummary: parsed.data.groomingSummary.trim(),
+      appearance: {
+        assessed: parsed.data.appearance.assessed,
+        grooming: normalizeAssessment(parsed.data.appearance.grooming),
+        hair: normalizeAssessment(parsed.data.appearance.hair),
+        attire: normalizeAssessment(parsed.data.appearance.attire),
+      },
     };
   } catch {
     return NO_FORENSICS;
+  }
+}
+
+const appearanceReviewSchema = z.object({
+  visible: z.boolean(),
+  appearance: z.object({
+    assessed: z.boolean(),
+    grooming: z.object({
+      status: z.enum(["positive", "needs_attention", "uncertain", "not_visible"]),
+      confidence: z.number().min(0).max(100),
+      evidence: z.string(),
+      recommendation: z.string(),
+      t: z.number().nullable(),
+    }),
+    hair: z.object({
+      status: z.enum(["positive", "needs_attention", "uncertain", "not_visible"]),
+      confidence: z.number().min(0).max(100),
+      evidence: z.string(),
+      recommendation: z.string(),
+      t: z.number().nullable(),
+    }),
+    attire: z.object({
+      status: z.enum(["positive", "needs_attention", "uncertain", "not_visible"]),
+      confidence: z.number().min(0).max(100),
+      evidence: z.string(),
+      recommendation: z.string(),
+      t: z.number().nullable(),
+    }),
+  }),
+});
+
+/** Dedicated appearance-only review; unrelated proctor fields cannot invalidate its result. */
+export async function analyzeAppearanceFrames(
+  frames: ForensicsFramePayload[],
+  companyId: string,
+  role: string,
+): Promise<AppearanceAnalysisResult> {
+  const valid = frames
+    .filter((frame) => frame.dataUrl.startsWith("data:image/") && Number.isFinite(frame.t))
+    .slice(0, 8);
+  if (valid.length === 0) {
+    return { status: "frame_unusable", message: "No usable camera frame was available." };
+  }
+
+  const company = getCompany(companyId);
+  const times = valid.map((frame) => frame.t);
+  try {
+    const result = await runStructured({
+      schema: appearanceReviewSchema,
+      system: [
+        `You are an evidence-based interview presentation reviewer for a ${company.name} ${role} interview.`,
+        `Review ${valid.length} timestamped webcam frames at ${times.join(", ")} seconds. Assess only visible clothing formality, scalp-hair neatness, and beard/facial-hair tidiness.`,
+        `Attire means whether visible clothing is appropriate for this company's formal interview style (${company.interviewStyle}); do not infer clothing hidden outside the frame. Hair means visible scalp hair neatness and whether it obscures the face. Grooming means whether visible beard/facial hair looks neat and maintained; never recommend removing it or judge style as inherently unprofessional.`,
+        `For each category return status positive only when clearly suitable, needs_attention only for a concrete observable improvement, uncertain when visible evidence is ambiguous, or not_visible when the feature cannot be judged. Return one evidence sentence, a neutral practical recommendation, confidence from 0-100, and an exact timestamp from the supplied frames or null.`,
+        `Set visible=false and appearance.assessed=false only if the frames do not contain a usable visible candidate. Do not classify a visible candidate as missing just because attire, hair, or facial hair is outside the frame; mark only that category not_visible.`,
+        `Do not mention body, weight, skin, age, gender, ethnicity, attractiveness, religion, or identity. This is advisory feedback and is not a hiring score.`,
+      ].join("\n"),
+      prompt: "Assess each visible presentation category independently. Do not return defaults for categories that are visible.",
+      images: valid.map((frame) => frame.dataUrl),
+    });
+
+    if (result.error) {
+      return { status: "analysis_failed", message: `${result.error.title}: ${result.error.fix}` };
+    }
+    const parsed = appearanceReviewSchema.safeParse(result.value);
+    if (!parsed.success) {
+      return {
+        status: "analysis_failed",
+        message: "The appearance service returned an invalid result.",
+      };
+    }
+    if (!parsed.data.visible || !parsed.data.appearance.assessed) {
+      return {
+        status: "frame_unusable",
+        message: "The candidate was not clearly visible enough to assess appearance.",
+      };
+    }
+
+    const nearestTimestamp = (timestamp: number | null) =>
+      typeof timestamp === "number" && Number.isFinite(timestamp)
+        ? times.reduce((best, current) =>
+            Math.abs(current - timestamp) < Math.abs(best - timestamp) ? current : best,
+          times[0])
+        : null;
+    const normalize = (
+      assessment: (typeof parsed.data.appearance)["grooming"],
+    ): AppearanceAssessment => ({
+      ...assessment,
+      confidence: Math.max(0, Math.min(100, Math.round(assessment.confidence))),
+      evidence: assessment.evidence.trim(),
+      recommendation: assessment.recommendation.trim(),
+      t: nearestTimestamp(assessment.t),
+    });
+    return {
+      status: "assessed",
+      appearance: {
+        assessed: true,
+        grooming: normalize(parsed.data.appearance.grooming),
+        hair: normalize(parsed.data.appearance.hair),
+        attire: normalize(parsed.data.appearance.attire),
+      },
+    };
+  } catch (error) {
+    return {
+      status: "analysis_failed",
+      message: error instanceof Error ? error.message : "Appearance analysis failed.",
+    };
   }
 }

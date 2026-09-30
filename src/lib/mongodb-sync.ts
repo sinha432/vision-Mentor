@@ -1,3 +1,9 @@
+import type {
+  StoredAssessment,
+  StoredAttempt,
+  StoredReport,
+} from "@/lib/assessment-types";
+
 /**
  * Helper to sync data to MongoDB with localStorage fallback.
  * This runs in the browser and calls the server API endpoints.
@@ -91,28 +97,32 @@ export async function fetchUserInterviewsFromMongoDB(email: string): Promise<any
   }
 }
 
-export async function fetchAssessmentFromMongoDB(code: string): Promise<any> {
+export async function fetchAssessmentFromMongoDB(
+  code: string,
+): Promise<any | null | undefined> {
   try {
     const response = await fetch(`/api/db/assessment?code=${encodeURIComponent(code)}`);
-    if (!response.ok) return null;
+    if (!response.ok) return undefined;
     return await response.json();
   } catch (error) {
     console.warn("Failed to fetch assessment from MongoDB:", error);
-    return null;
+    return undefined;
   }
 }
 
-export async function fetchCompanyAssessmentsFromMongoDB(companyUserId: string): Promise<any[]> {
+export async function fetchCompanyAssessmentsFromMongoDB(
+  companyUserId: string,
+): Promise<any[] | null> {
   try {
     const response = await fetch(
       `/api/db/assessment?companyUserId=${encodeURIComponent(companyUserId)}`,
     );
-    if (!response.ok) return [];
+    if (!response.ok) return null;
     const data = await response.json();
-    return Array.isArray(data) ? data : [];
+    return Array.isArray(data) ? data : null;
   } catch (error) {
     console.warn("Failed to fetch company assessments from MongoDB:", error);
-    return [];
+    return null;
   }
 }
 
@@ -130,6 +140,24 @@ export async function deleteAssessmentFromMongoDB(
     return result.deleted === true;
   } catch (error) {
     console.warn("Failed to delete assessment from MongoDB:", error);
+    return false;
+  }
+}
+
+export async function updateAssessmentStatusInMongoDB(
+  code: string,
+  companyUserId: string,
+  status: "active" | "closed",
+): Promise<boolean> {
+  try {
+    const response = await fetch("/api/db/assessment", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ code, companyUserId, status }),
+    });
+    return response.ok;
+  } catch (error) {
+    console.warn("Failed to update MongoDB assessment status:", error);
     return false;
   }
 }
@@ -164,6 +192,64 @@ export async function syncAssessmentSubmissionToMongoDB(
   } catch (error) {
     console.warn("Assessment submission MongoDB sync failed:", error);
     return false;
+  }
+}
+
+export async function fetchCompanyAssessmentSubmissionsFromMongoDB(
+  companyUserId: string,
+  code?: string,
+): Promise<{ attempts: StoredAttempt[]; reports: StoredReport[] } | null> {
+  try {
+    const params = new URLSearchParams({ companyUserId });
+    if (code) params.set("code", code);
+
+    const response = await fetch(`/api/db/submission?${params.toString()}`);
+    if (!response.ok) return null;
+
+    const result = await response.json();
+    if (!Array.isArray(result?.attempts) || !Array.isArray(result?.reports)) {
+      return null;
+    }
+
+    return {
+      attempts: result.attempts as StoredAttempt[],
+      reports: result.reports as StoredReport[],
+    };
+  } catch (error) {
+    console.warn("Failed to fetch company assessment submissions:", error);
+    return null;
+  }
+}
+
+export async function hasAssessmentSubmissionInMongoDB(
+  code: string,
+  individualUserId: string,
+): Promise<boolean | null> {
+  try {
+    const params = new URLSearchParams({ code, individualUserId });
+    const response = await fetch(`/api/db/submission?${params.toString()}`);
+    if (!response.ok) return null;
+    const result = await response.json();
+    return typeof result?.submitted === "boolean" ? result.submitted : null;
+  } catch (error) {
+    console.warn("Failed to check MongoDB assessment submission:", error);
+    return null;
+  }
+}
+
+export async function fetchAssessmentReportFromMongoDB(
+  reportId: string,
+  userId: string,
+): Promise<{ report: StoredReport; attempt: StoredAttempt; assessment: StoredAssessment } | null | undefined> {
+  try {
+    const params = new URLSearchParams({ reportId, userId });
+    const response = await fetch(`/api/db/submission?${params.toString()}`);
+    if (response.status === 404) return null;
+    if (!response.ok) return undefined;
+    return await response.json();
+  } catch (error) {
+    console.warn("Failed to fetch assessment report from MongoDB:", error);
+    return undefined;
   }
 }
 
@@ -247,5 +333,54 @@ export async function updateUserProfileInMongoDB(email: string, profile: any): P
   } catch (error) {
     console.warn("User profile update error:", error);
     return null;
+  }
+}
+
+export async function fetchScheduledInterviewsFromMongoDB<T extends object>(
+  companyUserId: string,
+): Promise<T[] | null> {
+  try {
+    const response = await fetch(
+      `/api/db/scheduled-interviews?companyUserId=${encodeURIComponent(companyUserId)}`,
+    );
+    if (!response.ok) return null;
+    const interviews = await response.json();
+    return Array.isArray(interviews) ? interviews as T[] : null;
+  } catch (error) {
+    console.warn("Failed to fetch scheduled interviews from MongoDB:", error);
+    return null;
+  }
+}
+
+export async function syncScheduledInterviewToMongoDB(
+  companyUserId: string,
+  interview: object,
+): Promise<boolean> {
+  try {
+    const response = await fetch("/api/db/scheduled-interviews", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ ...interview, companyUserId }),
+    });
+    return response.ok;
+  } catch (error) {
+    console.warn("Scheduled interview MongoDB sync failed:", error);
+    return false;
+  }
+}
+
+export async function deleteScheduledInterviewFromMongoDB(
+  companyUserId: string,
+  id: string,
+): Promise<boolean> {
+  try {
+    const response = await fetch(
+      `/api/db/scheduled-interviews?companyUserId=${encodeURIComponent(companyUserId)}&id=${encodeURIComponent(id)}`,
+      { method: "DELETE" },
+    );
+    return response.ok;
+  } catch (error) {
+    console.warn("Scheduled interview MongoDB delete failed:", error);
+    return false;
   }
 }

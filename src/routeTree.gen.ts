@@ -38,8 +38,10 @@ import { Route as AuthenticatedDashboardScheduleRouteImport } from './routes/_au
 import { Route as AuthenticatedDashboardSettingsRouteImport } from './routes/_authenticated/dashboard/settings'
 import { Route as AuthenticatedReportIdRouteImport } from './routes/_authenticated/report/$id'
 import { Route as ApiAuthLoginRouteImport } from './routes/api/auth/login'
+import { Route as ApiAuthLogoutRouteImport } from './routes/api/auth/logout'
 import { Route as ApiAuthResetPasswordRouteImport } from './routes/api/auth/reset-password'
 import { Route as ApiAuthSendCodeRouteImport } from './routes/api/auth/send-code'
+import { Route as ApiAuthSessionRouteImport } from './routes/api/auth/session'
 import { Route as ApiAuthSignupRouteImport } from './routes/api/auth/signup'
 import { Route as ApiAuthVerifyCodeRouteImport } from './routes/api/auth/verify-code'
 import { Route as ApiCompanyScheduleNotifyRouteImport } from './routes/api/company-schedule/notify'
@@ -47,6 +49,7 @@ import { Route as ApiDbAssessmentRouteImport } from './routes/api/db/assessment'
 import { Route as ApiDbCandidateRouteImport } from './routes/api/db/candidate'
 import { Route as ApiDbInterviewRouteImport } from './routes/api/db/interview'
 import { Route as ApiDbPingRouteImport } from './routes/api/db/ping'
+import { Route as ApiDbScheduledInterviewsRouteImport } from './routes/api/db/scheduled-interviews'
 import { Route as ApiDbSubmissionRouteImport } from './routes/api/db/submission'
 import { Route as ApiDbUserRouteImport } from './routes/api/db/user'
 import { Route as ApiDbUserProfileRouteImport } from './routes/api/db/user-profile'
@@ -210,6 +213,11 @@ const ApiAuthLoginRoute = ApiAuthLoginRouteImport.update({
   path: '/api/auth/login',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ApiAuthLogoutRoute = ApiAuthLogoutRouteImport.update({
+  id: '/api/auth/logout',
+  path: '/api/auth/logout',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const ApiAuthResetPasswordRoute = ApiAuthResetPasswordRouteImport.update({
   id: '/api/auth/reset-password',
   path: '/api/auth/reset-password',
@@ -218,6 +226,11 @@ const ApiAuthResetPasswordRoute = ApiAuthResetPasswordRouteImport.update({
 const ApiAuthSendCodeRoute = ApiAuthSendCodeRouteImport.update({
   id: '/api/auth/send-code',
   path: '/api/auth/send-code',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ApiAuthSessionRoute = ApiAuthSessionRouteImport.update({
+  id: '/api/auth/session',
+  path: '/api/auth/session',
   getParentRoute: () => rootRouteImport,
 } as any)
 const ApiAuthSignupRoute = ApiAuthSignupRouteImport.update({
@@ -256,6 +269,12 @@ const ApiDbPingRoute = ApiDbPingRouteImport.update({
   path: '/api/db/ping',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ApiDbScheduledInterviewsRoute =
+  ApiDbScheduledInterviewsRouteImport.update({
+    id: '/api/db/scheduled-interviews',
+    path: '/api/db/scheduled-interviews',
+    getParentRoute: () => rootRouteImport,
+  } as any)
 const ApiDbSubmissionRoute = ApiDbSubmissionRouteImport.update({
   id: '/api/db/submission',
   path: '/api/db/submission',
@@ -334,8 +353,10 @@ export interface FileRoutesByFullPath {
   '/dashboard/settings': typeof AuthenticatedDashboardSettingsRoute
   '/report/$id': typeof AuthenticatedReportIdRoute
   '/api/auth/login': typeof ApiAuthLoginRoute
+  '/api/auth/logout': typeof ApiAuthLogoutRoute
   '/api/auth/reset-password': typeof ApiAuthResetPasswordRoute
   '/api/auth/send-code': typeof ApiAuthSendCodeRoute
+  '/api/auth/session': typeof ApiAuthSessionRoute
   '/api/auth/signup': typeof ApiAuthSignupRoute
   '/api/auth/verify-code': typeof ApiAuthVerifyCodeRoute
   '/api/company-schedule/notify': typeof ApiCompanyScheduleNotifyRoute
@@ -343,6 +364,7 @@ export interface FileRoutesByFullPath {
   '/api/db/candidate': typeof ApiDbCandidateRoute
   '/api/db/interview': typeof ApiDbInterviewRoute
   '/api/db/ping': typeof ApiDbPingRoute
+  '/api/db/scheduled-interviews': typeof ApiDbScheduledInterviewsRoute
   '/api/db/submission': typeof ApiDbSubmissionRoute
   '/api/db/user': typeof ApiDbUserRoute
   '/api/db/user-profile': typeof ApiDbUserProfileRoute
@@ -380,8 +402,10 @@ export interface FileRoutesByTo {
   '/dashboard/settings': typeof AuthenticatedDashboardSettingsRoute
   '/report/$id': typeof AuthenticatedReportIdRoute
   '/api/auth/login': typeof ApiAuthLoginRoute
+  '/api/auth/logout': typeof ApiAuthLogoutRoute
   '/api/auth/reset-password': typeof ApiAuthResetPasswordRoute
   '/api/auth/send-code': typeof ApiAuthSendCodeRoute
+  '/api/auth/session': typeof ApiAuthSessionRoute
   '/api/auth/signup': typeof ApiAuthSignupRoute
   '/api/auth/verify-code': typeof ApiAuthVerifyCodeRoute
   '/api/company-schedule/notify': typeof ApiCompanyScheduleNotifyRoute
@@ -389,6 +413,7 @@ export interface FileRoutesByTo {
   '/api/db/candidate': typeof ApiDbCandidateRoute
   '/api/db/interview': typeof ApiDbInterviewRoute
   '/api/db/ping': typeof ApiDbPingRoute
+  '/api/db/scheduled-interviews': typeof ApiDbScheduledInterviewsRoute
   '/api/db/submission': typeof ApiDbSubmissionRoute
   '/api/db/user': typeof ApiDbUserRoute
   '/api/db/user-profile': typeof ApiDbUserProfileRoute
@@ -430,8 +455,10 @@ export interface FileRoutesById {
   '/_authenticated/dashboard/settings': typeof AuthenticatedDashboardSettingsRoute
   '/_authenticated/report/$id': typeof AuthenticatedReportIdRoute
   '/api/auth/login': typeof ApiAuthLoginRoute
+  '/api/auth/logout': typeof ApiAuthLogoutRoute
   '/api/auth/reset-password': typeof ApiAuthResetPasswordRoute
   '/api/auth/send-code': typeof ApiAuthSendCodeRoute
+  '/api/auth/session': typeof ApiAuthSessionRoute
   '/api/auth/signup': typeof ApiAuthSignupRoute
   '/api/auth/verify-code': typeof ApiAuthVerifyCodeRoute
   '/api/company-schedule/notify': typeof ApiCompanyScheduleNotifyRoute
@@ -439,6 +466,7 @@ export interface FileRoutesById {
   '/api/db/candidate': typeof ApiDbCandidateRoute
   '/api/db/interview': typeof ApiDbInterviewRoute
   '/api/db/ping': typeof ApiDbPingRoute
+  '/api/db/scheduled-interviews': typeof ApiDbScheduledInterviewsRoute
   '/api/db/submission': typeof ApiDbSubmissionRoute
   '/api/db/user': typeof ApiDbUserRoute
   '/api/db/user-profile': typeof ApiDbUserProfileRoute
@@ -480,8 +508,10 @@ export interface FileRouteTypes {
     | '/dashboard/settings'
     | '/report/$id'
     | '/api/auth/login'
+    | '/api/auth/logout'
     | '/api/auth/reset-password'
     | '/api/auth/send-code'
+    | '/api/auth/session'
     | '/api/auth/signup'
     | '/api/auth/verify-code'
     | '/api/company-schedule/notify'
@@ -489,6 +519,7 @@ export interface FileRouteTypes {
     | '/api/db/candidate'
     | '/api/db/interview'
     | '/api/db/ping'
+    | '/api/db/scheduled-interviews'
     | '/api/db/submission'
     | '/api/db/user'
     | '/api/db/user-profile'
@@ -526,8 +557,10 @@ export interface FileRouteTypes {
     | '/dashboard/settings'
     | '/report/$id'
     | '/api/auth/login'
+    | '/api/auth/logout'
     | '/api/auth/reset-password'
     | '/api/auth/send-code'
+    | '/api/auth/session'
     | '/api/auth/signup'
     | '/api/auth/verify-code'
     | '/api/company-schedule/notify'
@@ -535,6 +568,7 @@ export interface FileRouteTypes {
     | '/api/db/candidate'
     | '/api/db/interview'
     | '/api/db/ping'
+    | '/api/db/scheduled-interviews'
     | '/api/db/submission'
     | '/api/db/user'
     | '/api/db/user-profile'
@@ -575,8 +609,10 @@ export interface FileRouteTypes {
     | '/_authenticated/dashboard/settings'
     | '/_authenticated/report/$id'
     | '/api/auth/login'
+    | '/api/auth/logout'
     | '/api/auth/reset-password'
     | '/api/auth/send-code'
+    | '/api/auth/session'
     | '/api/auth/signup'
     | '/api/auth/verify-code'
     | '/api/company-schedule/notify'
@@ -584,6 +620,7 @@ export interface FileRouteTypes {
     | '/api/db/candidate'
     | '/api/db/interview'
     | '/api/db/ping'
+    | '/api/db/scheduled-interviews'
     | '/api/db/submission'
     | '/api/db/user'
     | '/api/db/user-profile'
@@ -610,8 +647,10 @@ export interface RootRouteChildren {
   ApiCompanyGenerateQuestionsRoute: typeof ApiCompanyGenerateQuestionsRoute
   ApiSecurityReportRoute: typeof ApiSecurityReportRoute
   ApiAuthLoginRoute: typeof ApiAuthLoginRoute
+  ApiAuthLogoutRoute: typeof ApiAuthLogoutRoute
   ApiAuthResetPasswordRoute: typeof ApiAuthResetPasswordRoute
   ApiAuthSendCodeRoute: typeof ApiAuthSendCodeRoute
+  ApiAuthSessionRoute: typeof ApiAuthSessionRoute
   ApiAuthSignupRoute: typeof ApiAuthSignupRoute
   ApiAuthVerifyCodeRoute: typeof ApiAuthVerifyCodeRoute
   ApiCompanyScheduleNotifyRoute: typeof ApiCompanyScheduleNotifyRoute
@@ -619,6 +658,7 @@ export interface RootRouteChildren {
   ApiDbCandidateRoute: typeof ApiDbCandidateRoute
   ApiDbInterviewRoute: typeof ApiDbInterviewRoute
   ApiDbPingRoute: typeof ApiDbPingRoute
+  ApiDbScheduledInterviewsRoute: typeof ApiDbScheduledInterviewsRoute
   ApiDbSubmissionRoute: typeof ApiDbSubmissionRoute
   ApiDbUserRoute: typeof ApiDbUserRoute
   ApiDbUserProfileRoute: typeof ApiDbUserProfileRoute
@@ -831,6 +871,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ApiAuthLoginRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/api/auth/logout': {
+      id: '/api/auth/logout'
+      path: '/api/auth/logout'
+      fullPath: '/api/auth/logout'
+      preLoaderRoute: typeof ApiAuthLogoutRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/api/auth/reset-password': {
       id: '/api/auth/reset-password'
       path: '/api/auth/reset-password'
@@ -843,6 +890,13 @@ declare module '@tanstack/react-router' {
       path: '/api/auth/send-code'
       fullPath: '/api/auth/send-code'
       preLoaderRoute: typeof ApiAuthSendCodeRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/auth/session': {
+      id: '/api/auth/session'
+      path: '/api/auth/session'
+      fullPath: '/api/auth/session'
+      preLoaderRoute: typeof ApiAuthSessionRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/api/auth/signup': {
@@ -892,6 +946,13 @@ declare module '@tanstack/react-router' {
       path: '/api/db/ping'
       fullPath: '/api/db/ping'
       preLoaderRoute: typeof ApiDbPingRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/db/scheduled-interviews': {
+      id: '/api/db/scheduled-interviews'
+      path: '/api/db/scheduled-interviews'
+      fullPath: '/api/db/scheduled-interviews'
+      preLoaderRoute: typeof ApiDbScheduledInterviewsRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/api/db/submission': {
@@ -1049,8 +1110,10 @@ const rootRouteChildren: RootRouteChildren = {
   ApiCompanyGenerateQuestionsRoute: ApiCompanyGenerateQuestionsRoute,
   ApiSecurityReportRoute: ApiSecurityReportRoute,
   ApiAuthLoginRoute: ApiAuthLoginRoute,
+  ApiAuthLogoutRoute: ApiAuthLogoutRoute,
   ApiAuthResetPasswordRoute: ApiAuthResetPasswordRoute,
   ApiAuthSendCodeRoute: ApiAuthSendCodeRoute,
+  ApiAuthSessionRoute: ApiAuthSessionRoute,
   ApiAuthSignupRoute: ApiAuthSignupRoute,
   ApiAuthVerifyCodeRoute: ApiAuthVerifyCodeRoute,
   ApiCompanyScheduleNotifyRoute: ApiCompanyScheduleNotifyRoute,
@@ -1058,6 +1121,7 @@ const rootRouteChildren: RootRouteChildren = {
   ApiDbCandidateRoute: ApiDbCandidateRoute,
   ApiDbInterviewRoute: ApiDbInterviewRoute,
   ApiDbPingRoute: ApiDbPingRoute,
+  ApiDbScheduledInterviewsRoute: ApiDbScheduledInterviewsRoute,
   ApiDbSubmissionRoute: ApiDbSubmissionRoute,
   ApiDbUserRoute: ApiDbUserRoute,
   ApiDbUserProfileRoute: ApiDbUserProfileRoute,

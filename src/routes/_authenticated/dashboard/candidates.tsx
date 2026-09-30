@@ -1,5 +1,6 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { createFileRoute, Link } from "@tanstack/react-router";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Users, Loader2, AlertCircle, FileText, Trash2, CheckSquare, Square } from "lucide-react";
 import { toast } from "sonner";
 import {
@@ -39,26 +40,28 @@ type Candidate = Awaited<ReturnType<typeof listCompanyCandidates>>[number];
 
 function CandidatesPage() {
   const { user } = useDemoAuth();
-  const [rows, setRows] = useState<Candidate[] | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const queryClient = useQueryClient();
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [pendingDelete, setPendingDelete] = useState<Candidate | null>(null);
   const [bulkDeleteOpen, setBulkDeleteOpen] = useState(false);
+  const [deleteAllOpen, setDeleteAllOpen] = useState(false);
   const [deleting, setDeleting] = useState(false);
 
-  useEffect(() => {
-    if (!user) return;
-    let alive = true;
-    setError(null);
-    listCompanyCandidates({ data: { companyUserId: user.id } })
-      .then((r) => alive && setRows(r))
-      .catch((e: unknown) => alive && setError(e instanceof Error ? e.message : "Could not load candidates"));
-    return () => {
-      alive = false;
-    };
-  }, [user]);
+  const candidateQueryKey = ["company-candidates", user?.id];
+  const {
+    data: rows = [],
+    isLoading,
+    error,
+  } = useQuery({
+    queryKey: candidateQueryKey,
+    queryFn: () => listCompanyCandidates({ data: { companyUserId: user?.id } }),
+    enabled: user?.role === "company",
+    refetchInterval: 5_000,
+    refetchIntervalInBackground: false,
+    refetchOnWindowFocus: true,
+  });
 
-  const allSelected = Boolean(rows?.length) && selectedIds.size === rows?.length;
+  const allSelected = rows.length > 0 && rows.every((row) => selectedIds.has(row.individualUserId));
 
   const toggleCandidate = (id: string) => {
     setSelectedIds((current) => {
@@ -70,14 +73,14 @@ function CandidatesPage() {
   };
 
   const toggleAll = () => {
-    setSelectedIds(allSelected ? new Set() : new Set(rows?.map((row) => row.individualUserId) ?? []));
+    setSelectedIds(allSelected ? new Set() : new Set(rows.map((row) => row.individualUserId)));
   };
 
   const deleteCandidates = async (candidates: Candidate[]) => {
     if (!user || !candidates.length) return;
     setDeleting(true);
     try {
-      await Promise.all(
+      const results = await Promise.allSettled(
         candidates.map((candidate) =>
           deleteCompanyCandidate({
             data: {
@@ -87,12 +90,26 @@ function CandidatesPage() {
           }),
         ),
       );
-      const deletedIds = new Set(candidates.map((candidate) => candidate.individualUserId));
-      setRows((current) => current?.filter((candidate) => !deletedIds.has(candidate.individualUserId)) ?? current);
+      const deletedIds = new Set(
+        results.flatMap((result, index) =>
+          result.status === "fulfilled" ? [candidates[index]!.individualUserId] : [],
+        ),
+      );
+      queryClient.setQueryData<Candidate[]>(candidateQueryKey, (current = []) =>
+        current.filter((candidate) => !deletedIds.has(candidate.individualUserId)),
+      );
+      void queryClient.invalidateQueries({ queryKey: candidateQueryKey });
+      void queryClient.invalidateQueries({ queryKey: ["company-assessments"] });
       setSelectedIds(new Set());
       setPendingDelete(null);
       setBulkDeleteOpen(false);
-      toast.success(`${candidates.length} candidate${candidates.length === 1 ? "" : "s"} deleted`);
+      setDeleteAllOpen(false);
+      const failedCount = results.length - deletedIds.size;
+      if (failedCount > 0) {
+        toast.error(`${deletedIds.size} deleted; ${failedCount} could not be removed from MongoDB.`);
+      } else {
+        toast.success(`${deletedIds.size} candidate${deletedIds.size === 1 ? "" : "s"} deleted`);
+      }
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Could not delete candidates");
     } finally {
@@ -117,17 +134,17 @@ function CandidatesPage() {
       {error && (
         <div className="glass flex items-start gap-2 rounded-2xl p-4 text-sm text-destructive">
           <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
-          <span>{error}</span>
+          <span>{error instanceof Error ? error.message : "Could not load candidates"}</span>
         </div>
       )}
 
-      {!error && rows === null && (
+      {!error && isLoading && (
         <div className="glass grid place-items-center rounded-2xl p-12 text-muted-foreground">
           <Loader2 className="h-5 w-5 animate-spin" />
         </div>
       )}
 
-      {!error && rows?.length === 0 && (
+      {!error && !isLoading && rows.length === 0 && (
         <div className="glass animate-fade-in rounded-2xl p-10 text-center">
           <p className="text-sm text-muted-foreground">
             No candidates yet. Share an assessment code and submissions will show up here.
@@ -135,7 +152,7 @@ function CandidatesPage() {
         </div>
       )}
 
-      {!error && rows && rows.length > 0 && (
+      {!error && rows.length > 0 && (
         <div className="grid gap-3 animate-fade-in">
           <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-border/60 bg-background/30 px-3 py-2">
             <button
@@ -157,6 +174,14 @@ function CandidatesPage() {
                 className="inline-flex items-center gap-1.5 rounded-lg border border-destructive/40 px-3 py-2 text-xs text-destructive hover:bg-destructive/10 disabled:cursor-not-allowed disabled:opacity-40"
               >
                 <Trash2 className="h-3.5 w-3.5" /> Delete selected
+              </button>
+              <button
+                type="button"
+                disabled={rows.length === 0 || deleting}
+                onClick={() => setDeleteAllOpen(true)}
+                className="inline-flex items-center gap-1.5 rounded-lg border border-destructive/40 px-3 py-2 text-xs text-destructive hover:bg-destructive/10 disabled:cursor-not-allowed disabled:opacity-40"
+              >
+                <Trash2 className="h-3.5 w-3.5" /> Delete all candidates
               </button>
             </div>
           </div>
@@ -248,6 +273,27 @@ function CandidatesPage() {
               className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
             >
               Delete selected
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      <AlertDialog open={deleteAllOpen} onOpenChange={setDeleteAllOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete all {rows.length} candidates?</AlertDialogTitle>
+            <AlertDialogDescription>
+              This permanently deletes this company&apos;s candidate attempts and reports from MongoDB. Assessment definitions and share links will remain.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              disabled={deleting || rows.length === 0}
+              onClick={() => void deleteCandidates(rows)}
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+            >
+              Delete all candidates
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

@@ -102,6 +102,9 @@ function AssessmentsPage() {
     queryKey: ["company-assessments"],
     queryFn: () => listCompanyAssessments(),
     refetchOnMount: "always",
+    refetchInterval: 5_000,
+    refetchIntervalInBackground: false,
+    refetchOnWindowFocus: true,
   });
 
   const invalidate = () =>
@@ -303,7 +306,7 @@ function AssessmentsPage() {
                 <TableHead>Title</TableHead>
                 <TableHead>Status</TableHead>
                 <TableHead className="text-right">Questions</TableHead>
-                <TableHead className="text-right">Attempts</TableHead>
+                <TableHead className="text-right">Candidates / attempts</TableHead>
                 <TableHead>Avg score</TableHead>
                 <TableHead>Code</TableHead>
                 <TableHead className="text-right">Actions</TableHead>
@@ -343,7 +346,12 @@ function AssessmentsPage() {
                   <TableCell className="text-right">
                     {a.questionCount}
                   </TableCell>
-                  <TableCell className="text-right">{a.attemptCount}</TableCell>
+                  <TableCell className="text-right">
+                    <span>{a.uniqueCandidateCount}</span>
+                    <span className="block text-xs text-muted-foreground">
+                      {a.attemptCount} attempts
+                    </span>
+                  </TableCell>
                   <TableCell>
                     <span
                       className={`font-display text-sm font-semibold ${scoreClass(a.avgScore)}`}
@@ -406,6 +414,7 @@ function AssessmentsPage() {
                             onClick={() =>
                               statusMutation.mutate({
                                 id: a.id,
+                                code: a.code,
                                 status:
                                   a.status === "active" ? "closed" : "active",
                               })
