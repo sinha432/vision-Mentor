@@ -8,17 +8,21 @@ import {
   FileQuestion,
   Loader2,
   Plus,
+  Search,
   Save,
   ShieldCheck,
   Sparkles,
   Trash2,
+  UserRound,
   X,
 } from "lucide-react";
 import { toast } from "sonner";
 import { Toaster } from "@/components/ui/sonner";
 import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
+import { Input } from "@/components/ui/input";
 import { useDemoAuth } from "@/contexts/DemoAuthContext";
-import { createAssessment } from "@/lib/assessments.functions";
+import { createAssessmentWithPersistence } from "@/lib/assessments.functions";
 import { getCompanyProfile } from "@/lib/assessments-data";
 import { Shell } from "./index";
 
@@ -47,6 +51,26 @@ type Q = {
 type QuestionIssue = {
   question: number;
   message: string;
+};
+
+type CandidateOption = {
+  id: string;
+  name: string;
+  email: string;
+};
+
+type InvitationResult = {
+  candidateId: string;
+  name: string;
+  email: string;
+  success: boolean;
+  error?: string;
+};
+
+type CreatedAssessment = {
+  code: string;
+  link: string;
+  persisted: boolean;
 };
 
 const newCid = () => Math.random().toString(36).slice(2, 8);
@@ -100,6 +124,14 @@ function NewAssessment() {
   const [defaultWeight, setDefaultWeight] = useState(1);
   const [busy, setBusy] = useState(false);
   const [openAdvanced, setOpenAdvanced] = useState<number | null>(null);
+  const [candidateQuery, setCandidateQuery] = useState("");
+  const [candidateOptions, setCandidateOptions] = useState<CandidateOption[]>([]);
+  const [selectedCandidates, setSelectedCandidates] = useState<CandidateOption[]>([]);
+  const [searchingCandidates, setSearchingCandidates] = useState(false);
+  const [candidateSearchError, setCandidateSearchError] = useState("");
+  const [createdAssessment, setCreatedAssessment] = useState<CreatedAssessment | null>(null);
+  const [invitationResults, setInvitationResults] = useState<InvitationResult[]>([]);
+  const [retryingInvitations, setRetryingInvitations] = useState(false);
 
   const questionIssues = useMemo<QuestionIssue[]>(() => {
     const issues: QuestionIssue[] = [];
@@ -182,6 +214,48 @@ function NewAssessment() {
     });
   }, []);
 
+  useEffect(() => {
+    const query = candidateQuery.trim();
+    if (query.length < 2) {
+      setCandidateOptions([]);
+      setCandidateSearchError("");
+      setSearchingCandidates(false);
+      return;
+    }
+
+    let active = true;
+    const timeout = window.setTimeout(() => {
+      setSearchingCandidates(true);
+      setCandidateSearchError("");
+      void fetch(`/api/company/candidates?q=${encodeURIComponent(query)}`)
+        .then(async (response) => {
+          const result = await response.json().catch(() => ({}));
+          if (!response.ok) {
+            throw new Error(result.error ?? "Candidate search failed");
+          }
+          return result as { candidates?: CandidateOption[] };
+        })
+        .then((result) => {
+          if (active) setCandidateOptions(result.candidates ?? []);
+        })
+        .catch((error: unknown) => {
+          if (!active) return;
+          setCandidateOptions([]);
+          setCandidateSearchError(
+            error instanceof Error ? error.message : "Candidate search failed",
+          );
+        })
+        .finally(() => {
+          if (active) setSearchingCandidates(false);
+        });
+    }, 250);
+
+    return () => {
+      active = false;
+      window.clearTimeout(timeout);
+    };
+  }, [candidateQuery]);
+
   if (user && user.role !== "company") {
     navigate({ to: "/" });
     return null;
@@ -192,15 +266,73 @@ function NewAssessment() {
   const setQ = (i: number, patch: Partial<Q>) =>
     setQuestions((qs) => qs.map((q, idx) => (idx === i ? { ...q, ...patch } : q)));
 
+  const sendInvitations = async (code: string, candidateIds: string[]) => {
+    const response = await fetch("/api/company/assessment-invitations", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ code, candidateIds }),
+    });
+    const result = await response.json().catch(() => ({}));
+    if (!response.ok || !Array.isArray(result.results)) {
+      throw new Error(result.error ?? "Could not send assessment invitations");
+    }
+    return result as { results: InvitationResult[]; testLink?: string };
+  };
+
+  const failedInvitationResults = (error: string): InvitationResult[] =>
+    selectedCandidates.map((candidate) => ({
+      candidateId: candidate.id,
+      name: candidate.name,
+      email: candidate.email,
+      success: false,
+      error,
+    }));
+
+  const retryFailedInvitations = async () => {
+    if (!createdAssessment?.persisted) return;
+    const failedIds = invitationResults
+      .filter((result) => !result.success)
+      .map((result) => result.candidateId);
+    if (failedIds.length === 0) return;
+
+    setRetryingInvitations(true);
+    try {
+      const response = await sendInvitations(createdAssessment.code, failedIds);
+      if (response.testLink) {
+        setCreatedAssessment((current) =>
+          current ? { ...current, link: response.testLink! } : current,
+        );
+      }
+      const updatedById = new Map(response.results.map((result) => [result.candidateId, result]));
+      setInvitationResults((current) =>
+        current.map((result) => updatedById.get(result.candidateId) ?? result),
+      );
+      const resent = response.results.filter((result) => result.success).length;
+      toast.success(
+        resent > 0
+          ? `Sent ${resent} retried invitation${resent === 1 ? "" : "s"}.`
+          : "No failed invitations were sent.",
+      );
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Could not retry invitations");
+    } finally {
+      setRetryingInvitations(false);
+    }
+  };
+
   const onSubmit = async (e: FormEvent) => {
     e.preventDefault();
     if (!user) return;
+    if (selectedCandidates.length === 0) {
+      toast.error("Select at least one candidate to receive the assessment link.");
+      return;
+    }
     if (!readyToPublish) {
       const firstIssue = questionIssues[0]?.message;
       toast.error(
         title.trim().length < 2
           ? "Add an assessment title before publishing."
-          : firstIssue ?? "Complete the assessment before publishing.",
+          : (firstIssue ?? "Complete the assessment before publishing."),
       );
       return;
     }
@@ -258,14 +390,19 @@ function NewAssessment() {
         )
           return toast.error("Pick the correct MCQ option");
       }
-      if (q.type === "code" && (!q.language || !q.starterCode || !q.testCases || q.testCases.length === 0))
-        return toast.error("Coding question needs a language, starter code, and at least 1 test case");
+      if (
+        q.type === "code" &&
+        (!q.language || !q.starterCode || !q.testCases || q.testCases.length === 0)
+      )
+        return toast.error(
+          "Coding question needs a language, starter code, and at least 1 test case",
+        );
     }
     if (!cleaned.length) return toast.error("Add at least one question");
 
     setBusy(true);
     try {
-      const rec = await createAssessment({
+      const { assessment: rec, persisted } = await createAssessmentWithPersistence({
         data: {
           companyUserId: user.id,
           title: title.trim(),
@@ -275,9 +412,39 @@ function NewAssessment() {
         },
       });
       const link = `${window.location.origin}/a/${rec.code}`;
-      await navigator.clipboard.writeText(link).catch(() => {});
-      toast.success(`Created · link copied: ${link}`);
-      navigate({ to: "/dashboard/assessments" });
+      setCreatedAssessment({ code: rec.code, link, persisted });
+      if (!persisted) {
+        const message = "Not sent because the assessment could not be saved to the company server.";
+        setInvitationResults(failedInvitationResults(message));
+        toast.error("Assessment saved only in this browser; invitations were not sent.");
+        return;
+      }
+
+      try {
+        const response = await sendInvitations(
+          rec.code,
+          selectedCandidates.map((candidate) => candidate.id),
+        );
+        const canonicalLink = response.testLink ?? link;
+        setCreatedAssessment({ code: rec.code, link: canonicalLink, persisted: true });
+        await navigator.clipboard.writeText(canonicalLink).catch(() => {});
+        setInvitationResults(response.results);
+        const sent = response.results.filter((result) => result.success).length;
+        const failed = response.results.length - sent;
+        if (failed === 0) {
+          toast.success(
+            `Assessment published and sent to ${sent} candidate${sent === 1 ? "" : "s"}.`,
+          );
+        } else {
+          toast.error(
+            `${sent} invitation${sent === 1 ? "" : "s"} sent; ${failed} failed. You can retry failed invitations.`,
+          );
+        }
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "Could not send invitations";
+        setInvitationResults(failedInvitationResults(message));
+        toast.error("Assessment published, but invitations could not be sent.");
+      }
     } catch (err: any) {
       toast.error(err?.message ?? "Could not create");
     } finally {
@@ -705,6 +872,221 @@ function NewAssessment() {
           </button>
         </div>
 
+        <section className="glass-strong space-y-4 rounded-2xl p-4 sm:p-5">
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div>
+              <div className="mb-2 flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.16em] text-cyber">
+                <UserRound className="h-3.5 w-3.5" /> Candidate invitations
+              </div>
+              <h2 className="font-display text-lg">Choose who receives the test</h2>
+              <p className="mt-1 text-sm text-muted-foreground">
+                Select at least one registered candidate. The assessment link will be emailed to
+                their account address.
+              </p>
+            </div>
+            <span className="rounded-full border border-border px-2.5 py-1 text-xs text-muted-foreground">
+              {selectedCandidates.length} selected · max 25
+            </span>
+          </div>
+
+          <label className="relative block">
+            <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+            <Input
+              type="search"
+              value={candidateQuery}
+              onChange={(event) => setCandidateQuery(event.target.value)}
+              placeholder="Search by candidate name or email"
+              aria-label="Search registered candidates"
+              className="pl-9"
+            />
+          </label>
+
+          {selectedCandidates.length > 0 && (
+            <ul className="flex flex-wrap gap-2" aria-label="Selected candidates">
+              {selectedCandidates.map((candidate) => (
+                <li
+                  key={candidate.id}
+                  className="flex max-w-full items-center gap-2 rounded-md border border-cyber/25 bg-cyber/5 px-2.5 py-1.5 text-xs"
+                >
+                  <span className="min-w-0 truncate">
+                    {candidate.name} · {candidate.email}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setSelectedCandidates((current) =>
+                        current.filter((item) => item.id !== candidate.id),
+                      )
+                    }
+                    aria-label={`Remove ${candidate.name}`}
+                    className="shrink-0 text-muted-foreground hover:text-foreground"
+                  >
+                    <X className="h-3.5 w-3.5" />
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
+
+          {candidateSearchError && (
+            <p role="alert" className="text-sm text-destructive">
+              {candidateSearchError}
+            </p>
+          )}
+          {candidateQuery.trim().length < 2 ? (
+            <p className="text-xs text-muted-foreground">
+              Enter at least two characters to search.
+            </p>
+          ) : searchingCandidates ? (
+            <p className="flex items-center gap-2 text-xs text-muted-foreground">
+              <Loader2 className="h-3.5 w-3.5 animate-spin" /> Searching candidates
+            </p>
+          ) : !candidateSearchError && candidateOptions.length === 0 ? (
+            <p className="text-xs text-muted-foreground">No matching candidates found.</p>
+          ) : (
+            <ul
+              className="max-h-56 divide-y divide-border overflow-y-auto rounded-md border border-border"
+              aria-label="Candidate search results"
+            >
+              {candidateOptions.map((candidate) => {
+                const isSelected = selectedCandidates.some((item) => item.id === candidate.id);
+                return (
+                  <li key={candidate.id}>
+                    <label className="flex cursor-pointer items-center gap-3 px-3 py-2.5 hover:bg-accent/40">
+                      <Checkbox
+                        checked={isSelected}
+                        disabled={!isSelected && selectedCandidates.length >= 25}
+                        onCheckedChange={(checked) => {
+                          if (checked && !isSelected && selectedCandidates.length >= 25) {
+                            toast.error("You can send up to 25 invitations at a time.");
+                            return;
+                          }
+                          setSelectedCandidates((current) => {
+                            if (checked && !current.some((item) => item.id === candidate.id)) {
+                              return [...current, candidate];
+                            }
+                            return checked
+                              ? current
+                              : current.filter((item) => item.id !== candidate.id);
+                          });
+                        }}
+                        aria-label={`Select ${candidate.name}`}
+                      />
+                      <span className="min-w-0">
+                        <span className="block truncate text-sm font-medium">{candidate.name}</span>
+                        <span className="block truncate text-xs text-muted-foreground">
+                          {candidate.email}
+                        </span>
+                      </span>
+                    </label>
+                  </li>
+                );
+              })}
+            </ul>
+          )}
+        </section>
+
+        {createdAssessment && (
+          <section
+            className="rounded-2xl border border-border bg-background/40 p-4 sm:p-5"
+            aria-live="polite"
+          >
+            <div className="flex flex-wrap items-start justify-between gap-4">
+              <div className="min-w-0">
+                <h2 className="font-display text-lg">
+                  {createdAssessment.persisted
+                    ? "Assessment published"
+                    : "Assessment saved locally"}
+                </h2>
+                {!createdAssessment.persisted && (
+                  <p className="mt-2 text-sm text-destructive">
+                    This assessment is only saved in this browser and is not available to candidates
+                    yet.
+                  </p>
+                )}
+                {createdAssessment.persisted && (
+                  <p className="mt-1 break-all font-mono text-xs text-primary">
+                    {createdAssessment.link}
+                  </p>
+                )}
+              </div>
+              <div className="flex shrink-0 gap-2">
+                {createdAssessment.persisted && (
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    onClick={() => {
+                      void navigator.clipboard
+                        .writeText(createdAssessment.link)
+                        .then(() => toast.success("Assessment link copied."))
+                        .catch(() => toast.error("Could not copy assessment link."));
+                    }}
+                  >
+                    <Copy className="mr-2 h-4 w-4" /> Copy link
+                  </Button>
+                )}
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  disabled={busy}
+                  onClick={() => navigate({ to: "/dashboard/assessments" })}
+                >
+                  Assessments
+                </Button>
+              </div>
+            </div>
+            {createdAssessment.persisted && (
+              <>
+                {invitationResults.length === 0 ? (
+                  <p className="mt-4 flex items-center gap-2 text-sm text-muted-foreground">
+                    <Loader2 className="h-4 w-4 animate-spin" /> Sending invitations
+                  </p>
+                ) : (
+                  <>
+                    <p className="mt-4 text-sm">
+                      {invitationResults.filter((result) => result.success).length} sent ·{" "}
+                      {invitationResults.filter((result) => !result.success).length} failed
+                    </p>
+                    <ul className="mt-2 divide-y divide-border rounded-md border border-border">
+                      {invitationResults.map((result) => (
+                        <li
+                          key={result.candidateId}
+                          className="flex flex-wrap items-center justify-between gap-2 px-3 py-2 text-sm"
+                        >
+                          <span className="min-w-0">
+                            <span className="block truncate font-medium">{result.name}</span>
+                            <span className="block truncate text-xs text-muted-foreground">
+                              {result.email || "Email unavailable"}
+                            </span>
+                          </span>
+                          <span className={result.success ? "text-emerald" : "text-destructive"}>
+                            {result.success ? "Sent" : (result.error ?? "Not sent")}
+                          </span>
+                        </li>
+                      ))}
+                    </ul>
+                    {invitationResults.some((result) => !result.success) && (
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="outline"
+                        className="mt-3"
+                        disabled={retryingInvitations}
+                        onClick={() => void retryFailedInvitations()}
+                      >
+                        {retryingInvitations && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                        Retry failed invitations
+                      </Button>
+                    )}
+                  </>
+                )}
+              </>
+            )}
+          </section>
+        )}
+
         <section className="grid gap-4 rounded-2xl border border-border bg-background/30 p-4 sm:grid-cols-[1fr_auto] sm:items-center">
           <div>
             <div className="flex flex-wrap items-center gap-3 text-sm font-medium">
@@ -738,12 +1120,14 @@ function NewAssessment() {
           </div>
           <Button
             type="submit"
-            disabled={busy}
+            disabled={busy || selectedCandidates.length === 0 || createdAssessment !== null}
             className="min-w-44 glow-primary"
             style={{ background: "var(--gradient-aurora)" }}
           >
             {busy ? (
               <Loader2 className="w-4 h-4 animate-spin" />
+            ) : createdAssessment ? (
+              "Assessment published"
             ) : (
               <>
                 <Save className="w-4 h-4 mr-2" /> Publish assessment

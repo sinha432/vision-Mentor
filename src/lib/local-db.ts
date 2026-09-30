@@ -186,6 +186,7 @@ export function readAssessments(): StoredAssessment[] {
 
 export function insertAssessment(
   a: Omit<StoredAssessment, "_id" | "code" | "createdAt" | "status">,
+  options: { syncToMongoDB?: boolean } = {},
 ): StoredAssessment {
   if (!isBrowser()) throw new Error("Assessments can only be created in the browser");
   const all = readAssessments();
@@ -200,11 +201,11 @@ export function insertAssessment(
   };
   write(KEYS.assessments, [rec, ...all]);
   
-  // Also sync to MongoDB if available
-  void syncAssessmentToMongoDB(rec).catch(() => {
-    // MongoDB sync failed, but localStorage backup is already saved
-    console.log("Assessment created locally; MongoDB sync will retry on update");
-  });
+  if (options.syncToMongoDB !== false) {
+    void syncAssessmentToMongoDB(rec).catch(() => {
+      console.log("Assessment created locally; MongoDB sync will retry on update");
+    });
+  }
   
   return rec;
 }

@@ -45,6 +45,8 @@ import { Route as ApiAuthSessionRouteImport } from './routes/api/auth/session'
 import { Route as ApiAuthSignupRouteImport } from './routes/api/auth/signup'
 import { Route as ApiAuthVerifyCodeRouteImport } from './routes/api/auth/verify-code'
 import { Route as ApiCompanyScheduleNotifyRouteImport } from './routes/api/company-schedule/notify'
+import { Route as ApiCompanyAssessmentInvitationsRouteImport } from './routes/api/company/assessment-invitations'
+import { Route as ApiCompanyCandidatesRouteImport } from './routes/api/company/candidates'
 import { Route as ApiDbAssessmentRouteImport } from './routes/api/db/assessment'
 import { Route as ApiDbCandidateRouteImport } from './routes/api/db/candidate'
 import { Route as ApiDbInterviewRouteImport } from './routes/api/db/interview'
@@ -249,6 +251,17 @@ const ApiCompanyScheduleNotifyRoute =
     path: '/api/company-schedule/notify',
     getParentRoute: () => rootRouteImport,
   } as any)
+const ApiCompanyAssessmentInvitationsRoute =
+  ApiCompanyAssessmentInvitationsRouteImport.update({
+    id: '/api/company/assessment-invitations',
+    path: '/api/company/assessment-invitations',
+    getParentRoute: () => rootRouteImport,
+  } as any)
+const ApiCompanyCandidatesRoute = ApiCompanyCandidatesRouteImport.update({
+  id: '/api/company/candidates',
+  path: '/api/company/candidates',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const ApiDbAssessmentRoute = ApiDbAssessmentRouteImport.update({
   id: '/api/db/assessment',
   path: '/api/db/assessment',
@@ -360,6 +373,8 @@ export interface FileRoutesByFullPath {
   '/api/auth/signup': typeof ApiAuthSignupRoute
   '/api/auth/verify-code': typeof ApiAuthVerifyCodeRoute
   '/api/company-schedule/notify': typeof ApiCompanyScheduleNotifyRoute
+  '/api/company/assessment-invitations': typeof ApiCompanyAssessmentInvitationsRoute
+  '/api/company/candidates': typeof ApiCompanyCandidatesRoute
   '/api/db/assessment': typeof ApiDbAssessmentRoute
   '/api/db/candidate': typeof ApiDbCandidateRoute
   '/api/db/interview': typeof ApiDbInterviewRoute
@@ -409,6 +424,8 @@ export interface FileRoutesByTo {
   '/api/auth/signup': typeof ApiAuthSignupRoute
   '/api/auth/verify-code': typeof ApiAuthVerifyCodeRoute
   '/api/company-schedule/notify': typeof ApiCompanyScheduleNotifyRoute
+  '/api/company/assessment-invitations': typeof ApiCompanyAssessmentInvitationsRoute
+  '/api/company/candidates': typeof ApiCompanyCandidatesRoute
   '/api/db/assessment': typeof ApiDbAssessmentRoute
   '/api/db/candidate': typeof ApiDbCandidateRoute
   '/api/db/interview': typeof ApiDbInterviewRoute
@@ -462,6 +479,8 @@ export interface FileRoutesById {
   '/api/auth/signup': typeof ApiAuthSignupRoute
   '/api/auth/verify-code': typeof ApiAuthVerifyCodeRoute
   '/api/company-schedule/notify': typeof ApiCompanyScheduleNotifyRoute
+  '/api/company/assessment-invitations': typeof ApiCompanyAssessmentInvitationsRoute
+  '/api/company/candidates': typeof ApiCompanyCandidatesRoute
   '/api/db/assessment': typeof ApiDbAssessmentRoute
   '/api/db/candidate': typeof ApiDbCandidateRoute
   '/api/db/interview': typeof ApiDbInterviewRoute
@@ -515,6 +534,8 @@ export interface FileRouteTypes {
     | '/api/auth/signup'
     | '/api/auth/verify-code'
     | '/api/company-schedule/notify'
+    | '/api/company/assessment-invitations'
+    | '/api/company/candidates'
     | '/api/db/assessment'
     | '/api/db/candidate'
     | '/api/db/interview'
@@ -564,6 +585,8 @@ export interface FileRouteTypes {
     | '/api/auth/signup'
     | '/api/auth/verify-code'
     | '/api/company-schedule/notify'
+    | '/api/company/assessment-invitations'
+    | '/api/company/candidates'
     | '/api/db/assessment'
     | '/api/db/candidate'
     | '/api/db/interview'
@@ -616,6 +639,8 @@ export interface FileRouteTypes {
     | '/api/auth/signup'
     | '/api/auth/verify-code'
     | '/api/company-schedule/notify'
+    | '/api/company/assessment-invitations'
+    | '/api/company/candidates'
     | '/api/db/assessment'
     | '/api/db/candidate'
     | '/api/db/interview'
@@ -654,6 +679,8 @@ export interface RootRouteChildren {
   ApiAuthSignupRoute: typeof ApiAuthSignupRoute
   ApiAuthVerifyCodeRoute: typeof ApiAuthVerifyCodeRoute
   ApiCompanyScheduleNotifyRoute: typeof ApiCompanyScheduleNotifyRoute
+  ApiCompanyAssessmentInvitationsRoute: typeof ApiCompanyAssessmentInvitationsRoute
+  ApiCompanyCandidatesRoute: typeof ApiCompanyCandidatesRoute
   ApiDbAssessmentRoute: typeof ApiDbAssessmentRoute
   ApiDbCandidateRoute: typeof ApiDbCandidateRoute
   ApiDbInterviewRoute: typeof ApiDbInterviewRoute
@@ -920,6 +947,20 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ApiCompanyScheduleNotifyRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/api/company/assessment-invitations': {
+      id: '/api/company/assessment-invitations'
+      path: '/api/company/assessment-invitations'
+      fullPath: '/api/company/assessment-invitations'
+      preLoaderRoute: typeof ApiCompanyAssessmentInvitationsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/company/candidates': {
+      id: '/api/company/candidates'
+      path: '/api/company/candidates'
+      fullPath: '/api/company/candidates'
+      preLoaderRoute: typeof ApiCompanyCandidatesRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/api/db/assessment': {
       id: '/api/db/assessment'
       path: '/api/db/assessment'
@@ -1117,6 +1158,8 @@ const rootRouteChildren: RootRouteChildren = {
   ApiAuthSignupRoute: ApiAuthSignupRoute,
   ApiAuthVerifyCodeRoute: ApiAuthVerifyCodeRoute,
   ApiCompanyScheduleNotifyRoute: ApiCompanyScheduleNotifyRoute,
+  ApiCompanyAssessmentInvitationsRoute: ApiCompanyAssessmentInvitationsRoute,
+  ApiCompanyCandidatesRoute: ApiCompanyCandidatesRoute,
   ApiDbAssessmentRoute: ApiDbAssessmentRoute,
   ApiDbCandidateRoute: ApiDbCandidateRoute,
   ApiDbInterviewRoute: ApiDbInterviewRoute,

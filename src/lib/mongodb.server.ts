@@ -305,6 +305,58 @@ export async function getUser(
   return collection.findOne({ email });
 }
 
+export async function searchIndividualUsers(
+  search: string,
+): Promise<{ id: string; name: string; email: string }[]> {
+  const query = search.trim().slice(0, 80);
+  if (query.length < 2) return [];
+
+  const escapedQuery = query.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const matcher = new RegExp(escapedQuery, "i");
+  const collection = await getCollection<StoredUser>("users");
+  const users = await collection
+    .find(
+      {
+        role: "individual",
+        $or: [{ name: matcher }, { email: matcher }],
+      },
+      { projection: { _id: 1, name: 1, email: 1 } },
+    )
+    .sort({ name: 1 })
+    .limit(25)
+    .toArray();
+
+  return users.flatMap((user) =>
+    user._id && user.name && user.email
+      ? [{ id: String(user._id), name: user.name, email: user.email }]
+      : [],
+  );
+}
+
+export async function getIndividualUsersByIds(
+  ids: string[],
+): Promise<{ id: string; name: string; email: string }[]> {
+  const uniqueIds = [...new Set(ids)].slice(0, 25);
+  const databaseIds: (string | ObjectId)[] = [...uniqueIds];
+  for (const id of uniqueIds) {
+    if (ObjectId.isValid(id)) databaseIds.push(new ObjectId(id));
+  }
+
+  const collection = await getCollection<StoredUser>("users");
+  const users = await collection
+    .find(
+      { _id: { $in: databaseIds }, role: "individual" },
+      { projection: { _id: 1, name: 1, email: 1 } },
+    )
+    .toArray();
+
+  return users.flatMap((user) =>
+    user._id && user.name && user.email
+      ? [{ id: String(user._id), name: user.name, email: user.email }]
+      : [],
+  );
+}
+
 // ============================================================
 // Interview operations
 // ============================================================

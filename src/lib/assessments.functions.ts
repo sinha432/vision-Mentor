@@ -39,6 +39,7 @@ import {
   fetchUserFromMongoDB,
   hasAssessmentSubmissionInMongoDB,
   syncAssessmentSubmissionToMongoDB,
+  syncAssessmentToMongoDB,
   updateAssessmentStatusInMongoDB,
 } from "./mongodb-sync";
 
@@ -68,6 +69,16 @@ const createSchema = z.object({
   timeLimitSeconds: z.number().int().min(60).max(86_400).default(1_800),
   questions: z.array(questionInput).min(1).max(30),
 });
+
+function assessmentFields(input: z.infer<typeof createSchema>) {
+  return {
+    companyUserId: input.companyUserId,
+    title: input.title,
+    requireMedia: input.requireMedia,
+    timeLimitSeconds: input.timeLimitSeconds,
+    questions: input.questions.map((question) => ({ id: newId(), ...question })),
+  };
+}
 
 const runResultSchema = z
   .object({
@@ -138,13 +149,17 @@ async function companyAssessmentData(companyUserId: string) {
 
 export async function createAssessment({ data }: { data: unknown }) {
   const input = createSchema.parse(data);
-  return insertAssessment({
-    companyUserId: input.companyUserId,
-    title: input.title,
-    requireMedia: input.requireMedia,
-    timeLimitSeconds: input.timeLimitSeconds,
-    questions: input.questions.map((q) => ({ id: newId(), ...q })),
-  });
+  return insertAssessment(assessmentFields(input));
+}
+
+export async function createAssessmentWithPersistence({ data }: { data: unknown }) {
+  const input = createSchema.parse(data);
+  const assessment = insertAssessment(assessmentFields(input), { syncToMongoDB: false });
+  const saved = await syncAssessmentToMongoDB(assessment);
+  return {
+    assessment,
+    persisted: saved?.code === assessment.code,
+  };
 }
 
 export async function listCompanyAssessments({ data }: { data: unknown }) {
