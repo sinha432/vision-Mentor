@@ -14,6 +14,7 @@ import {
 
 import { NovaVoiceControl } from "@/components/nova/NovaVoiceControl";
 import { CompanyNovaActions } from "@/components/nova/CompanyNovaActions";
+import type { CodeLanguage } from "@/lib/assessment-types";
 
 import {
   CompanyQuestionGenerator,
@@ -70,7 +71,7 @@ interface GeneratedQuestion {
 
   correctChoiceId?: string;
 
-  language?: "java" | "javascript" | "python";
+  language?: CodeLanguage;
 
   starterCode?: string;
 
@@ -357,6 +358,9 @@ export function NovaConsole({
 
                 correctChoiceId:
                   question.correctChoiceId,
+
+                language:
+                  question.language,
 
                 starterCode:
                   question.starterCode,

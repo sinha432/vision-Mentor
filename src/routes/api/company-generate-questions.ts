@@ -1,12 +1,15 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { createOpenAICompatible } from "@ai-sdk/openai-compatible";
 import { generateText } from "ai";
+import type { CodeLanguage } from "@/lib/assessment-types";
+import { CODE_STARTER_TEMPLATES } from "@/lib/code-languages";
 
 interface GenerateRequest {
   role?: string;
   topic?: string;
   difficulty?: "Easy" | "Medium" | "Hard" | "Mixed";
   count?: number;
+  codingLanguage?: CodeLanguage | "mixed";
 }
 
 interface GeneratedQuestion {
@@ -21,7 +24,7 @@ interface GeneratedQuestion {
     text: string;
   }[];
   correctChoiceId?: string;
-  language?: "java" | "javascript" | "python";
+  language?: CodeLanguage;
   starterCode?: string;
   testCases?: {
     input: string;
@@ -61,6 +64,13 @@ export const Route = createFileRoute(
 
           const difficulty =
             body.difficulty || "Medium";
+          const supportedLanguages: CodeLanguage[] = ["java", "javascript", "python", "c", "cpp"];
+          const codingLanguage: CodeLanguage | "mixed" =
+            body.codingLanguage === "mixed"
+              ? "mixed"
+              : supportedLanguages.includes(body.codingLanguage as CodeLanguage)
+                ? (body.codingLanguage as CodeLanguage)
+                : "mixed";
 
           const count = Math.max(
             1,
@@ -133,6 +143,10 @@ Rules:
 - Use "mcq" only when appropriate.
 - For every "mcq", provide 2-8 useful choices and set correctChoiceId to one choice id.
 - Use "code" only for programming/code questions. Provide language, complete runnable starterCode, and at least one test case.
+- Supported coding languages: java, javascript, python, c, cpp. Use the requested coding language for every code question when one is selected.
+- For C, generate compilable source with #include directives and int main(void). For C++, generate compilable source with #include <iostream> and int main(). Both must read stdin and print the expected result to stdout.
+- Every coding question must include at least one concrete stdin input and exact expected stdout test case.
+- Requested coding language: ${codingLanguage === "mixed" ? "AI may choose from java, javascript, python, c, cpp" : codingLanguage}.
 - Coding prompts must describe a concrete problem with input/output behavior, like a local LeetCode-style problem.
 - Every question must have meaningful text.
 - Every question must have weight 10.
@@ -213,6 +227,12 @@ Rules:
                   )
                     ? question.correctChoiceId
                     : choices[0]?.id;
+                  const generatedLanguage: CodeLanguage =
+                    codingLanguage !== "mixed"
+                      ? codingLanguage
+                      : supportedLanguages.includes(question.language as CodeLanguage)
+                        ? (question.language as CodeLanguage)
+                        : "java";
 
                   return {
                   id:
@@ -269,21 +289,19 @@ Rules:
 
                   correctChoiceId,
 
-                  language:
-                    question.language === "javascript" ||
-                    question.language === "python"
-                      ? question.language
-                      : "java",
+                  language: generatedLanguage,
 
-                  starterCode:
-                    question.starterCode,
+                  starterCode: typeof question.starterCode === "string" && question.starterCode.trim()
+                    ? question.starterCode
+                    : CODE_STARTER_TEMPLATES[generatedLanguage],
 
                   testCases: Array.isArray(question.testCases)
                     ? question.testCases
                         .filter(
                           (testCase) =>
                             typeof testCase?.input === "string" &&
-                            typeof testCase?.expectedStdout === "string",
+                            typeof testCase?.expectedStdout === "string" &&
+                            (testCase.input.trim() || testCase.expectedStdout.trim()),
                         )
                         .slice(0, 10)
                     : undefined,
@@ -301,6 +319,16 @@ Rules:
                 error:
                   "Groq generated no valid questions.",
               },
+              { status: 502 },
+            );
+          }
+
+          const codeQuestionWithoutTests = questions.find(
+            (question) => question.type === "code" && !question.testCases?.length,
+          );
+          if (codeQuestionWithoutTests) {
+            return Response.json(
+              { error: "AI generated a coding question without a usable test case. Please try again." },
               { status: 502 },
             );
           }

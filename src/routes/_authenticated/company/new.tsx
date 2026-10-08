@@ -22,14 +22,15 @@ import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { useDemoAuth } from "@/contexts/DemoAuthContext";
+import type { CodeLanguage } from "@/lib/assessment-types";
 import { createAssessmentWithPersistence } from "@/lib/assessments.functions";
+import { CODE_STARTER_TEMPLATES } from "@/lib/code-languages";
 import { getCompanyProfile } from "@/lib/assessments-data";
 import { Shell } from "./index";
 
 export const Route = createFileRoute("/_authenticated/company/new")({ component: NewAssessment });
 
 type QType = "text" | "mcq" | "code";
-type CodeLanguage = "java" | "javascript" | "python";
 type Choice = { id: string; text: string };
 type TC = { input: string; expectedStdout: string };
 type Q = {
@@ -75,29 +76,6 @@ type CreatedAssessment = {
 
 const newCid = () => Math.random().toString(36).slice(2, 8);
 
-const starterTemplates: Record<CodeLanguage, string> = {
-  java: `import java.util.*;
-
-public class Main {
-    public static void main(String[] args) {
-        Scanner scanner = new Scanner(System.in);
-        // Read input, implement the solution, and print the result.
-    }
-}`,
-  javascript: `const fs = require("fs");
-const input = fs.readFileSync(0, "utf8").trim();
-
-// Parse input, implement the solution, and print the result.
-console.log(input);`,
-  python: `import sys
-
-def solve(input_text: str) -> str:
-    # Parse input, implement the solution, and return the result.
-    return input_text.strip()
-
-print(solve(sys.stdin.read()))`,
-};
-
 const blankQ = (): Q => ({
   type: "text",
   text: "",
@@ -110,7 +88,7 @@ const blankQ = (): Q => ({
   ],
   correctChoiceId: "",
   language: "java",
-  starterCode: starterTemplates.java,
+  starterCode: CODE_STARTER_TEMPLATES.java,
   testCases: [{ input: "", expectedStdout: "" }],
 });
 
@@ -785,13 +763,15 @@ function NewAssessment() {
                       value={q.language}
                       onChange={(e) => {
                         const language = e.target.value as CodeLanguage;
-                        setQ(i, { language, starterCode: starterTemplates[language] });
+                        setQ(i, { language, starterCode: CODE_STARTER_TEMPLATES[language] });
                       }}
                       className="w-full glass rounded-md px-3 py-2 bg-transparent outline-none text-sm"
                     >
                       <option value="java">Java</option>
                       <option value="javascript">JavaScript</option>
                       <option value="python">Python</option>
+                      <option value="c">C</option>
+                      <option value="cpp">C++</option>
                     </select>
                   </label>
                   <div>

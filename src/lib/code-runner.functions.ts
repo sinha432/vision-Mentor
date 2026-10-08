@@ -3,7 +3,7 @@ import { z } from "zod";
 
 const schema = z.object({
   sourceCode: z.string().min(1).max(50000),
-  language: z.enum(["java", "javascript", "python"]).default("java"),
+  language: z.enum(["java", "javascript", "python", "c", "cpp"]).default("java"),
   cases: z.array(z.object({
     input: z.string().max(10000).default(""),
     expectedStdout: z.string().max(10000).default(""),
@@ -29,6 +29,8 @@ export const runJavaCode = createServerFn({ method: "POST" })
       java: 62,
       javascript: 63,
       python: 71,
+      c: 50,
+      cpp: 54,
     }[data.language];
 
     for (const c of data.cases) {

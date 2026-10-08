@@ -641,6 +641,10 @@ function AssessmentPage() {
         },
       });
 
+      if (!result.configured) {
+        throw new Error("Code execution is not configured. Add JUDGE0_RAPIDAPI_KEY to the server environment.");
+      }
+
       const runResults: RunResult = {
         passed: result.passed,
         total: result.total,
