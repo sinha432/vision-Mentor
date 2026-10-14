@@ -33,6 +33,11 @@ import {
   useDetectionEngine,
   type DetectionEvent,
 } from "@/interviewer/hooks/useDetectionEngine";
+import {
+  assessmentViolationForEvent,
+  recordAssessmentViolation,
+  type AssessmentStrikeState,
+} from "@/lib/assessment-integrity";
 
 import type {
   DetectionSummary,
@@ -99,8 +104,12 @@ function AssessmentPage() {
   const submittingRef = useRef(false);
   const endedRef = useRef(false);
   const terminationReasonRef = useRef<string | null>(null);
-  const signalsRef = useRef<DetectionSignals | null>(null);
-  const phoneSeenRef = useRef(false);
+  const strikeStateRef = useRef<AssessmentStrikeState>({
+    phone: 0,
+    audio: 0,
+    lastAudioWarningAt: null,
+  });
+  const integrityEventsRef = useRef<DetectionEvent[]>([]);
 
   // submitAssessment is declared later in this component. The ref lets
   // integrity handlers invoke the latest submit function safely.
@@ -269,23 +278,34 @@ function AssessmentPage() {
     try {
       setMediaError(null);
 
-      const stream =
-        await navigator.mediaDevices.getUserMedia({
-          video: {
-            facingMode: "user",
-            width: {
-              ideal: 1280,
-            },
-            height: {
-              ideal: 720,
-            },
-          },
-          audio: {
-            echoCancellation: true,
-            noiseSuppression: true,
-            autoGainControl: true,
-          },
-        });
+      const video: MediaTrackConstraints = {
+        facingMode: "user",
+        width: { ideal: 1280 },
+        height: { ideal: 720 },
+      };
+      const audio: MediaTrackConstraints = {
+        echoCancellation: true,
+        noiseSuppression: true,
+        autoGainControl: true,
+      };
+      let stream: MediaStream;
+      let unavailableMessage: string | null = null;
+
+      try {
+        stream = await navigator.mediaDevices.getUserMedia({ video, audio });
+      } catch (combinedError) {
+        try {
+          stream = await navigator.mediaDevices.getUserMedia({ audio });
+          unavailableMessage = "Camera unavailable. Audio monitoring is active; phone detection is limited.";
+        } catch {
+          try {
+            stream = await navigator.mediaDevices.getUserMedia({ video });
+            unavailableMessage = "Microphone unavailable. Camera monitoring is active; audio detection is disabled.";
+          } catch {
+            throw combinedError;
+          }
+        }
+      }
 
       streamRef.current = stream;
 
@@ -297,16 +317,15 @@ function AssessmentPage() {
         });
       }
 
-      setCameraOn(
-        stream.getVideoTracks().some(
-          (track) => track.readyState === "live",
-        ),
-      );
-
-      setMicOn(
-        stream.getAudioTracks().some(
-          (track) => track.readyState === "live",
-        ),
+      const cameraAvailable = stream.getVideoTracks().some((track) => track.readyState === "live");
+      const microphoneAvailable = stream.getAudioTracks().some((track) => track.readyState === "live");
+      setCameraOn(cameraAvailable);
+      setMicOn(microphoneAvailable);
+      setMediaError(
+        unavailableMessage ??
+          (!cameraAvailable || !microphoneAvailable
+            ? "Camera and microphone monitoring are not both available."
+            : null),
       );
     } catch (error) {
       console.error(
@@ -333,7 +352,11 @@ function AssessmentPage() {
         throw new Error("The name must exactly match your registered individual account.");
       }
       const alreadyAttempted = await hasIndividualAttempt({
-        data: { assessmentId: assessment?._id, individualUserId: authenticated.id },
+        data: {
+          assessmentId: assessment?._id,
+          individualUserId: authenticated.id,
+          code: assessment?.code,
+        },
       });
       if (alreadyAttempted) {
         throw new Error("You have already submitted this assessment. Open your reports to view the result.");
@@ -370,6 +393,17 @@ function AssessmentPage() {
    * ---------------------------------------------------------
    */
 
+  const terminateForIntegrity = useCallback((reason: string) => {
+    if (endedRef.current || submittingRef.current) return;
+
+    endedRef.current = true;
+    terminationReasonRef.current = reason;
+    setTerminationReason(reason);
+    setFinished(true);
+    toast.error(reason);
+    void submitAssessmentRef.current?.(true);
+  }, []);
+
   const handleDetectionEvent = useCallback(
     (event: DetectionEvent) => {
       console.log(
@@ -377,72 +411,46 @@ function AssessmentPage() {
         event,
       );
 
-      if (event.kind === "device_visible") {
-        phoneSeenRef.current = true;
+      if (endedRef.current || submittingRef.current) return;
 
-        if ((signalsRef.current?.noiseLevel ?? 0) >= 75) {
-          const reason = "Assessment ended because a phone was detected while the environment was too noisy.";
-          terminationReasonRef.current = reason;
-          setTerminationReason(reason);
-          setFinished(true);
-          toast.error(reason);
-          void submitAssessmentRef.current?.(true);
+      const nextEvents = [...integrityEventsRef.current, event].slice(-30);
+      integrityEventsRef.current = nextEvents;
+      setIntegrityEvents(nextEvents);
+
+      const violation = assessmentViolationForEvent(event.kind);
+
+      if (violation) {
+        const decision = recordAssessmentViolation(strikeStateRef.current, violation, Date.now());
+        strikeStateRef.current = decision.state;
+        if (decision.warningNumber === null) return;
+
+        const detail = violation === "audio"
+          ? `${event.detail} Move to a quiet environment before continuing.`
+          : event.detail;
+        setWarnings((previous) => [...previous, detail].slice(-5));
+        setWarningCount((previous) => previous + 1);
+
+        const label = violation === "phone" ? "Phone/device" : "Audio";
+        if (decision.shouldTerminate) {
+          const reason =
+            violation === "phone"
+              ? "Assessment terminated after three phone/device warnings."
+              : "Assessment terminated after three sustained audio warnings. Please use a quiet environment.";
+          terminateForIntegrity(reason);
           return;
         }
-      }
 
-      setSignals((previous) => previous);
-
-      setIntegrityEvents((previous) =>
-        [...previous, event].slice(-30),
-      );
-
-      const serious =
-        event.kind === "multiple_people" ||
-        event.kind === "device_visible" ||
-        event.kind === "background_voice";
-
-      if (!serious) {
-        setWarnings((previous) => [...previous, event.detail].slice(-5));
+        toast.warning(`${label} warning ${decision.warningNumber} of 3: ${detail}`);
         return;
       }
 
-      setWarnings((previous) =>
-        [...previous, event.detail].slice(-5),
-      );
-
-      setWarningCount((previous) => {
-        const next = previous + 1;
-
-        /*
-         * Warning 1:
-         * notify candidate.
-         *
-         * Warning 2:
-         * notify again.
-         *
-         * Warning 3:
-         * terminate.
-         *
-         * This prevents one accidental detection from
-         * immediately destroying the assessment.
-         */
-        if (next === 1) {
-          toast.warning(
-            "Integrity warning: " +
-              event.detail,
-          );
-        } else if (next === 2) {
-          toast.warning(
-            "Final warning: " +
-              event.detail,
-          );
-        }
-
-        return next;
-      });
+      setWarnings((previous) => [...previous, event.detail].slice(-5));
+      if (event.kind === "multiple_people") {
+        setWarningCount((previous) => previous + 1);
+        toast.warning(`Integrity warning: ${event.detail}`);
+      }
     },
-    [],
+    [terminateForIntegrity],
   );
 
   /*
@@ -458,6 +466,7 @@ function AssessmentPage() {
       Boolean(assessment) &&
       !finished &&
       cameraOn,
+    audioActive: Boolean(assessment) && !finished && micOn,
     getElapsed: () => elapsedRef.current,
     onEvent: handleDetectionEvent,
   });
@@ -467,23 +476,8 @@ function AssessmentPage() {
    */
 
   useEffect(() => {
-    signalsRef.current = detection.signals;
     setSignals(detection.signals);
-
-    if (
-      !finished &&
-      !submitting &&
-      phoneSeenRef.current &&
-      (detection.signals?.noiseLevel ?? 0) >= 75
-    ) {
-      const reason = "Assessment ended because a phone was detected while the environment was too noisy.";
-      terminationReasonRef.current = reason;
-      setTerminationReason(reason);
-      setFinished(true);
-      toast.error(reason);
-      void submitAssessmentRef.current?.(true);
-    }
-  }, [detection.signals, finished, submitting]);
+  }, [detection.signals]);
 
   /*
    * ---------------------------------------------------------
@@ -637,6 +631,11 @@ function AssessmentPage() {
         },
       });
 
+      if (!result.configured) {
+        setCodeRunError("Code execution is not configured. Set JUDGE0_RAPIDAPI_KEY on the server.");
+        return;
+      }
+
       const runResults: RunResult = {
         passed: result.passed,
         total: result.total,
@@ -716,6 +715,7 @@ function AssessmentPage() {
 
       submittingRef.current = true;
       setSubmitting(true);
+      const finalTerminationReason = terminationReasonRef.current ?? terminationReason;
 
       try {
         /*
@@ -741,8 +741,8 @@ function AssessmentPage() {
             candidateEmail: candidate.email,
             answers,
             vision,
-            terminationReason: terminationReasonRef.current ?? terminationReason,
-            integrityEvents: integrityEvents.map((event) => ({
+            terminationReason: finalTerminationReason,
+            integrityEvents: integrityEventsRef.current.map((event) => ({
               kind: event.kind,
               detail: event.detail,
               confidence: event.confidence,
@@ -762,7 +762,7 @@ function AssessmentPage() {
 
         setFinished(true);
 
-        if (terminationReason) {
+        if (finalTerminationReason) {
           toast.error(
             "Assessment terminated and submitted.",
           );
@@ -789,7 +789,7 @@ function AssessmentPage() {
         );
 
         toast.error(
-          terminationReason
+          finalTerminationReason
             ? "Assessment was terminated, but submission could not be completed. Please contact the recruiter."
             : error instanceof Error
               ? error.message
@@ -811,7 +811,6 @@ function AssessmentPage() {
       answers,
       buildVisionSummary,
       finished,
-      integrityEvents,
       candidate,
       terminationReason,
       user,
@@ -1197,10 +1196,14 @@ function AssessmentPage() {
                 )}
 
                 {warnings.length > 0 && (
-                  <p className="mt-1 text-sm text-amber-200/80">
-                    Integrity warnings:{" "}
-                    {warningCount}
-                  </p>
+                  <div className="mt-1 text-sm text-amber-200/80">
+                    <p>Integrity warnings: {warningCount}</p>
+                    <ul className="mt-1 list-inside list-disc space-y-1">
+                      {warnings.map((warning, index) => (
+                        <li key={`${index}-${warning}`}>{warning}</li>
+                      ))}
+                    </ul>
+                  </div>
                 )}
               </div>
             </div>

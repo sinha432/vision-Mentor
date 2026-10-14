@@ -477,8 +477,9 @@ export function useDetectionEngine({
     let blinkClosed = false;
 
     let prevPose:
-      | { x: number; y: number }[]
+      | { x: number; y: number; visibility?: number }[]
       | null = null;
+    let unusualMovementSince = 0;
 
     const lastEvent =
       new Map<DetectionEventKind, number>();
@@ -1063,6 +1064,7 @@ export function useDetectionEngine({
                 landmarks: {
                   x: number;
                   y: number;
+                  visibility?: number;
                 }[][];
               }
             | undefined;
@@ -1110,6 +1112,7 @@ export function useDetectionEngine({
 
           if (prevPose) {
             let delta = 0;
+            let comparablePoints = 0;
 
             for (
               let i = 0;
@@ -1120,31 +1123,42 @@ export function useDetectionEngine({
               );
               i += 1
             ) {
+              const currentPoint = pose[i];
+              const previousPoint = prevPose[i];
+              if (
+                !currentPoint ||
+                !previousPoint ||
+                (currentPoint.visibility ?? 1) < 0.5 ||
+                (previousPoint.visibility ?? 1) < 0.5
+              ) {
+                continue;
+              }
               delta +=
                 Math.abs(
-                  pose[i].x -
-                    prevPose[i].x,
+                  currentPoint.x - previousPoint.x,
                 ) +
                 Math.abs(
-                  pose[i].y -
-                    prevPose[i].y,
+                  currentPoint.y - previousPoint.y,
                 );
+              comparablePoints += 1;
             }
 
-            movement = clamp(
-              Math.round(
-                (delta / pose.length) *
-                  2600,
-              ),
-            );
+            movement = comparablePoints >= 8
+              ? clamp(Math.round((delta / comparablePoints) * 2600))
+              : 0;
 
             if (movement > 78) {
-              fire(
-                "unusual_movement",
-                "A lot of movement away from the camera was detected.",
-                movement,
-                60_000,
-              );
+              unusualMovementSince ||= Date.now();
+              if (Date.now() - unusualMovementSince >= 1200) {
+                fire(
+                  "unusual_movement",
+                  "Sustained rapid movement was detected. Keep your face and shoulders steady in frame.",
+                  movement,
+                  60_000,
+                );
+              }
+            } else {
+              unusualMovementSince = 0;
             }
           }
 
@@ -1209,6 +1223,7 @@ export function useDetectionEngine({
             (point) => ({
               x: point.x,
               y: point.y,
+              visibility: point.visibility,
             }),
           );
         }

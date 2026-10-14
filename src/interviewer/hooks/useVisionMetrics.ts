@@ -173,46 +173,109 @@ export function useVisionMetrics(
 
   const getSnapshot = useCallback(() => snapshotRef.current?.dataUrl ?? null, []);
 
-  const captureSnapshotNow = useCallback(() => {
-    const video = videoRef.current;
-    if (!video || video.readyState < 2 || !video.videoWidth || !video.videoHeight) return null;
-    if (!shotCanvasRef.current) shotCanvasRef.current = document.createElement("canvas");
-    const canvas = shotCanvasRef.current;
-    const scale = Math.min(1, 720 / video.videoWidth);
-    canvas.width = Math.max(640, Math.round(video.videoWidth * scale));
-    canvas.height = Math.max(360, Math.round(video.videoHeight * scale));
-    const ctx = canvas.getContext("2d");
-    if (!ctx) return null;
-    ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-    try {
-      const dataUrl = canvas.toDataURL("image/jpeg", 0.9);
-      snapshotRef.current = { dataUrl, quality: 100 };
-      return dataUrl;
-    } catch {
+  const captureSnapshotNow = useCallback(async (): Promise<string | null> => {
+  const video = videoRef.current;
+
+  if (!video) return null;
+
+  // Wait until the camera has produced real video dimensions.
+  const waitForVideo = async () => {
+    for (let attempt = 0; attempt < 20; attempt += 1) {
+      if (
+        video.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA &&
+        video.videoWidth > 0 &&
+        video.videoHeight > 0
+      ) {
+        return true;
+      }
+
+      await new Promise<void>((resolve) => {
+        window.setTimeout(resolve, 100);
+      });
+    }
+
+    return false;
+  };
+
+  const ready = await waitForVideo();
+
+  if (!ready) {
+    console.warn("[Appearance] Camera video was not ready for capture.");
+    return null;
+  }
+
+  if (!shotCanvasRef.current) {
+    shotCanvasRef.current = document.createElement("canvas");
+  }
+
+  const canvas = shotCanvasRef.current;
+
+  const sourceWidth = video.videoWidth;
+  const sourceHeight = video.videoHeight;
+
+  // Keep enough resolution for hair, beard and clothing analysis.
+  const maxWidth = 1280;
+  const scale = Math.min(1, maxWidth / sourceWidth);
+
+  canvas.width = Math.max(640, Math.round(sourceWidth * scale));
+  canvas.height = Math.max(360, Math.round(sourceHeight * scale));
+
+  const ctx = canvas.getContext("2d", {
+    alpha: false,
+    willReadFrequently: false,
+  });
+
+  if (!ctx) {
+    console.warn("[Appearance] Could not create capture canvas.");
+    return null;
+  }
+
+  // Clear any previous frame.
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+  // Capture the CURRENT camera frame.
+  ctx.drawImage(
+    video,
+    0,
+    0,
+    canvas.width,
+    canvas.height,
+  );
+
+  try {
+    const dataUrl = canvas.toDataURL("image/jpeg", 0.92);
+
+    if (!dataUrl.startsWith("data:image/jpeg")) {
+      console.warn("[Appearance] Invalid camera image generated.");
       return null;
     }
-  }, [videoRef]);
 
-  /** Current frame, on demand — used by the live presence coach. */
-  const grabFrame = useCallback(() => {
-    const video = videoRef.current;
-    if (!video || video.readyState < 2) return null;
-    if (!shotCanvasRef.current) shotCanvasRef.current = document.createElement("canvas");
-    const canvas = shotCanvasRef.current;
-    const sourceWidth = video.videoWidth || 1280;
-    const sourceHeight = video.videoHeight || 720;
-    const scale = Math.min(1, 720 / sourceWidth);
-    canvas.width = Math.max(640, Math.round(sourceWidth * scale));
-    canvas.height = Math.max(360, Math.round(sourceHeight * scale));
-    const ctx = canvas.getContext("2d");
-    if (!ctx) return null;
-    ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-    try {
-      return canvas.toDataURL("image/jpeg", 0.84);
-    } catch {
+    // Reject suspiciously tiny images.
+    if (dataUrl.length < 20_000) {
+      console.warn(
+        "[Appearance] Captured image is unexpectedly small:",
+        dataUrl.length,
+      );
       return null;
     }
-  }, [videoRef]);
 
-  return { live, summarize, getSnapshot, captureSnapshotNow, grabFrame };
+    snapshotRef.current = {
+      dataUrl,
+      quality: 100,
+    };
+
+    console.info("[Appearance] Fresh camera frame captured", {
+      width: canvas.width,
+      height: canvas.height,
+      bytes: dataUrl.length,
+    });
+
+    return dataUrl;
+  } catch (error) {
+    console.error("[Appearance] Failed to encode camera frame:", error);
+    return null;
+  }
+}, [videoRef]);
+
+  return { live, summarize, getSnapshot, captureSnapshotNow };
 }

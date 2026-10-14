@@ -13,6 +13,7 @@ import {
 import { useQuery } from "@tanstack/react-query";
 
 import { listCompanyAssessments } from "@/lib/assessments-data";
+import { listCompanyCandidates } from "@/lib/assessments.functions";
 import { useDemoAuth } from "@/contexts/DemoAuthContext";
 
 export const Route = createFileRoute(
@@ -50,6 +51,18 @@ function HiringAnalyticsPage() {
       ready &&
       !!user &&
       user.role === "company",
+    refetchInterval: 5_000,
+    refetchIntervalInBackground: false,
+    refetchOnWindowFocus: true,
+  });
+
+  const { data: candidates = [] } = useQuery({
+    queryKey: ["company-candidates", user?.id],
+    queryFn: () => listCompanyCandidates({ data: { companyUserId: user?.id } }),
+    enabled: ready && user?.role === "company",
+    refetchInterval: 5_000,
+    refetchIntervalInBackground: false,
+    refetchOnWindowFocus: true,
   });
 
   if (!ready) {
@@ -181,7 +194,7 @@ function HiringAnalyticsPage() {
       </div>
 
       {/* KPI cards */}
-      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-5">
         <AnalyticsCard
           icon={ClipboardCheck}
           label="Assessments Created"
@@ -191,9 +204,16 @@ function HiringAnalyticsPage() {
 
         <AnalyticsCard
           icon={Users}
-          label="Candidates Tested"
+          label="Unique Candidates"
+          value={candidates.length}
+          description="Across company assessments"
+        />
+
+        <AnalyticsCard
+          icon={ClipboardCheck}
+          label="Total Attempts"
           value={candidatesTested}
-          description="Total assessment attempts"
+          description="Submitted assessment links"
         />
 
         <AnalyticsCard
@@ -275,8 +295,12 @@ function HiringAnalyticsPage() {
 
                     <div className="flex flex-wrap gap-2 text-[10px]">
                       <span className="rounded-full bg-cyber/10 px-2.5 py-1 text-cyber">
-                        {attempts} candidate
-                        {attempts === 1 ? "" : "s"}
+                        {assessment.uniqueCandidateCount} candidate
+                        {assessment.uniqueCandidateCount === 1 ? "" : "s"}
+                      </span>
+
+                      <span className="rounded-full bg-muted px-2.5 py-1 text-muted-foreground">
+                        {attempts} attempt{attempts === 1 ? "" : "s"}
                       </span>
 
                       <span className="rounded-full bg-muted px-2.5 py-1 text-muted-foreground">

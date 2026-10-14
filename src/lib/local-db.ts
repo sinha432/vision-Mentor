@@ -186,6 +186,7 @@ export function readAssessments(): StoredAssessment[] {
 
 export function insertAssessment(
   a: Omit<StoredAssessment, "_id" | "code" | "createdAt" | "status">,
+  options: { syncToMongoDB?: boolean } = {},
 ): StoredAssessment {
   if (!isBrowser()) throw new Error("Assessments can only be created in the browser");
   const all = readAssessments();
@@ -200,11 +201,11 @@ export function insertAssessment(
   };
   write(KEYS.assessments, [rec, ...all]);
   
-  // Also sync to MongoDB if available
-  void syncAssessmentToMongoDB(rec).catch(() => {
-    // MongoDB sync failed, but localStorage backup is already saved
-    console.log("Assessment created locally; MongoDB sync will retry on update");
-  });
+  if (options.syncToMongoDB !== false) {
+    void syncAssessmentToMongoDB(rec).catch(() => {
+      console.log("Assessment created locally; MongoDB sync will retry on update");
+    });
+  }
   
   return rec;
 }
@@ -261,6 +262,17 @@ export function insertReport(r: Omit<StoredReport, "_id" | "createdAt">): Stored
   const rec: StoredReport = { ...r, _id: newId(), createdAt: new Date().toISOString() };
   write(KEYS.reports, [rec, ...readReports()]);
   return rec;
+}
+
+export function deleteAttemptLocal(attemptId: string): void {
+  write(
+    KEYS.attempts,
+    readAttempts().filter((attempt) => attempt._id !== attemptId),
+  );
+  write(
+    KEYS.reports,
+    readReports().filter((report) => report.attemptId !== attemptId),
+  );
 }
 
 export function updateReportLocal(

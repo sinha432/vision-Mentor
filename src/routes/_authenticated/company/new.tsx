@@ -17,15 +17,17 @@ import {
 import { toast } from "sonner";
 import { Toaster } from "@/components/ui/sonner";
 import { Button } from "@/components/ui/button";
+import { CandidatePicker, type CandidateOption } from "@/components/company/CandidatePicker";
 import { useDemoAuth } from "@/contexts/DemoAuthContext";
-import { createAssessment } from "@/lib/assessments.functions";
+import type { CodeLanguage } from "@/lib/assessment-types";
+import { createAssessmentWithPersistence } from "@/lib/assessments.functions";
+import { sendAssessmentInvitations, type InvitationResult } from "@/lib/assessment-invitations";
 import { getCompanyProfile } from "@/lib/assessments-data";
 import { Shell } from "./index";
 
 export const Route = createFileRoute("/_authenticated/company/new")({ component: NewAssessment });
 
 type QType = "text" | "mcq" | "code";
-type CodeLanguage = "java" | "javascript" | "python";
 type Choice = { id: string; text: string };
 type TC = { input: string; expectedStdout: string };
 type Q = {
@@ -47,6 +49,12 @@ type Q = {
 type QuestionIssue = {
   question: number;
   message: string;
+};
+
+type CreatedAssessment = {
+  code: string;
+  link: string;
+  persisted: boolean;
 };
 
 const newCid = () => Math.random().toString(36).slice(2, 8);
@@ -72,6 +80,24 @@ def solve(input_text: str) -> str:
     return input_text.strip()
 
 print(solve(sys.stdin.read()))`,
+  c: `#include <stdio.h>
+
+int main(void) {
+    char input[1024];
+    if (fgets(input, sizeof(input), stdin)) {
+        printf("%s", input);
+    }
+    return 0;
+}`,
+  cpp: `#include <iostream>
+#include <string>
+
+int main() {
+    std::string input;
+    std::getline(std::cin, input);
+    std::cout << input << '\\n';
+    return 0;
+}`,
 };
 
 const blankQ = (): Q => ({
@@ -100,6 +126,10 @@ function NewAssessment() {
   const [defaultWeight, setDefaultWeight] = useState(1);
   const [busy, setBusy] = useState(false);
   const [openAdvanced, setOpenAdvanced] = useState<number | null>(null);
+  const [selectedCandidates, setSelectedCandidates] = useState<CandidateOption[]>([]);
+  const [createdAssessment, setCreatedAssessment] = useState<CreatedAssessment | null>(null);
+  const [invitationResults, setInvitationResults] = useState<InvitationResult[]>([]);
+  const [retryingInvitations, setRetryingInvitations] = useState(false);
 
   const questionIssues = useMemo<QuestionIssue[]>(() => {
     const issues: QuestionIssue[] = [];
@@ -192,15 +222,60 @@ function NewAssessment() {
   const setQ = (i: number, patch: Partial<Q>) =>
     setQuestions((qs) => qs.map((q, idx) => (idx === i ? { ...q, ...patch } : q)));
 
+  const failedInvitationResults = (error: string): InvitationResult[] =>
+    selectedCandidates.map((candidate) => ({
+      candidateId: candidate.id,
+      name: candidate.name,
+      email: candidate.email,
+      success: false,
+      error,
+    }));
+
+  const retryFailedInvitations = async () => {
+    if (!createdAssessment?.persisted) return;
+    const failedIds = invitationResults
+      .filter((result) => !result.success)
+      .map((result) => result.candidateId);
+    if (failedIds.length === 0) return;
+
+    setRetryingInvitations(true);
+    try {
+      const response = await sendAssessmentInvitations(createdAssessment.code, failedIds);
+      if (response.testLink) {
+        setCreatedAssessment((current) =>
+          current ? { ...current, link: response.testLink! } : current,
+        );
+      }
+      const updatedById = new Map(response.results.map((result) => [result.candidateId, result]));
+      setInvitationResults((current) =>
+        current.map((result) => updatedById.get(result.candidateId) ?? result),
+      );
+      const resent = response.results.filter((result) => result.success).length;
+      toast.success(
+        resent > 0
+          ? `Sent ${resent} retried invitation${resent === 1 ? "" : "s"}.`
+          : "No failed invitations were sent.",
+      );
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Could not retry invitations");
+    } finally {
+      setRetryingInvitations(false);
+    }
+  };
+
   const onSubmit = async (e: FormEvent) => {
     e.preventDefault();
     if (!user) return;
+    if (selectedCandidates.length === 0) {
+      toast.error("Select at least one candidate to receive the assessment link.");
+      return;
+    }
     if (!readyToPublish) {
       const firstIssue = questionIssues[0]?.message;
       toast.error(
         title.trim().length < 2
           ? "Add an assessment title before publishing."
-          : firstIssue ?? "Complete the assessment before publishing.",
+          : (firstIssue ?? "Complete the assessment before publishing."),
       );
       return;
     }
@@ -258,14 +333,19 @@ function NewAssessment() {
         )
           return toast.error("Pick the correct MCQ option");
       }
-      if (q.type === "code" && (!q.language || !q.starterCode || !q.testCases || q.testCases.length === 0))
-        return toast.error("Coding question needs a language, starter code, and at least 1 test case");
+      if (
+        q.type === "code" &&
+        (!q.language || !q.starterCode || !q.testCases || q.testCases.length === 0)
+      )
+        return toast.error(
+          "Coding question needs a language, starter code, and at least 1 test case",
+        );
     }
     if (!cleaned.length) return toast.error("Add at least one question");
 
     setBusy(true);
     try {
-      const rec = await createAssessment({
+      const { assessment: rec, persisted } = await createAssessmentWithPersistence({
         data: {
           companyUserId: user.id,
           title: title.trim(),
@@ -275,9 +355,39 @@ function NewAssessment() {
         },
       });
       const link = `${window.location.origin}/a/${rec.code}`;
-      await navigator.clipboard.writeText(link).catch(() => {});
-      toast.success(`Created · link copied: ${link}`);
-      navigate({ to: "/dashboard/assessments" });
+      setCreatedAssessment({ code: rec.code, link, persisted });
+      if (!persisted) {
+        const message = "Not sent because the assessment could not be saved to the company server.";
+        setInvitationResults(failedInvitationResults(message));
+        toast.error("Assessment saved only in this browser; invitations were not sent.");
+        return;
+      }
+
+      try {
+        const response = await sendAssessmentInvitations(
+          rec.code,
+          selectedCandidates.map((candidate) => candidate.id),
+        );
+        const canonicalLink = response.testLink ?? link;
+        setCreatedAssessment({ code: rec.code, link: canonicalLink, persisted: true });
+        await navigator.clipboard.writeText(canonicalLink).catch(() => {});
+        setInvitationResults(response.results);
+        const sent = response.results.filter((result) => result.success).length;
+        const failed = response.results.length - sent;
+        if (failed === 0) {
+          toast.success(
+            `Assessment published and sent to ${sent} candidate${sent === 1 ? "" : "s"}.`,
+          );
+        } else {
+          toast.error(
+            `${sent} invitation${sent === 1 ? "" : "s"} sent; ${failed} failed. You can retry failed invitations.`,
+          );
+        }
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "Could not send invitations";
+        setInvitationResults(failedInvitationResults(message));
+        toast.error("Assessment published, but invitations could not be sent.");
+      }
     } catch (err: any) {
       toast.error(err?.message ?? "Could not create");
     } finally {
@@ -625,6 +735,8 @@ function NewAssessment() {
                       <option value="java">Java</option>
                       <option value="javascript">JavaScript</option>
                       <option value="python">Python</option>
+                      <option value="c">C</option>
+                      <option value="cpp">C++</option>
                     </select>
                   </label>
                   <div>
@@ -705,6 +817,115 @@ function NewAssessment() {
           </button>
         </div>
 
+        <div className="glass-strong space-y-4 rounded-2xl p-4 sm:p-5">
+          <CandidatePicker
+            selectedCandidates={selectedCandidates}
+            onSelectionChange={setSelectedCandidates}
+            disabled={busy}
+          />
+        </div>
+
+        {createdAssessment && (
+          <section
+            className="rounded-2xl border border-border bg-background/40 p-4 sm:p-5"
+            aria-live="polite"
+          >
+            <div className="flex flex-wrap items-start justify-between gap-4">
+              <div className="min-w-0">
+                <h2 className="font-display text-lg">
+                  {createdAssessment.persisted
+                    ? "Assessment published"
+                    : "Assessment saved locally"}
+                </h2>
+                {!createdAssessment.persisted && (
+                  <p className="mt-2 text-sm text-destructive">
+                    This assessment is only saved in this browser and is not available to candidates
+                    yet.
+                  </p>
+                )}
+                {createdAssessment.persisted && (
+                  <p className="mt-1 break-all font-mono text-xs text-primary">
+                    {createdAssessment.link}
+                  </p>
+                )}
+              </div>
+              <div className="flex shrink-0 gap-2">
+                {createdAssessment.persisted && (
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    onClick={() => {
+                      void navigator.clipboard
+                        .writeText(createdAssessment.link)
+                        .then(() => toast.success("Assessment link copied."))
+                        .catch(() => toast.error("Could not copy assessment link."));
+                    }}
+                  >
+                    <Copy className="mr-2 h-4 w-4" /> Copy link
+                  </Button>
+                )}
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  disabled={busy}
+                  onClick={() => navigate({ to: "/dashboard/assessments" })}
+                >
+                  Assessments
+                </Button>
+              </div>
+            </div>
+            {createdAssessment.persisted && (
+              <>
+                {invitationResults.length === 0 ? (
+                  <p className="mt-4 flex items-center gap-2 text-sm text-muted-foreground">
+                    <Loader2 className="h-4 w-4 animate-spin" /> Sending invitations
+                  </p>
+                ) : (
+                  <>
+                    <p className="mt-4 text-sm">
+                      {invitationResults.filter((result) => result.success).length} sent ·{" "}
+                      {invitationResults.filter((result) => !result.success).length} failed
+                    </p>
+                    <ul className="mt-2 divide-y divide-border rounded-md border border-border">
+                      {invitationResults.map((result) => (
+                        <li
+                          key={result.candidateId}
+                          className="flex flex-wrap items-center justify-between gap-2 px-3 py-2 text-sm"
+                        >
+                          <span className="min-w-0">
+                            <span className="block truncate font-medium">{result.name}</span>
+                            <span className="block truncate text-xs text-muted-foreground">
+                              {result.email || "Email unavailable"}
+                            </span>
+                          </span>
+                          <span className={result.success ? "text-emerald" : "text-destructive"}>
+                            {result.success ? "Sent" : (result.error ?? "Not sent")}
+                          </span>
+                        </li>
+                      ))}
+                    </ul>
+                    {invitationResults.some((result) => !result.success) && (
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="outline"
+                        className="mt-3"
+                        disabled={retryingInvitations}
+                        onClick={() => void retryFailedInvitations()}
+                      >
+                        {retryingInvitations && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                        Retry failed invitations
+                      </Button>
+                    )}
+                  </>
+                )}
+              </>
+            )}
+          </section>
+        )}
+
         <section className="grid gap-4 rounded-2xl border border-border bg-background/30 p-4 sm:grid-cols-[1fr_auto] sm:items-center">
           <div>
             <div className="flex flex-wrap items-center gap-3 text-sm font-medium">
@@ -738,12 +959,14 @@ function NewAssessment() {
           </div>
           <Button
             type="submit"
-            disabled={busy}
+            disabled={busy || selectedCandidates.length === 0 || createdAssessment !== null}
             className="min-w-44 glow-primary"
             style={{ background: "var(--gradient-aurora)" }}
           >
             {busy ? (
               <Loader2 className="w-4 h-4 animate-spin" />
+            ) : createdAssessment ? (
+              "Assessment published"
             ) : (
               <>
                 <Save className="w-4 h-4 mr-2" /> Publish assessment

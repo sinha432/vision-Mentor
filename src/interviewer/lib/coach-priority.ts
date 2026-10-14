@@ -16,6 +16,7 @@ const AREA_WEIGHT: Record<CoachArea, number> = {
   posture: 3,
   grooming: 2,
   hair: 2,
+  attire: 2,
   delivery: 2,
   framing: 1,
 };

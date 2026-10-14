@@ -1,6 +1,7 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { getUser } from "@/lib/mongodb.server";
 import { verifyPassword } from "@/lib/auth-password";
+import { createSessionCookie } from "@/lib/auth-session.server";
 
 export const Route = createFileRoute("/api/auth/login")({
   server: {
@@ -93,15 +94,20 @@ export const Route = createFileRoute("/api/auth/login")({
             );
           }
 
-          return Response.json({
-            success: true,
-            user: {
-              id: String(user._id ?? user.email),
-              email: user.email,
-              name: user.name,
-              role: user.role,
+          const authenticatedUser = {
+            id: String(user._id ?? user.email),
+            email: user.email,
+            name: user.name,
+            role: user.role,
+          };
+
+          return Response.json(
+            {
+              success: true,
+              user: authenticatedUser,
             },
-          });
+            { headers: { "Set-Cookie": createSessionCookie(authenticatedUser) } },
+          );
         } catch (error) {
           console.error("Login error:", error);
 

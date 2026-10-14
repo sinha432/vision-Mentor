@@ -85,8 +85,39 @@ export function DemoAuthProvider({
 
     const stored = readStored();
 
-    setUser(stored);
-    setReady(true);
+    let active = true;
+    const restoreSession = async () => {
+      try {
+        const response = await fetch("/api/auth/session");
+        if (!active) return;
+
+        if (!response.ok) {
+          setUser(null);
+          localStorage.removeItem(STORAGE_KEY);
+          localStorage.removeItem(COMPANY_STORAGE_KEY);
+          localStorage.removeItem(INDIVIDUAL_STORAGE_KEY);
+          return;
+        }
+
+        const result = await response.json() as { user?: DemoUser };
+        if (!result.user) throw new Error("Invalid session response");
+        setUser(result.user);
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(result.user));
+        localStorage.setItem(
+          result.user.role === "company" ? COMPANY_STORAGE_KEY : INDIVIDUAL_STORAGE_KEY,
+          JSON.stringify(result.user),
+        );
+      } catch {
+        if (active) setUser(stored);
+      } finally {
+        if (active) setReady(true);
+      }
+    };
+
+    void restoreSession();
+    return () => {
+      active = false;
+    };
   }, []);
 
   const persist = useCallback((nextUser: DemoUser | null) => {
@@ -103,6 +134,8 @@ export function DemoAuthProvider({
       localStorage.removeItem("vmx_demo_user");
     } else {
       localStorage.removeItem(STORAGE_KEY);
+      localStorage.removeItem(COMPANY_STORAGE_KEY);
+      localStorage.removeItem(INDIVIDUAL_STORAGE_KEY);
       localStorage.removeItem("vmx_demo_user");
     }
   }, []);
@@ -225,6 +258,7 @@ async (
 
   const signOut = useCallback(() => {
     persist(null);
+    void fetch("/api/auth/logout", { method: "POST" }).catch(() => undefined);
   }, [persist]);
 
   return (

@@ -1,5 +1,6 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { deleteCandidateData } from "@/lib/mongodb.server";
+import { getAuthSession } from "@/lib/auth-session.server";
 
 export const Route = createFileRoute("/api/db/candidate")({
   server: {
@@ -15,6 +16,11 @@ export const Route = createFileRoute("/api/db/candidate")({
               status: 400,
               headers: { "Content-Type": "application/json" },
             });
+          }
+
+          const session = getAuthSession(request);
+          if (!session || session.role !== "company" || session.id !== companyUserId) {
+            return Response.json({ error: "Company session required" }, { status: 403 });
           }
 
           const result = await deleteCandidateData(individualUserId, companyUserId);

@@ -15,10 +15,19 @@ type MediaState = {
   micEnabled: boolean;
   cameraConnected: boolean;
   micConnected: boolean;
+  cameraStatus: "disabled" | "requesting" | "connected" | "denied" | "unavailable" | "ended";
+  micStatus: "disabled" | "requesting" | "connected" | "denied" | "unavailable" | "ended";
   error: string | null;
   setCameraEnabled: (enabled: boolean) => void;
   setMicEnabled: (enabled: boolean) => void;
 };
+
+function accessFailureStatus(error: unknown): "denied" | "unavailable" {
+  return error instanceof DOMException &&
+    (error.name === "NotAllowedError" || error.name === "PermissionDeniedError")
+    ? "denied"
+    : "unavailable";
+}
 
 const MediaContext = createContext<MediaState | null>(null);
 
@@ -36,6 +45,8 @@ export function MediaProvider({ children }: { children: React.ReactNode }) {
   const [micEnabled, setMicEnabledState] = useState(readMicEnabled);
   const [cameraConnected, setCameraConnected] = useState(false);
   const [micConnected, setMicConnected] = useState(false);
+  const [cameraStatus, setCameraStatus] = useState<MediaState["cameraStatus"]>("disabled");
+  const [micStatus, setMicStatus] = useState<MediaState["micStatus"]>("disabled");
   const [error, setError] = useState<string | null>(null);
 
   const refreshConnection = useCallback(() => {
@@ -54,31 +65,41 @@ export function MediaProvider({ children }: { children: React.ReactNode }) {
   const acquire = useCallback(async (wantCamera: boolean, wantMic: boolean) => {
     const requestId = ++requestRef.current;
     stopTracks();
+    setCameraStatus(wantCamera ? "requesting" : "disabled");
+    setMicStatus(wantMic ? "requesting" : "disabled");
     if (!wantCamera && !wantMic) {
       setError(null);
       return;
     }
     if (!navigator.mediaDevices?.getUserMedia) {
       setError("Camera or microphone access is not available in this browser.");
+      if (wantCamera) setCameraStatus("unavailable");
+      if (wantMic) setMicStatus("unavailable");
       return;
     }
 
     const tracks: MediaStreamTrack[] = [];
+    let nextCameraStatus: MediaState["cameraStatus"] = wantCamera ? "unavailable" : "disabled";
+    let nextMicStatus: MediaState["micStatus"] = wantMic ? "unavailable" : "disabled";
     try {
       const combined = await navigator.mediaDevices.getUserMedia({ video: wantCamera, audio: wantMic });
       tracks.push(...combined.getTracks());
+      nextCameraStatus = wantCamera && combined.getVideoTracks().length ? "connected" : nextCameraStatus;
+      nextMicStatus = wantMic && combined.getAudioTracks().length ? "connected" : nextMicStatus;
     } catch {
       if (wantCamera) {
         try {
           const camera = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
           tracks.push(...camera.getVideoTracks());
-        } catch { /* camera remains disconnected */ }
+          nextCameraStatus = camera.getVideoTracks().length ? "connected" : "unavailable";
+        } catch (error) { nextCameraStatus = accessFailureStatus(error); }
       }
       if (wantMic) {
         try {
           const mic = await navigator.mediaDevices.getUserMedia({ video: false, audio: true });
           tracks.push(...mic.getAudioTracks());
-        } catch { /* microphone remains disconnected */ }
+          nextMicStatus = mic.getAudioTracks().length ? "connected" : "unavailable";
+        } catch (error) { nextMicStatus = accessFailureStatus(error); }
       }
     }
 
@@ -91,10 +112,17 @@ export function MediaProvider({ children }: { children: React.ReactNode }) {
       streamRef.current = next;
       setStream(next);
       setError(null);
-      tracks.forEach((track) => track.addEventListener("ended", refreshConnection));
+      tracks.forEach((track) => track.addEventListener("ended", () => {
+        if (streamRef.current !== next) return;
+        if (track.kind === "video") setCameraStatus("ended");
+        if (track.kind === "audio") setMicStatus("ended");
+        refreshConnection();
+      }));
     } else {
       setError("Camera or microphone access was denied.");
     }
+    setCameraStatus(nextCameraStatus);
+    setMicStatus(nextMicStatus);
     refreshConnection();
   }, [refreshConnection, stopTracks]);
 
@@ -129,8 +157,8 @@ export function MediaProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   const value = useMemo(
-    () => ({ stream, cameraEnabled, micEnabled, cameraConnected, micConnected, error, setCameraEnabled, setMicEnabled }),
-    [stream, cameraEnabled, micEnabled, cameraConnected, micConnected, error, setCameraEnabled, setMicEnabled],
+    () => ({ stream, cameraEnabled, micEnabled, cameraConnected, micConnected, cameraStatus, micStatus, error, setCameraEnabled, setMicEnabled }),
+    [stream, cameraEnabled, micEnabled, cameraConnected, micConnected, cameraStatus, micStatus, error, setCameraEnabled, setMicEnabled],
   );
   return <MediaContext.Provider value={value}>{children}</MediaContext.Provider>;
 }

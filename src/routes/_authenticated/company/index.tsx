@@ -41,7 +41,7 @@ function CompanyDashboard() {
     if (!user) return;
     const next = r.status === "active" ? "closed" : "active";
     try {
-      await setAssessmentStatus({ data: { assessmentId: r._id, companyUserId: user.id, status: next } });
+      await setAssessmentStatus({ data: { assessmentId: r._id, code: r.code, companyUserId: user.id, status: next } });
       setRows((prev) => prev?.map((x) => (x._id === r._id ? { ...x, status: next } : x)) ?? prev);
       toast.success(next === "closed" ? "Assessment ended" : "Assessment reopened");
     } catch (e: any) {
@@ -52,7 +52,7 @@ function CompanyDashboard() {
   const remove = async (r: Row) => {
     if (!user) return;
     try {
-      await deleteAssessment({ data: { assessmentId: r._id, companyUserId: user.id } });
+      await deleteAssessment({ data: { assessmentId: r._id, code: r.code, companyUserId: user.id } });
       setRows((prev) => prev?.filter((x) => x._id !== r._id) ?? prev);
       toast.success("Assessment deleted");
     } catch (e: any) {
@@ -82,7 +82,7 @@ function CompanyDashboard() {
       const targets = rows.filter((row) => selectedIds.has(row._id));
       await Promise.all(
         targets.map((row) =>
-          deleteAssessment({ data: { assessmentId: row._id, companyUserId: user.id } }),
+          deleteAssessment({ data: { assessmentId: row._id, code: row.code, companyUserId: user.id } }),
         ),
       );
       setRows((current) => current?.filter((row) => !selectedIds.has(row._id)) ?? current);

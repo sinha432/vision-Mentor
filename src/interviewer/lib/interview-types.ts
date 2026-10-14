@@ -132,38 +132,6 @@ export type VoiceStatus =
   | "unsupported"
   | "no_speech";
 
-export type DressVerdict = "appropriate" | "acceptable" | "not_appropriate";
-export type HairVerdict = "neat" | "untidy";
-export type BeardVerdict = "neat" | "needs_attention" | "not_visible";
-
-export interface AppearanceReview {
-  assessed: boolean;
-  dress: { verdict: DressVerdict; note: string };
-  hair: { verdict: HairVerdict; note: string };
-  beard: { verdict: BeardVerdict; note: string };
-  fixes: string[];
-  reason: string;
-  confidence?: number;
-  limitations?: string[];
-}
-
-export const DRESS_LABELS: Record<DressVerdict, string> = {
-  appropriate: "Appropriate",
-  acceptable: "Acceptable",
-  not_appropriate: "Not appropriate",
-};
-
-export const HAIR_LABELS: Record<HairVerdict, string> = {
-  neat: "Neat",
-  untidy: "Needs tidying",
-};
-
-export const BEARD_LABELS: Record<BeardVerdict, string> = {
-  neat: "Well groomed",
-  needs_attention: "Needs grooming",
-  not_visible: "Not visible enough to assess",
-};
-
 /** How much a detected presentation issue actually costs the candidate. */
 export type FlagSeverity = "low" | "medium" | "high";
 
@@ -175,7 +143,7 @@ export const SEVERITY_LABELS: Record<FlagSeverity, string> = {
 
 export const SEVERITY_RANK: Record<FlagSeverity, number> = { high: 3, medium: 2, low: 1 };
 
-export type CoachArea = "posture" | "eye_contact" | "hair" | "grooming" | "framing" | "delivery";
+export type CoachArea = "posture" | "eye_contact" | "hair" | "grooming" | "attire" | "framing" | "delivery";
 
 /** One real-time presentation nudge shown during the interview. */
 export interface CoachingEvent {
@@ -195,6 +163,7 @@ export const COACH_AREA_LABELS: Record<CoachingEvent["area"], string> = {
   eye_contact: "Eye contact",
   hair: "Hair",
   grooming: "Grooming",
+  attire: "Attire",
   framing: "Framing",
   delivery: "Delivery",
 };
@@ -350,18 +319,54 @@ export interface ForensicsFinding {
   severity: FlagSeverity;
 }
 
+export type AppearanceAssessmentStatus =
+  | "positive"
+  | "needs_attention"
+  | "uncertain"
+  | "not_visible";
+
+export interface AppearanceAssessment {
+  status: AppearanceAssessmentStatus;
+  confidence: number;
+  evidence: string;
+  recommendation: string;
+  t: number | null;
+}
+
+export interface AppearanceReview {
+  assessed: boolean;
+  grooming: AppearanceAssessment;
+  hair: AppearanceAssessment;
+  attire: AppearanceAssessment;
+}
+
+export type AppearanceAnalysisStatus =
+  | "pending"
+  | "checking"
+  | "assessed"
+  | "frame_unusable"
+  | "analysis_failed";
+
+export interface AppearanceAnalysisResult {
+  status: Exclude<AppearanceAnalysisStatus, "pending" | "checking">;
+  appearance?: AppearanceReview;
+  message?: string;
+}
+
 /** Cached result of the post-interview Groq pass over sampled replay frames. */
 export interface ForensicsReport {
   assessed: boolean;
   findings: ForensicsFinding[];
   /** One overall grooming/appearance read drawn from the sampled frames. */
   groomingSummary: string;
+  appearance?: AppearanceReview;
 }
 
 export const EMPTY_FORENSICS: ForensicsReport = {
   assessed: false,
   findings: [],
   groomingSummary: "",
+  appearance: undefined,
 };
 
 export interface InterviewSession {
@@ -372,12 +377,20 @@ export interface InterviewSession {
   turns: Turn[];
   vision: VisionMetrics;
   voice: VoiceMetrics;
+  /** Candidate opted in to sending camera/audio samples to the configured AI provider. */
+  cloudMediaAnalysisConsent?: boolean;
+  /** Candidate opted in to post-interview camera-only appearance review. */
+  appearanceReviewConsent?: boolean;
+  /** Latest explicit live camera assessment, separate from presentation score. */
+  liveAppearance?: AppearanceReview | null;
+  liveAppearanceStatus?: AppearanceAnalysisStatus;
+  liveAppearanceError?: string | null;
+  replayAppearance?: AppearanceReview | null;
+  replayAppearanceStatus?: AppearanceAnalysisStatus;
+  replayAppearanceError?: string | null;
   report?: InterviewReport;
   /** Base64 webcam frame kept only until the appearance review is generated. */
   snapshot?: string | null;
-  appearance?: AppearanceReview | null;
-  /** Last live attire/grooming observation produced from the detection video panel. */
-  appearanceObservation?: { attire: string; grooming: string; notes: string; t: number } | null;
   /** Real-time presentation nudges surfaced during the session. */
   coaching?: CoachingEvent[];
   /** Per-second presence track backing the replay timeline. */

@@ -1,4 +1,4 @@
-import { useCallback, useRef, useState, type FormEvent } from "react";
+import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
 import { useNavigate } from "@tanstack/react-router";
 import { useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
@@ -19,10 +19,18 @@ import {
   CompanyQuestionGenerator,
   type CompanyQuestionGeneratorConfig,
 } from "@/components/nova/CompanyQuestionGenerator";
+import { CandidatePicker, type CandidateOption } from "@/components/company/CandidatePicker";
 
 import type { CompanyNovaCommand } from "@/lib/nova/company-command";
 
-import { createAssessment } from "@/lib/assessments.functions";
+import { createAssessmentWithPersistence } from "@/lib/assessments.functions";
+import { sendAssessmentInvitations, type InvitationResult } from "@/lib/assessment-invitations";
+import type { StoredAssessment } from "@/lib/assessment-types";
+import {
+  fetchScheduledInterviewsFromMongoDB,
+  syncAssessmentToMongoDB,
+  syncScheduledInterviewToMongoDB,
+} from "@/lib/mongodb-sync";
 
 import { useNovaSenses } from "@/hooks/use-nova-senses";
 
@@ -42,6 +50,7 @@ import {
   Camera,
   CalendarDays,
   Clock3,
+  Loader2,
   Mail,
   UserRound,
   BriefcaseBusiness,
@@ -144,6 +153,13 @@ export function NovaConsole({
   const [publishing, setPublishing] =
     useState(false);
 
+  const [showRecipientPicker, setShowRecipientPicker] = useState(false);
+  const [selectedCandidates, setSelectedCandidates] = useState<CandidateOption[]>([]);
+  const [pendingAssessment, setPendingAssessment] = useState<StoredAssessment | null>(null);
+  const [publishedAssessment, setPublishedAssessment] = useState<{ code: string; link: string } | null>(null);
+  const [invitationResults, setInvitationResults] = useState<InvitationResult[]>([]);
+  const [retryingInvitations, setRetryingInvitations] = useState(false);
+
   /*
    * Company HR interview scheduling state.
    *
@@ -182,6 +198,47 @@ export function NovaConsole({
         return [];
       }
     });
+
+  useEffect(() => {
+    let active = true;
+    const companyId = companyUserId.trim();
+
+    const loadInterviews = async () => {
+      const remoteInterviews =
+        await fetchScheduledInterviewsFromMongoDB<ScheduledInterview>(companyId);
+      if (!active || remoteInterviews === null) return;
+
+      const storageKey =
+        `${SCHEDULED_INTERVIEWS_KEY_PREFIX}:${companyId}`;
+      let localInterviews: ScheduledInterview[] = [];
+      try {
+        const stored = window.localStorage.getItem(storageKey);
+        const parsed: unknown = stored ? JSON.parse(stored) : [];
+        localInterviews = Array.isArray(parsed) ? parsed : [];
+      } catch {
+        localInterviews = [];
+      }
+
+      let interviews = remoteInterviews;
+      if (remoteInterviews.length === 0 && localInterviews.length > 0) {
+        const migrated = await Promise.all(
+          localInterviews.map((interview) =>
+            syncScheduledInterviewToMongoDB(companyId, interview),
+          ),
+        );
+        if (migrated.every(Boolean)) interviews = localInterviews;
+      }
+
+      if (!active) return;
+      setScheduledInterviews(interviews);
+      window.localStorage.setItem(storageKey, JSON.stringify(interviews));
+    };
+
+    void loadInterviews();
+    return () => {
+      active = false;
+    };
+  }, [companyUserId]);
 
   const [candidateName, setCandidateName] =
     useState("");
@@ -265,6 +322,14 @@ export function NovaConsole({
           return message;
         }
 
+        if (selectedCandidates.length === 0) {
+          setShowQuestionGenerator(true);
+          setShowRecipientPicker(true);
+          const message = "Select at least one registered candidate in the panel, then confirm to publish and email the test link.";
+          conversationRef.current?.appendAssistantMessage(message, true);
+          return message;
+        }
+
         setPublishing(true);
 
         try {
@@ -329,8 +394,13 @@ export function NovaConsole({
           /*
            * REAL DATABASE CREATION
            */
-          const assessment =
-            await createAssessment({
+          const assessment = pendingAssessment ?? null;
+          const savedAssessment = assessment
+            ? await syncAssessmentToMongoDB(assessment)
+            : null;
+          const created = assessment
+            ? { assessment, persisted: savedAssessment?.code === assessment.code }
+            : await createAssessmentWithPersistence({
               data: {
                 companyUserId:
                   companyUserId.trim(),
@@ -342,17 +412,47 @@ export function NovaConsole({
                 questions,
               },
             });
+          const publishedRecord = created.assessment;
+
+          if (!created.persisted) {
+            setPendingAssessment(publishedRecord);
+            throw new Error("MongoDB did not confirm the assessment save. No invitations were sent.");
+          }
+          setPendingAssessment(null);
+
+          const defaultLink = `${window.location.origin}/a/${encodeURIComponent(publishedRecord.code)}`;
+          setPublishedAssessment({ code: publishedRecord.code, link: defaultLink });
+
+          let results: InvitationResult[];
+          let canonicalLink = defaultLink;
+          try {
+            const invitationResponse = await sendAssessmentInvitations(
+              publishedRecord.code,
+              selectedCandidates.map((candidate) => candidate.id),
+            );
+            results = invitationResponse.results;
+            canonicalLink = invitationResponse.testLink ?? defaultLink;
+          } catch (error) {
+            const message = error instanceof Error ? error.message : "Could not send invitations.";
+            results = selectedCandidates.map((candidate) => ({
+              candidateId: candidate.id,
+              name: candidate.name,
+              email: candidate.email,
+              success: false,
+              error: message,
+            }));
+          }
+          setInvitationResults(results);
+          setPublishedAssessment({ code: publishedRecord.code, link: canonicalLink });
 
           console.log(
             "NOVA ASSESSMENT PUBLISHED",
             {
-              id: assessment._id,
-              code: assessment.code,
-              companyUserId:
-                assessment.companyUserId,
-              title: assessment.title,
-              questionCount:
-                assessment.questions.length,
+              id: publishedRecord._id,
+              code: publishedRecord.code,
+              companyUserId: publishedRecord.companyUserId,
+              title: publishedRecord.title,
+              questionCount: publishedRecord.questions.length,
             },
           );
 
@@ -373,14 +473,9 @@ export function NovaConsole({
             type: "all",
           });
 
-          const successMessage =
-            `Assessment published successfully. ` +
-            `${questions.length} question${
-              questions.length === 1
-                ? ""
-                : "s"
-            } are now in Assessments. ` +
-            `Code: ${assessment.code}.`;
+          const sent = results.filter((result) => result.success).length;
+          const failed = results.length - sent;
+          const successMessage = `Assessment saved in MongoDB (${questions.length} questions, code ${publishedRecord.code}). ${sent} invitation(s) sent; ${failed} failed. Link: ${canonicalLink}`;
 
           /*
            * Tell Nova about the successful
@@ -400,20 +495,11 @@ export function NovaConsole({
             "idle",
           );
 
-          setShowQuestionGenerator(
-            false,
-          );
+          setShowQuestionGenerator(false);
+          setShowRecipientPicker(false);
+          setSelectedCandidates([]);
 
-          toast.success(
-            `Assessment published successfully. Code: ${assessment.code}`,
-          );
-
-          /*
-           * Go to the actual company assessment list.
-           */
-          await navigate({
-            to: "/dashboard/assessments",
-          });
+          toast.success(`Assessment published. ${sent} invitation(s) sent; ${failed} failed.`);
 
           return successMessage;
         } catch (error) {
@@ -451,10 +537,32 @@ export function NovaConsole({
         generatedQuestions,
         assessmentTitle,
         publishing,
+        selectedCandidates,
+        pendingAssessment,
         queryClient,
-        navigate,
       ],
     );
+
+  const retryFailedAiInvitations = useCallback(async () => {
+    if (!publishedAssessment) return;
+    const failedIds = invitationResults.filter((result) => !result.success).map((result) => result.candidateId);
+    if (!failedIds.length) return;
+
+    setRetryingInvitations(true);
+    try {
+      const response = await sendAssessmentInvitations(publishedAssessment.code, failedIds);
+      const updatedById = new Map(response.results.map((result) => [result.candidateId, result]));
+      setInvitationResults((current) => current.map((result) => updatedById.get(result.candidateId) ?? result));
+      if (response.testLink) {
+        setPublishedAssessment((current) => current ? { ...current, link: response.testLink! } : current);
+      }
+      toast.success(`${response.results.filter((result) => result.success).length} retried invitation(s) sent.`);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Could not retry invitations.");
+    } finally {
+      setRetryingInvitations(false);
+    }
+  }, [publishedAssessment, invitationResults]);
 
   /*
    * ---------------------------------------------------------
@@ -510,6 +618,15 @@ export function NovaConsole({
 
       setScheduledInterviews(next);
 
+      void syncScheduledInterviewToMongoDB(
+        companyUserId.trim(),
+        interview,
+      ).then((synced) => {
+        if (!synced) {
+          toast.warning("Interview saved locally, but MongoDB sync failed.");
+        }
+      });
+
       try {
         const storageKey =
           `${SCHEDULED_INTERVIEWS_KEY_PREFIX}:${companyUserId.trim()}`;
@@ -552,6 +669,7 @@ export function NovaConsole({
       interviewDuration,
       interviewNotes,
       scheduledInterviews,
+      companyUserId,
     ],
   );
 
@@ -595,6 +713,12 @@ export function NovaConsole({
           command.type ===
             "create_assessment"
         ) {
+          setShowRecipientPicker(false);
+          setSelectedCandidates([]);
+          setPublishedAssessment(null);
+          setInvitationResults([]);
+          setPendingAssessment(null);
+
           /*
            * Always provide safe defaults.
            *
@@ -910,6 +1034,11 @@ export function NovaConsole({
           // Always start with a clean generator.
           setGeneratedQuestions([]);
           setGenerationStatus("idle");
+          setShowRecipientPicker(false);
+          setSelectedCandidates([]);
+          setPublishedAssessment(null);
+          setInvitationResults([]);
+          setPendingAssessment(null);
 
           const config: CompanyQuestionGeneratorConfig = {
             role: "Software Developer",
@@ -1010,6 +1139,13 @@ export function NovaConsole({
           return;
         }
 
+        if (questions.length === 0) {
+          setGeneratedQuestions([]);
+          setGenerationStatus("idle");
+          setPendingAssessment(null);
+          return;
+        }
+
         const normalized =
           questions.filter(
             (
@@ -1048,6 +1184,7 @@ export function NovaConsole({
         setGeneratedQuestions(
           normalized,
         );
+        setPendingAssessment(null);
 
         setGenerationStatus(
           "ready",
@@ -1361,11 +1498,69 @@ export function NovaConsole({
                   onClick={() => void publishGeneratedAssessment()}
                   className="mt-3 w-full rounded-lg bg-cyber px-3 py-2 text-xs font-medium text-primary-foreground transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
                 >
-                  {publishing ? "Publishing..." : "Publish Assessment"}
+                  {publishing ? "Publishing..." : "Choose Candidates to Publish"}
+                </button>
+              </div>
+            )}
+
+            {showRecipientPicker && generatedQuestions.length > 0 && (
+              <div className="mt-4 space-y-3 rounded-xl border border-border bg-background/50 p-3">
+                <CandidatePicker
+                  selectedCandidates={selectedCandidates}
+                  onSelectionChange={setSelectedCandidates}
+                  disabled={publishing}
+                />
+                <button
+                  type="button"
+                  disabled={publishing || selectedCandidates.length === 0}
+                  onClick={() => void publishGeneratedAssessment()}
+                  className="w-full rounded-lg bg-cyber px-3 py-2 text-xs font-medium text-primary-foreground disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  {publishing ? "Saving and sending..." : "Publish and Email Test Link"}
                 </button>
               </div>
             )}
           </div>
+        )}
+
+        {publishedAssessment && (
+          <section className="space-y-3 rounded-xl border border-border bg-background/40 p-4" aria-live="polite">
+            <div>
+              <h3 className="text-sm font-semibold">AI assessment published</h3>
+              <p className="mt-1 break-all font-mono text-xs text-primary">{publishedAssessment.link}</p>
+            </div>
+            {invitationResults.length > 0 && (
+              <>
+                <p className="text-sm">
+                  {invitationResults.filter((result) => result.success).length} sent · {invitationResults.filter((result) => !result.success).length} failed
+                </p>
+                <ul className="divide-y divide-border rounded-md border border-border">
+                  {invitationResults.map((result) => (
+                    <li key={result.candidateId} className="flex flex-wrap items-center justify-between gap-2 px-3 py-2 text-sm">
+                      <span className="min-w-0">
+                        <span className="block truncate font-medium">{result.name}</span>
+                        <span className="block truncate text-xs text-muted-foreground">{result.email || "Email unavailable"}</span>
+                      </span>
+                      <span className={result.success ? "text-emerald" : "text-destructive"}>
+                        {result.success ? "Sent" : (result.error ?? "Not sent")}
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+                {invitationResults.some((result) => !result.success) && (
+                  <button
+                    type="button"
+                    disabled={retryingInvitations}
+                    onClick={() => void retryFailedAiInvitations()}
+                    className="inline-flex items-center gap-2 rounded-md border border-border px-3 py-2 text-xs disabled:opacity-50"
+                  >
+                    {retryingInvitations && <Loader2 className="size-3.5 animate-spin" />}
+                    Retry failed invitations
+                  </button>
+                )}
+              </>
+            )}
+          </section>
         )}
 
         <div className="card-3d rounded-2xl p-4">

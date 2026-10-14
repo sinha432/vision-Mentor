@@ -1,5 +1,4 @@
 import { useEffect, useRef, useState } from "react";
-import { useNavigate } from "@tanstack/react-router";
 import {
   Loader2,
   Plus,
@@ -11,7 +10,11 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
-import { createAssessment } from "@/lib/assessments.functions";
+import { CandidatePicker, type CandidateOption } from "@/components/company/CandidatePicker";
+import { createAssessmentWithPersistence } from "@/lib/assessments.functions";
+import { sendAssessmentInvitations, type InvitationResult } from "@/lib/assessment-invitations";
+import type { StoredAssessment } from "@/lib/assessment-types";
+import { syncAssessmentToMongoDB } from "@/lib/mongodb-sync";
 
 export interface GeneratedQuestion {
   id: string;
@@ -60,8 +63,6 @@ export function CompanyQuestionGenerator({
   onQuestionsGenerated,
   initialConfig,
 }: CompanyQuestionGeneratorProps) {
-  const navigate = useNavigate();
-
   const [role, setRole] = useState(
     initialConfig?.role || "Software Developer",
   );
@@ -90,6 +91,12 @@ export function CompanyQuestionGenerator({
 
   const [title, setTitle] = useState("");
   const [timeLimitMinutes, setTimeLimitMinutes] = useState(30);
+  const [selectedCandidates, setSelectedCandidates] = useState<CandidateOption[]>([]);
+  const [invitationResults, setInvitationResults] = useState<InvitationResult[]>([]);
+  const [publishedAssessment, setPublishedAssessment] = useState<{ code: string; link: string } | null>(null);
+  const [pendingAssessment, setPendingAssessment] = useState<StoredAssessment | null>(null);
+  const [publishError, setPublishError] = useState<string | null>(null);
+  const [retryingInvitations, setRetryingInvitations] = useState(false);
 
   /*
    * Keep NovaConsole synchronized with the latest questions.
@@ -142,6 +149,7 @@ export function CompanyQuestionGenerator({
       const generatedTitle =
         `${role} - ${topic} Assessment`;
 
+      setPendingAssessment(null);
       setTitle(generatedTitle);
     }
   }, [role, topic, title]);
@@ -164,6 +172,7 @@ export function CompanyQuestionGenerator({
    * without requiring Save Draft.
    */
   const generateQuestions = async (commandConfig?: CompanyQuestionGeneratorConfig) => {
+    setPendingAssessment(null);
     const effectiveRole = (commandConfig?.role ?? role).trim();
     const effectiveTopic = (commandConfig?.topic ?? topic).trim();
     const effectiveDifficulty =
@@ -303,6 +312,7 @@ export function CompanyQuestionGenerator({
     id: string,
     text: string,
   ) => {
+    setPendingAssessment(null);
     setQuestions((current) => {
       const updated = current.map((question) =>
         question.id === id
@@ -327,6 +337,7 @@ export function CompanyQuestionGenerator({
     id: string,
     patch: Partial<GeneratedQuestion>,
   ) => {
+    setPendingAssessment(null);
     setQuestions((current) => {
       const updated = current.map((question) =>
         question.id === id ? { ...question, ...patch } : question,
@@ -340,6 +351,7 @@ export function CompanyQuestionGenerator({
    * Delete a question.
    */
   const deleteQuestion = (id: string) => {
+    setPendingAssessment(null);
     setQuestions((current) => {
       const updated = current.filter(
         (question) => question.id !== id,
@@ -358,6 +370,7 @@ export function CompanyQuestionGenerator({
    * Add a manual question.
    */
   const addQuestion = () => {
+    setPendingAssessment(null);
     setQuestions((current) => {
       const updated = [
         ...current,
@@ -475,21 +488,47 @@ export function CompanyQuestionGenerator({
   const requestPublish = () => {
     if (!validateQuestions()) return;
 
+    setPublishError(null);
     setShowPublishConfirmation(true);
   };
 
+  const retryFailedInvitations = async () => {
+    if (!publishedAssessment) return;
+    const failedIds = invitationResults.filter((result) => !result.success).map((result) => result.candidateId);
+    if (!failedIds.length) return;
+
+    setRetryingInvitations(true);
+    try {
+      const response = await sendAssessmentInvitations(publishedAssessment.code, failedIds);
+      const updatedById = new Map(response.results.map((result) => [result.candidateId, result]));
+      setInvitationResults((current) => current.map((result) => updatedById.get(result.candidateId) ?? result));
+      if (response.testLink) {
+        setPublishedAssessment((current) => current ? { ...current, link: response.testLink! } : current);
+      }
+      toast.success(`${response.results.filter((result) => result.success).length} retried invitation(s) sent.`);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Could not retry invitations.");
+    } finally {
+      setRetryingInvitations(false);
+    }
+  };
+
   /*
-   * Publish directly into the company's assessment
-   * collection using the existing createAssessment()
-   * implementation.
+  * Save to MongoDB before inviting selected candidates.
    */
   const publishAssessment = async () => {
     if (!validateQuestions()) {
       setShowPublishConfirmation(false);
       return;
     }
+    if (selectedCandidates.length === 0) {
+      toast.error("Select at least one candidate to receive the assessment link.");
+      return;
+    }
 
     setPublishing(true);
+    setPublishError(null);
+    setInvitationResults([]);
 
     try {
       const cleanedQuestions = questions.map(
@@ -515,8 +554,13 @@ export function CompanyQuestionGenerator({
         }),
       );
 
-      const assessment =
-        await createAssessment({
+      const assessmentToRetry = pendingAssessment;
+      const created = assessmentToRetry
+        ? {
+            assessment: assessmentToRetry,
+            persisted: (await syncAssessmentToMongoDB(assessmentToRetry))?.code === assessmentToRetry.code,
+          }
+        : await createAssessmentWithPersistence({
           data: {
             companyUserId,
             title: title.trim(),
@@ -524,29 +568,53 @@ export function CompanyQuestionGenerator({
             questions: cleanedQuestions,
           },
         });
+      const { assessment, persisted } = created;
 
-      toast.success(
-        `Assessment published successfully. Code: ${assessment.code}`,
-      );
+      if (!persisted) {
+        setPendingAssessment(assessment);
+        const message = "MongoDB did not confirm the assessment save. No invitations were sent.";
+        setPublishError(message);
+        toast.error(message);
+        return;
+      }
+      setPendingAssessment(null);
 
-      /*
-       * Keep the existing draft callback behavior.
-       */
-      /*
-       * The assessment is now persisted. Do not leave the
-       * old question set active in the generator.
-       */
+      const defaultLink = `${window.location.origin}/a/${encodeURIComponent(assessment.code)}`;
+      setPublishedAssessment({ code: assessment.code, link: defaultLink });
+
+      try {
+        const response = await sendAssessmentInvitations(
+          assessment.code,
+          selectedCandidates.map((candidate) => candidate.id),
+        );
+        setInvitationResults(response.results);
+        setPublishedAssessment({
+          code: assessment.code,
+          link: response.testLink ?? defaultLink,
+        });
+        const sent = response.results.filter((result) => result.success).length;
+        const failed = response.results.length - sent;
+        if (failed === 0) {
+          toast.success(`Assessment published and sent to ${sent} candidate(s).`);
+        } else {
+          toast.error(`${sent} invitation(s) sent; ${failed} failed. Failed invitations can be retried.`);
+        }
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "Could not send invitations.";
+        setInvitationResults(selectedCandidates.map((candidate) => ({
+          candidateId: candidate.id,
+          name: candidate.name,
+          email: candidate.email,
+          success: false,
+          error: message,
+        })));
+        toast.error("Assessment saved, but invitations could not be sent.");
+      }
+
       setQuestions([]);
       syncQuestionsWithNova([]);
-
+      setSelectedCandidates([]);
       setShowPublishConfirmation(false);
-
-      /*
-       * Move directly to the assessment section.
-       */
-      await navigate({
-        to: "/dashboard/assessments",
-      });
     } catch (error) {
       const message =
         error instanceof Error
@@ -574,6 +642,48 @@ export function CompanyQuestionGenerator({
               Nova Question Generator
             </h2>
           </div>
+
+      {publishedAssessment && (
+        <section className="space-y-3 rounded-xl border border-border bg-background/40 p-4" aria-live="polite">
+          <div>
+            <h3 className="text-sm font-semibold">Assessment published</h3>
+            <p className="mt-1 break-all font-mono text-xs text-primary">{publishedAssessment.link}</p>
+          </div>
+          {invitationResults.length > 0 && (
+            <>
+              <p className="text-sm">
+                {invitationResults.filter((result) => result.success).length} sent · {invitationResults.filter((result) => !result.success).length} failed
+              </p>
+              <ul className="divide-y divide-border rounded-md border border-border">
+                {invitationResults.map((result) => (
+                  <li key={result.candidateId} className="flex flex-wrap items-center justify-between gap-2 px-3 py-2 text-sm">
+                    <span className="min-w-0">
+                      <span className="block truncate font-medium">{result.name}</span>
+                      <span className="block truncate text-xs text-muted-foreground">{result.email || "Email unavailable"}</span>
+                    </span>
+                    <span className={result.success ? "text-emerald" : "text-destructive"}>
+                      {result.success ? "Sent" : (result.error ?? "Not sent")}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+              {invitationResults.some((result) => !result.success) && (
+                <button
+                  type="button"
+                  disabled={retryingInvitations}
+                  onClick={() => void retryFailedInvitations()}
+                  className="inline-flex items-center gap-2 rounded-md border border-border px-3 py-2 text-xs disabled:opacity-50"
+                >
+                  {retryingInvitations && <Loader2 className="size-3.5 animate-spin" />}
+                  Retry failed invitations
+                </button>
+              )}
+            </>
+          )}
+        </section>
+      )}
+
+      {publishError && <p role="alert" className="text-sm text-destructive">{publishError}</p>}
 
           <p className="mt-1 text-xs text-muted-foreground">
             Generate, review, edit and publish
@@ -604,9 +714,10 @@ export function CompanyQuestionGenerator({
 
           <input
             value={title}
-            onChange={(event) =>
+            onChange={(event) => {
+              setPendingAssessment(null);
               setTitle(event.target.value)
-            }
+            }}
             className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm outline-none focus:border-cyber"
             placeholder="Frontend Developer Assessment"
           />
@@ -619,9 +730,10 @@ export function CompanyQuestionGenerator({
             min={1}
             max={1440}
             value={timeLimitMinutes}
-            onChange={(event) =>
+            onChange={(event) => {
+              setPendingAssessment(null);
               setTimeLimitMinutes(Math.max(1, Number(event.target.value) || 1))
-            }
+            }}
             className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm outline-none focus:border-cyber"
           />
         </label>
@@ -1098,6 +1210,14 @@ export function CompanyQuestionGenerator({
                 </p>
               </div>
 
+              <div className="mt-4">
+                <CandidatePicker
+                  selectedCandidates={selectedCandidates}
+                  onSelectionChange={setSelectedCandidates}
+                  disabled={publishing}
+                />
+              </div>
+
               <div className="mt-4 flex flex-wrap gap-2">
                 <button
                   type="button"
@@ -1115,7 +1235,7 @@ export function CompanyQuestionGenerator({
                 <button
                   type="button"
                   onClick={publishAssessment}
-                  disabled={publishing}
+                  disabled={publishing || selectedCandidates.length === 0}
                   className="inline-flex items-center gap-2 rounded-lg bg-cyber px-3 py-2 text-xs font-medium text-primary-foreground transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-60"
                 >
                   {publishing ? (
