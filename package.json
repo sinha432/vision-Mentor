@@ -8,6 +8,8 @@
     "build": "vite build",
     "build:dev": "vite build --mode development",
     "preview": "vite preview",
+    "test:integrity": "node --experimental-strip-types --test src/lib/assessment-integrity.test.ts",
+    "test:assessment": "node --experimental-strip-types --test src/lib/assessment-integrity.test.ts src/lib/judge0-languages.test.ts src/lib/assessment-email.test.ts",
     "lint": "eslint .",
     "format": "prettier --write ."
   },

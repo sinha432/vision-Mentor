@@ -12,7 +12,7 @@ export const Route = createFileRoute("/api/company/candidates")({
         }
 
         const search = new URL(request.url).searchParams.get("q")?.trim() ?? "";
-        if (search.length < 2) {
+        if (search.length === 1) {
           return Response.json({ candidates: [] });
         }
 

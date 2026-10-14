@@ -2,6 +2,7 @@ import { createFileRoute } from "@tanstack/react-router";
 import { getAuthSession } from "@/lib/auth-session.server";
 import { loadDotEnv } from "@/lib/server-env";
 import { getAssessment, getIndividualUsersByIds } from "@/lib/mongodb.server";
+import { describeEmailJsFailure, missingAssessmentEmailSettings } from "@/lib/assessment-email";
 
 loadDotEnv();
 
@@ -53,14 +54,27 @@ export const Route = createFileRoute("/api/company/assessment-invitations")({
 
           const candidates = await getIndividualUsersByIds(candidateIds);
           const candidatesById = new Map(candidates.map((candidate) => [candidate.id, candidate]));
-          const serviceId = process.env.EMAILJS_ASSESSMENT_SERVICE_ID?.trim();
-          const templateId = process.env.EMAILJS_ASSESSMENT_TEMPLATE_ID?.trim();
-          const publicKey = process.env.EMAILJS_ASSESSMENT_PUBLIC_KEY?.trim();
-          const privateKey = process.env.EMAILJS_ASSESSMENT_PRIVATE_KEY?.trim();
-          const appBaseUrl = (
-            process.env.APP_BASE_URL?.trim() || new URL(request.url).origin
-          ).replace(/\/+$/, "");
-          const testLink = `${appBaseUrl}/a/${encodeURIComponent(assessment.code)}`;
+          const emailSettings = {
+            EMAILJS_ASSESSMENT_SERVICE_ID: process.env.EMAILJS_ASSESSMENT_SERVICE_ID,
+            EMAILJS_ASSESSMENT_TEMPLATE_ID: process.env.EMAILJS_ASSESSMENT_TEMPLATE_ID,
+            EMAILJS_ASSESSMENT_PUBLIC_KEY: process.env.EMAILJS_ASSESSMENT_PUBLIC_KEY,
+            EMAILJS_ASSESSMENT_PRIVATE_KEY: process.env.EMAILJS_ASSESSMENT_PRIVATE_KEY,
+          };
+          const missingEmailSettings = missingAssessmentEmailSettings(emailSettings);
+          const serviceId = emailSettings.EMAILJS_ASSESSMENT_SERVICE_ID?.trim();
+          const templateId = emailSettings.EMAILJS_ASSESSMENT_TEMPLATE_ID?.trim();
+          const publicKey = emailSettings.EMAILJS_ASSESSMENT_PUBLIC_KEY?.trim();
+          const privateKey = emailSettings.EMAILJS_ASSESSMENT_PRIVATE_KEY?.trim();
+          const appBaseUrl = new URL(
+            process.env.APP_BASE_URL?.trim() || new URL(request.url).origin,
+          );
+          if (appBaseUrl.protocol !== "https:" && appBaseUrl.protocol !== "http:") {
+            return Response.json({ error: "APP_BASE_URL must use HTTP or HTTPS" }, { status: 500 });
+          }
+          const testLink = new URL(
+            `/a/${encodeURIComponent(assessment.code)}`,
+            appBaseUrl,
+          ).toString();
 
           const results: InvitationResult[] = await Promise.all(
             candidateIds.map(async (candidateId) => {
@@ -74,12 +88,18 @@ export const Route = createFileRoute("/api/company/assessment-invitations")({
                   error: "Candidate account was not found.",
                 };
               }
-              if (!serviceId || !templateId || !publicKey || !privateKey) {
+              if (
+                missingEmailSettings.length > 0 ||
+                !serviceId ||
+                !templateId ||
+                !publicKey ||
+                !privateKey
+              ) {
                 return {
                   ...candidate,
                   candidateId,
                   success: false,
-                  error: "Assessment email is not configured.",
+                  error: `Assessment email is not configured. Missing settings: ${missingEmailSettings.join(", ")}.`,
                 };
               }
 
@@ -115,13 +135,7 @@ export const Route = createFileRoute("/api/company/assessment-invitations")({
                     ...candidate,
                     candidateId,
                     success: false,
-                    error:
-                      response.status === 403 &&
-                      providerMessage.toLowerCase().includes("non-browser environments")
-                        ? "EmailJS server-side API access is disabled. Enable API access from non-browser environments in EmailJS Account > Security, then retry."
-                        : response.status === 403
-                          ? "EmailJS denied this request. Confirm the assessment service ID, public/private keys, and template belong to the same EmailJS account, and that the service and template are active."
-                          : `EmailJS could not send this invitation (HTTP ${response.status}).`,
+                    error: describeEmailJsFailure(response.status, providerMessage),
                   };
                 }
 
@@ -132,7 +146,8 @@ export const Route = createFileRoute("/api/company/assessment-invitations")({
                   ...candidate,
                   candidateId,
                   success: false,
-                  error: "The invitation could not be sent. Try again.",
+                  error:
+                    "Could not connect to EmailJS. Check server connectivity and retry the invitation.",
                 };
               }
             }),

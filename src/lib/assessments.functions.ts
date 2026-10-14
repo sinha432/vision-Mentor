@@ -269,12 +269,15 @@ export async function deleteAssessment({ data }: { data: unknown }) {
   if (!code) throw new Error("Assessment not found");
 
   const mongoDeleted = await deleteAssessmentFromMongoDB(code, input.companyUserId);
+  if (!mongoDeleted) {
+    throw new Error("MongoDB did not confirm assessment deletion. Local data was kept.");
+  }
 
   if (a) {
     deleteAssessmentLocal(input.assessmentId);
   }
 
-  return { ok: true, mongoDeleted };
+  return { ok: true, mongoDeleted: true };
 }
 
 export async function submitAttempt({ data }: { data: unknown }) {

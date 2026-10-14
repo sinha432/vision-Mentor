@@ -1,11 +1,9 @@
 import { readFileSync } from "node:fs";
-import { dirname, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
+import { resolve } from "node:path";
 
 export function loadDotEnv(): void {
   try {
-    const currentDir = dirname(fileURLToPath(import.meta.url));
-    const envPath = resolve(currentDir, "../.env");
+    const envPath = resolve(process.cwd(), ".env");
     const envFile = readFileSync(envPath, "utf8");
 
     for (const line of envFile.split(/\r?\n/)) {

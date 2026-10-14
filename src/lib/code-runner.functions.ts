@@ -1,5 +1,6 @@
 import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
+import { JUDGE0_LANGUAGE_IDS } from "./judge0-languages";
 
 const schema = z.object({
   sourceCode: z.string().min(1).max(50000),
@@ -25,13 +26,7 @@ export const runJavaCode = createServerFn({ method: "POST" })
     const url = "https://judge0-ce.p.rapidapi.com/submissions?base64_encoded=false&wait=true";
 
     const results: { ok: boolean; actual: string; stderr?: string }[] = [];
-    const languageId = {
-      java: 62,
-      javascript: 63,
-      python: 71,
-      c: 50,
-      cpp: 54,
-    }[data.language];
+    const languageId = JUDGE0_LANGUAGE_IDS[data.language];
 
     for (const c of data.cases) {
       try {

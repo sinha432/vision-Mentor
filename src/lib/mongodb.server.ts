@@ -307,20 +307,19 @@ export async function getUser(
 }
 
 export async function searchIndividualUsers(
-  search: string,
+  search = "",
 ): Promise<{ id: string; name: string; email: string }[]> {
   const query = search.trim().slice(0, 80);
-  if (query.length < 2) return [];
+  if (query.length === 1) return [];
 
   const escapedQuery = query.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  const matcher = new RegExp(escapedQuery, "i");
+  const matcher = query ? new RegExp(escapedQuery, "i") : null;
   const collection = await getCollection<StoredUser>("users");
   const users = await collection
     .find(
-      {
-        role: "individual",
-        $or: [{ name: matcher }, { email: matcher }],
-      },
+      matcher
+        ? { role: "individual", $or: [{ name: matcher }, { email: matcher }] }
+        : { role: "individual" },
       { projection: { _id: 1, name: 1, email: 1 } },
     )
     .sort({ name: 1 })

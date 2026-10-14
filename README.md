@@ -13,10 +13,6 @@ npm run dev -- --host 0.0.0.0 --port 5000
 
 The app is configured to run on port 5000 for local development.
 
-### Coding assessment languages
-
-Manual and AI-generated coding questions support Java, JavaScript, Python, C, and C++. Coding test cases use standard input and expected standard output. Running candidate code requires a Judge0 CE RapidAPI key configured as `JUDGE0_RAPIDAPI_KEY` in the server environment; keep this key server-side. The runner uses Judge0 language IDs 50 for C (GCC 9.2) and 54 for C++ (GCC 9.2). Without the key, the assessment still loads, but the app reports that code execution is unavailable.
-
 ### Schedule confirmation email
 
 Company interview scheduling uses the existing EmailJS service. Configure a separate EmailJS template for candidate confirmations with these template variables:
