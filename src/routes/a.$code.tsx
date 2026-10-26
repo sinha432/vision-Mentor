@@ -34,8 +34,10 @@ import {
   type DetectionEvent,
 } from "@/interviewer/hooks/useDetectionEngine";
 import {
+  ASSESSMENT_HIGH_NOISE_DURATION_MS,
   assessmentViolationForEvent,
   recordAssessmentViolation,
+  shouldTerminateForAssessmentEvent,
   type AssessmentStrikeState,
 } from "@/lib/assessment-integrity";
 
@@ -44,6 +46,7 @@ import type {
   DetectionSignals,
 } from "@/interviewer/lib/detection-types";
 import { runJavaCode } from "@/lib/code-runner.functions";
+import { runSqlCode } from "@/lib/sql-runner";
 import type { CodeLanguage, RunResult } from "@/lib/assessment-types";
 
 export const Route = createFileRoute("/a/$code")({
@@ -417,6 +420,15 @@ function AssessmentPage() {
       integrityEventsRef.current = nextEvents;
       setIntegrityEvents(nextEvents);
 
+      if (shouldTerminateForAssessmentEvent(event)) {
+        const reason =
+          event.kind === "device_visible"
+            ? `Assessment terminated after a phone was detected (${event.confidence}% confidence).`
+            : "Assessment terminated after high background noise continued for 10 seconds.";
+        terminateForIntegrity(reason);
+        return;
+      }
+
       const violation = assessmentViolationForEvent(event.kind);
 
       if (violation) {
@@ -467,6 +479,7 @@ function AssessmentPage() {
       !finished &&
       cameraOn,
     audioActive: Boolean(assessment) && !finished && micOn,
+    backgroundNoiseDurationMs: ASSESSMENT_HIGH_NOISE_DURATION_MS,
     getElapsed: () => elapsedRef.current,
     onEvent: handleDetectionEvent,
   });
@@ -623,15 +636,18 @@ function AssessmentPage() {
     setCodeRunError(null);
 
     try {
-      const result = await runJavaCode({
-        data: {
-          sourceCode,
-          language: currentQuestion.language ?? "java",
-          cases: currentQuestion.testCases ?? [],
-        },
-      });
+      const result =
+        currentQuestion.language === "sql"
+          ? await runSqlCode(sourceCode, currentQuestion.testCases ?? [])
+          : await runJavaCode({
+              data: {
+                sourceCode,
+                language: currentQuestion.language ?? "java",
+                cases: currentQuestion.testCases ?? [],
+              },
+            });
 
-      if (!result.configured) {
+      if ("configured" in result && !result.configured) {
         setCodeRunError("Code execution is not configured. Set JUDGE0_RAPIDAPI_KEY on the server.");
         return;
       }
@@ -1282,11 +1298,13 @@ function AssessmentPage() {
               <div className="mt-8">
                 <div className="mb-2 flex items-center justify-between">
                   <span className="text-xs uppercase tracking-widest text-muted-foreground">
-                    Code editor
+                    {currentQuestion.language === "sql" ? "SQL editor" : "Code editor"}
                   </span>
 
                   <span className="rounded-md border border-border/60 px-2 py-1 text-xs">
-                    {currentQuestion.language ?? "Java"}
+                    {currentQuestion.language === "sql"
+                      ? "SQL"
+                      : currentQuestion.language ?? "Java"}
                   </span>
                 </div>
 
@@ -1295,7 +1313,9 @@ function AssessmentPage() {
                   className="min-h-80 resize-y font-mono text-sm"
                   placeholder={
                     currentQuestion.starterCode ??
-                    "Write your solution here..."
+                    (currentQuestion.language === "sql"
+                      ? "Write your SQL query here..."
+                      : "Write your solution here...")
                   }
                   value={answer?.code ?? currentQuestion.starterCode ?? ""}
                  onChange={(event) => {
@@ -1310,7 +1330,7 @@ function AssessmentPage() {
                 <div className="mt-4 rounded-xl border border-border/60 bg-background/30 p-4">
                   <div className="mb-3 flex items-center justify-between gap-3">
                     <div className="text-xs font-semibold uppercase tracking-widest text-muted-foreground">
-                      Test cases
+                      {currentQuestion.language === "sql" ? "SQL test cases" : "Test cases"}
                     </div>
                     <span className="text-xs text-muted-foreground">
                       {currentQuestion.testCases?.length ?? 0} case{currentQuestion.testCases?.length === 1 ? "" : "s"}
@@ -1342,13 +1362,17 @@ function AssessmentPage() {
                           </div>
                           <div className="grid gap-2 text-xs sm:grid-cols-2">
                             <div>
-                              <div className="mb-1 text-muted-foreground">Input</div>
+                              <div className="mb-1 text-muted-foreground">
+                                {currentQuestion.language === "sql" ? "Database setup SQL" : "Input"}
+                              </div>
                               <pre className="min-h-8 whitespace-pre-wrap rounded-md bg-background p-2 font-mono">
                                 {testCase.input || "(empty)"}
                               </pre>
                             </div>
                             <div>
-                              <div className="mb-1 text-muted-foreground">Expected output</div>
+                              <div className="mb-1 text-muted-foreground">
+                                {currentQuestion.language === "sql" ? "Expected result table" : "Expected output"}
+                              </div>
                               <pre className="min-h-8 whitespace-pre-wrap rounded-md bg-background p-2 font-mono">
                                 {testCase.expectedStdout || "(empty)"}
                               </pre>
@@ -1373,7 +1397,13 @@ function AssessmentPage() {
                     {runningCode ? (
                       <Loader2 className="mr-2 h-4 w-4 animate-spin" />
                     ) : null}
-                    {runningCode ? "Running tests" : "Run tests"}
+                    {runningCode
+                      ? currentQuestion.language === "sql"
+                        ? "Running query"
+                        : "Running tests"
+                      : currentQuestion.language === "sql"
+                        ? "Run query"
+                        : "Run tests"}
                   </Button>
                   {codeRunError && (
                     <span className="text-sm text-destructive">{codeRunError}</span>

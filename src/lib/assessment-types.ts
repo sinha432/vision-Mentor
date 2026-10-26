@@ -3,7 +3,7 @@
 // so the types are in a plain, import-anywhere module.
 
 export type QType = "text" | "mcq" | "code";
-export type CodeLanguage = "java" | "javascript" | "python" | "c" | "cpp";
+export type CodeLanguage = "java" | "javascript" | "python" | "c" | "cpp" | "sql";
 
 export type StoredQuestion = {
   id: string;

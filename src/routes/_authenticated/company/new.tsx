@@ -98,6 +98,7 @@ int main() {
     std::cout << input << '\\n';
     return 0;
 }`,
+  sql: "-- Write your SQL query here.\nSELECT 1;",
 };
 
 const blankQ = (): Q => ({
@@ -174,6 +175,19 @@ function NewAssessment() {
           ))
       ) {
         issues.push({ question: index, message: "Add at least one test case." });
+      }
+
+      if (
+        question.type === "code" &&
+        question.language === "sql" &&
+        question.testCases.some(
+          (testCase) => !testCase.input.trim() || !testCase.expectedStdout.trim(),
+        )
+      ) {
+        issues.push({
+          question: index,
+          message: "Each SQL test case needs database setup SQL and an expected result table.",
+        });
       }
     });
 
@@ -555,7 +569,7 @@ function NewAssessment() {
                   >
                     <option value="text">Text</option>
                     <option value="mcq">MCQ</option>
-                    <option value="code">Code (Java)</option>
+                    <option value="code">Code / SQL</option>
                   </select>
                   <label className="text-[10px] text-muted-foreground">Weight</label>
                   <input
@@ -737,6 +751,7 @@ function NewAssessment() {
                       <option value="python">Python</option>
                       <option value="c">C</option>
                       <option value="cpp">C++</option>
+                      <option value="sql">SQL</option>
                     </select>
                   </label>
                   <div>
@@ -750,7 +765,9 @@ function NewAssessment() {
                     />
                   </div>
                   <div className="text-[10px] uppercase tracking-widest text-muted-foreground">
-                    Test cases (stdin → expected stdout)
+                    {q.language === "sql"
+                      ? "Test cases (database setup SQL → expected result table)"
+                      : "Test cases (stdin → expected stdout)"}
                   </div>
                   {q.testCases.map((t, ti) => (
                     <div key={ti} className="grid md:grid-cols-2 gap-2 items-start">
@@ -763,7 +780,7 @@ function NewAssessment() {
                             ),
                           })
                         }
-                        placeholder="stdin"
+                        placeholder={q.language === "sql" ? "CREATE TABLE / INSERT setup SQL" : "stdin"}
                         className="glass rounded-md p-2 bg-transparent outline-none text-xs font-mono resize-y min-h-[64px]"
                       />
                       <div className="flex gap-1 items-start">
@@ -776,7 +793,11 @@ function NewAssessment() {
                               ),
                             })
                           }
-                          placeholder="expected stdout"
+                          placeholder={
+                            q.language === "sql"
+                              ? "Expected table, e.g. id | name\n1 | Ada"
+                              : "expected stdout"
+                          }
                           className="flex-1 glass rounded-md p-2 bg-transparent outline-none text-xs font-mono resize-y min-h-[64px]"
                         />
                         {q.testCases.length > 1 && (

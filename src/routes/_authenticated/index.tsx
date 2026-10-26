@@ -537,6 +537,31 @@ export function VisionMentor() {
   const { active: novaVoice } = useNovaVoice();
   const { supported, listen, stop, speak, speechProgress } = useSpeech(novaVoice?.lang || "en-US", novaVoice);
 
+  const updateVoiceReplies = (enabled: boolean) => {
+    setVoiceReplies(enabled);
+
+    if (typeof window === "undefined" || !("speechSynthesis" in window)) {
+      return;
+    }
+
+    const synthesis = window.speechSynthesis;
+
+    if (enabled) {
+      if (synthesis.paused) {
+        synthesis.resume();
+        if (status === "idle" || status === "speaking") {
+          setStatus("speaking");
+          setExpression(interviewerMode ? "thinking" : "happy");
+        }
+      }
+    } else if (synthesis.speaking || synthesis.pending) {
+      synthesis.pause();
+      if (status === "speaking") {
+        setStatus("idle");
+      }
+    }
+  };
+
   function sanitizeNovaText(text: string) {
     const cleaned = text
       .replace(/[\r\n]+/g, " ")
@@ -845,8 +870,12 @@ useEffect(() => {
                 className="flex-1 bg-transparent outline-none px-3 py-2 text-sm placeholder:text-muted-foreground disabled:opacity-50"
               />
               <button
-                onClick={() => setVoiceReplies((current) => !current)}
+                type="button"
+                onClick={() => updateVoiceReplies(!voiceReplies)}
                 className="p-2 rounded-lg hover:bg-foreground/5 transition-colors"
+                aria-label={voiceReplies ? "Mute Nova's voice" : "Unmute Nova's voice"}
+                aria-pressed={!voiceReplies}
+                title={voiceReplies ? "Mute Nova's voice" : "Unmute Nova's voice"}
               >
                 {settings.voiceReplies ? <Volume2 className="w-4 h-4 text-cyber" /> : <VolumeX className="w-4 h-4 text-muted-foreground" />}
               </button>
@@ -931,11 +960,11 @@ useEffect(() => {
         open={settingsOpen}
         onOpenChange={setSettingsOpen}
         values={settings}
-              onChange={(next) => {
-                setCameraEnabled(next.cameraEnabled);
-                setMicEnabled(next.micEnabled);
-                setVoiceReplies(next.voiceReplies);
-              }}
+        onChange={(next) => {
+          setCameraEnabled(next.cameraEnabled);
+          setMicEnabled(next.micEnabled);
+          updateVoiceReplies(next.voiceReplies);
+        }}
         userEmail={userEmail}
         systemOnline={systemOnline}
       />

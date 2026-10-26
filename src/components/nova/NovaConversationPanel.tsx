@@ -703,18 +703,31 @@ export const NovaConversationPanel = forwardRef<
         {/* Voice mute */}
         <button
           type="button"
-          onClick={() =>
-            setMuted(
-              (value) => !value,
-            )
-          }
+          onClick={() => {
+            const nextMuted = !muted;
+            setMuted(nextMuted);
+
+            if (
+              typeof window === "undefined" ||
+              !("speechSynthesis" in window)
+            ) {
+              return;
+            }
+
+            const synthesis = window.speechSynthesis;
+
+            if (nextMuted && (synthesis.speaking || synthesis.pending)) {
+              synthesis.pause();
+              report("idle", "neutral");
+            } else if (!nextMuted && synthesis.paused) {
+              synthesis.resume();
+              report("speaking", "happy");
+            }
+          }}
           className="inline-flex size-9 shrink-0 items-center justify-center rounded-full text-muted-foreground transition-colors hover:text-cyber"
           aria-pressed={muted}
-          title={
-            muted
-              ? "Unmute Nova's voice"
-              : "Mute Nova's voice"
-          }
+          aria-label={muted ? "Unmute Nova's voice" : "Mute Nova's voice"}
+          title={muted ? "Unmute Nova's voice" : "Mute Nova's voice"}
         >
           {muted ? (
             <VolumeX className="size-4" />

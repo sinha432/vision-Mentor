@@ -7,6 +7,7 @@ interface GenerateRequest {
   topic?: string;
   difficulty?: "Easy" | "Medium" | "Hard" | "Mixed";
   count?: number;
+  questionType?: "mixed" | "algorithm" | "sql";
 }
 
 interface GeneratedQuestion {
@@ -21,7 +22,7 @@ interface GeneratedQuestion {
     text: string;
   }[];
   correctChoiceId?: string;
-  language?: "java" | "javascript" | "python";
+  language?: "java" | "javascript" | "python" | "sql";
   starterCode?: string;
   testCases?: {
     input: string;
@@ -61,6 +62,10 @@ export const Route = createFileRoute(
 
           const difficulty =
             body.difficulty || "Medium";
+          const questionType =
+            body.questionType === "algorithm" || body.questionType === "sql"
+              ? body.questionType
+              : "mixed";
 
           const count = Math.max(
             1,
@@ -91,6 +96,24 @@ export const Route = createFileRoute(
             process.env.GROQ_MODEL?.trim() ||
             "openai/gpt-oss-120b";
 
+          const generationRules =
+            questionType === "sql"
+              ? `- Generate only original SQL query challenges as "code" questions.
+- Set every code question language to "sql" and provide a short SQL starter query.
+- Include the required table schema in the question text.
+- Every test case input must create and seed an independent SQLite database using CREATE TABLE and INSERT statements.
+- Every expectedStdout must be a canonical result table: column names joined by " | ", followed by one row per line with values joined by " | ". Represent SQL NULL as NULL.
+- Include examples and edge cases in the test data. Use SQLite-compatible SQL.`
+              : questionType === "algorithm"
+                ? `- Generate only original algorithm/programming challenges as "code" questions; do not return text or MCQ questions.
+- Use common interview patterns such as arrays, strings, hash maps, sorting, two pointers, trees, graphs, dynamic programming, or binary search as relevant to the topic.
+- Write a new problem statement. Do not reproduce or paraphrase a known LeetCode title, statement, examples, or test cases.
+- State input/output behavior, constraints, and at least one worked example in the problem text.
+- Provide complete runnable Java, JavaScript, or Python starter code and multiple meaningful tests, including a boundary case.`
+                : `- Mix question types appropriately for the requested role and topic.
+- For coding questions, write original LeetCode-style interview problems. Do not reproduce or paraphrase known LeetCode titles, statements, examples, or test cases.
+- Coding problems must specify input/output behavior, constraints, and a worked example, and include multiple meaningful tests with a boundary case.`;
+
           const groq =
             createOpenAICompatible({
               name: "groq",
@@ -104,6 +127,7 @@ Generate exactly ${count} professional assessment questions.
 Role: ${role}
 Topic: ${topic}
 Difficulty: ${difficulty}
+Question style: ${questionType}
 
 Return ONLY valid JSON.
 
@@ -120,20 +144,20 @@ Required format:
       "choices": [{"id": "a", "text": "Option A"}, {"id": "b", "text": "Option B"}],
       "correctChoiceId": "a",
       "language": "java",
-      "starterCode": "complete runnable scaffold",
-      "testCases": [{"input": "example input", "expectedStdout": "example output"}]
+      "starterCode": "complete runnable scaffold or SQL query starter",
+      "testCases": [{"input": "stdin or SQL schema/data setup", "expectedStdout": "stdout or canonical SQL result table"}]
     }
   ]
 }
 
 Rules:
 
+- ${generationRules}
 - Generate exactly ${count} questions.
 - Use "text" for normal interview/assessment questions.
 - Use "mcq" only when appropriate.
 - For every "mcq", provide 2-8 useful choices and set correctChoiceId to one choice id.
-- Use "code" only for programming/code questions. Provide language, complete runnable starterCode, and at least one test case.
-- Coding prompts must describe a concrete problem with input/output behavior, like a local LeetCode-style problem.
+- For every "code" question, provide a supported language, starterCode, and at least one test case.
 - Every question must have meaningful text.
 - Every question must have weight 10.
 - keywords must always be an array.
@@ -223,10 +247,11 @@ Rules:
                       : `q-${Date.now()}-${index}`,
 
                   type:
-                    question.type === "mcq" ||
-                    question.type === "code"
-                      ? question.type
-                      : "text",
+                    questionType !== "mixed"
+                      ? "code"
+                      : question.type === "mcq" || question.type === "code"
+                        ? question.type
+                        : "text",
 
                   text:
                     typeof question.text ===
@@ -270,13 +295,18 @@ Rules:
                   correctChoiceId,
 
                   language:
-                    question.language === "javascript" ||
-                    question.language === "python"
-                      ? question.language
-                      : "java",
+                    questionType === "sql"
+                      ? "sql"
+                      : question.language === "javascript" ||
+                          question.language === "python" ||
+                          (questionType === "mixed" && question.language === "sql")
+                        ? question.language
+                        : "java",
 
                   starterCode:
-                    question.starterCode,
+                    questionType === "sql"
+                      ? question.starterCode?.trim() || "-- Write your SQL query here.\nSELECT 1;"
+                      : question.starterCode,
 
                   testCases: Array.isArray(question.testCases)
                     ? question.testCases
@@ -294,6 +324,24 @@ Rules:
                 (question) =>
                   question.text.length >= 3,
               );
+
+          if (
+            questionType !== "mixed" &&
+            questions.some(
+              (question) =>
+                question.type !== "code" ||
+                !question.starterCode?.trim() ||
+                !question.testCases?.length,
+            )
+          ) {
+            return Response.json(
+              {
+                error:
+                  "The AI response was missing runnable code or test cases. Please regenerate the questions.",
+              },
+              { status: 502 },
+            );
+          }
 
           if (!questions.length) {
             return Response.json(

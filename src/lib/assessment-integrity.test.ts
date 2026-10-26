@@ -1,8 +1,11 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  ASSESSMENT_HIGH_NOISE_DURATION_MS,
+  ASSESSMENT_PHONE_TERMINATION_CONFIDENCE,
   assessmentViolationForEvent,
   recordAssessmentViolation,
+  shouldTerminateForAssessmentEvent,
   type AssessmentStrikeState,
 } from "./assessment-integrity.ts";
 
@@ -51,4 +54,53 @@ test("only phone and sustained-audio event kinds consume violation strikes", () 
   assert.equal(assessmentViolationForEvent("background_noise"), "audio");
   assert.equal(assessmentViolationForEvent("background_voice"), "audio");
   assert.equal(assessmentViolationForEvent("face_missing"), null);
+});
+
+test("a single high-confidence phone detection is an immediate termination event", () => {
+  assert.equal(
+    shouldTerminateForAssessmentEvent({
+      kind: "device_visible",
+      deviceType: "phone",
+      confidence: ASSESSMENT_PHONE_TERMINATION_CONFIDENCE,
+    }),
+    true,
+  );
+  assert.equal(
+    shouldTerminateForAssessmentEvent({
+      kind: "device_visible",
+      deviceType: "phone",
+      confidence: ASSESSMENT_PHONE_TERMINATION_CONFIDENCE - 1,
+    }),
+    false,
+  );
+  assert.equal(
+    shouldTerminateForAssessmentEvent({
+      kind: "device_visible",
+      deviceType: "other",
+      confidence: 100,
+    }),
+    false,
+  );
+  assert.equal(
+    shouldTerminateForAssessmentEvent({
+      kind: "background_noise",
+      confidence: 55,
+    }),
+    true,
+  );
+  assert.equal(
+    shouldTerminateForAssessmentEvent({
+      kind: "background_voice",
+      confidence: 100,
+    }),
+    false,
+  );
+  assert.equal(
+    shouldTerminateForAssessmentEvent({
+      kind: "background_noise",
+      confidence: 54,
+    }),
+    false,
+  );
+  assert.equal(ASSESSMENT_HIGH_NOISE_DURATION_MS, 10_000);
 });

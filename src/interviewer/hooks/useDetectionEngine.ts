@@ -13,6 +13,7 @@ import {
   type DetectionSummary,
   type GazeDirection,
 } from "@/interviewer/lib/detection-types";
+import { ASSESSMENT_PHONE_TERMINATION_CONFIDENCE } from "@/lib/assessment-integrity";
 
 /**
  * On-device interview detection engine.
@@ -55,6 +56,7 @@ export interface DetectionEvent {
   kind: DetectionEventKind;
   detail: string;
   confidence: number;
+  deviceType?: "phone" | "other";
 }
 
 interface Options {
@@ -63,6 +65,7 @@ interface Options {
   active: boolean;
   audioActive?: boolean;
   audioMuted?: boolean;
+  backgroundNoiseDurationMs?: number;
   getElapsed: () => number;
   onEvent?: (event: DetectionEvent) => void;
 }
@@ -113,6 +116,7 @@ export function useDetectionEngine({
   active,
   audioActive = active,
   audioMuted = false,
+  backgroundNoiseDurationMs = 1200,
   getElapsed,
   onEvent,
 }: Options) {
@@ -386,7 +390,10 @@ export function useDetectionEngine({
 
       if (noiseLevel >= 55 && !speaking) {
         noisySince ||= now;
-        if (now - noisySince >= 1200 && now - lastNoiseEvent >= 10_000) {
+        if (
+          now - noisySince >= backgroundNoiseDurationMs &&
+          now - lastNoiseEvent >= 10_000
+        ) {
           lastNoiseEvent = now;
           eventRef.current?.({
             kind: "background_noise",
@@ -431,6 +438,7 @@ export function useDetectionEngine({
   }, [
     audioActive,
     audioMuted,
+    backgroundNoiseDurationMs,
     stream,
     patch,
   ]);
@@ -481,8 +489,7 @@ export function useDetectionEngine({
       | null = null;
     let unusualMovementSince = 0;
 
-    const lastEvent =
-      new Map<DetectionEventKind, number>();
+    const lastEvent = new Map<string, number>();
 
     let awayStreak = 0;
     let missingStreak = 0;
@@ -494,10 +501,20 @@ export function useDetectionEngine({
       detail: string,
       confidence: number,
       throttle = 30_000,
+      deviceType?: DetectionEvent["deviceType"],
     ) => {
       const now = Date.now();
 
-      const previous = lastEvent.get(kind);
+      const eventKey =
+        kind === "device_visible"
+          ? `${kind}:${deviceType ?? "unknown"}:${
+              deviceType === "phone" &&
+              confidence >= ASSESSMENT_PHONE_TERMINATION_CONFIDENCE
+                ? "high"
+                : "normal"
+            }`
+          : kind;
+      const previous = lastEvent.get(eventKey);
 
       if (
         previous &&
@@ -506,12 +523,13 @@ export function useDetectionEngine({
         return;
       }
 
-      lastEvent.set(kind, now);
+      lastEvent.set(eventKey, now);
 
       eventRef.current?.({
         kind,
         detail,
         confidence,
+        ...(deviceType ? { deviceType } : {}),
       });
     };
 
@@ -1325,14 +1343,21 @@ export function useDetectionEngine({
                   ? candidate
                   : current,
             );
+            const highConfidencePhone = found.find(
+              (candidate) =>
+                candidate.label === "phone" &&
+                candidate.score >= ASSESSMENT_PHONE_TERMINATION_CONFIDENCE,
+            );
+            const detected = highConfidencePhone ?? best;
 
             fire(
               "device_visible",
-              best.label === "phone"
-                ? `A phone was detected in the camera frame (${best.score}% confidence).`
-                : `A possible second-screen/device object (${best.label}) was detected in the camera frame (${best.score}% confidence).`,
-              best.score,
+              detected.label === "phone"
+                ? `A phone was detected in the camera frame (${detected.score}% confidence).`
+                : `A possible second-screen/device object (${detected.label}) was detected in the camera frame (${detected.score}% confidence).`,
+              detected.score,
               10_000,
+              detected.label === "phone" ? "phone" : "other",
             );
           }
         }

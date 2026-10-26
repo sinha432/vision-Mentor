@@ -584,6 +584,101 @@
   }
 }
 
+@media print {
+  @page {
+    margin: 12mm;
+  }
+
+  html,
+  body,
+  #root {
+    height: auto !important;
+    min-height: 0 !important;
+    overflow: visible !important;
+  }
+
+  body {
+    background: #fff !important;
+    color: #111827 !important;
+  }
+
+  .performance-report-content {
+    --background: #fff;
+    --foreground: #111827;
+    --card: #fff;
+    --card-foreground: #111827;
+    --secondary: #f1f5f9;
+    --secondary-foreground: #111827;
+    --muted: #e2e8f0;
+    --muted-foreground: #475569;
+    --border: #cbd5e1;
+    --primary: #1d4ed8;
+    --success: #15803d;
+    --warning: #a16207;
+    --destructive: #b91c1c;
+    --cyber: #0369a1;
+    --accent: #6d28d9;
+    max-width: none !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    background: #fff !important;
+    color: #111827 !important;
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+
+  .performance-report-content .glass,
+  .performance-report-content .glass-strong {
+    border-color: #cbd5e1 !important;
+    background: #fff !important;
+    box-shadow: none !important;
+    -webkit-backdrop-filter: none !important;
+    backdrop-filter: none !important;
+  }
+
+  .performance-report-content [class~="bg-secondary/35"] {
+    background: #f1f5f9 !important;
+  }
+
+  .performance-report-content button {
+    display: none !important;
+  }
+
+  .performance-report-content .text-muted-foreground {
+    color: #475569 !important;
+  }
+
+  .performance-report-content .text-primary {
+    color: #1d4ed8 !important;
+  }
+
+  .performance-report-content .text-success {
+    color: #15803d !important;
+  }
+
+  .performance-report-content .text-warning {
+    color: #a16207 !important;
+  }
+
+  .performance-report-content .text-destructive {
+    color: #b91c1c !important;
+  }
+
+  .performance-report-content .text-gradient,
+  .performance-report-content .text-signal {
+    background: none !important;
+    color: #111827 !important;
+    -webkit-text-fill-color: #111827 !important;
+  }
+
+  .performance-report-content section,
+  .performance-report-content article,
+  .performance-report-content blockquote {
+    break-inside: avoid-page;
+    page-break-inside: avoid;
+  }
+}
+
 @keyframes rise {
   from {
     opacity: 0;

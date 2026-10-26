@@ -57,7 +57,7 @@ const questionInput = z.object({
   maxLength: z.number().int().min(20).max(5000).nullable().default(null),
   choices: z.array(choiceSchema).max(8).optional(),
   correctChoiceId: z.string().optional(),
-  language: z.enum(["java", "javascript", "python", "c", "cpp"]).optional(),
+  language: z.enum(["java", "javascript", "python", "c", "cpp", "sql"]).optional(),
   starterCode: z.string().max(20000).optional(),
   testCases: z.array(testCaseSchema).max(10).optional(),
 });

@@ -846,8 +846,10 @@ function ReportPage() {
   if (!loading && !session) {
     return (
       <div className="min-h-screen">
-        <SiteHeader />
-        <main className="mx-auto max-w-3xl px-4 py-24 text-center">
+        <div className="print:hidden">
+          <SiteHeader />
+        </div>
+        <main className="performance-report-content mx-auto max-w-3xl px-4 py-24 text-center">
           <h1 className="font-display text-2xl font-semibold">Report not found</h1>
           <p className="mt-2 text-muted-foreground">
             This interview session isn't stored in this browser.
@@ -911,16 +913,18 @@ function ReportPage() {
 
   return (
     <div className="min-h-screen">
-      <SiteHeader
-        right={
-          <Button asChild size="sm" variant="secondary">
-            <Link to="/interviewer/setup" search={{ focus: undefined }}>
-              New interview
-            </Link>
-          </Button>
-        }
-      />
-      <main className="mx-auto max-w-7xl px-4 py-10 sm:px-6">
+      <div className="print:hidden">
+        <SiteHeader
+          right={
+            <Button asChild size="sm" variant="secondary">
+              <Link to="/interviewer/setup" search={{ focus: undefined }}>
+                New interview
+              </Link>
+            </Button>
+          }
+        />
+      </div>
+      <main className="performance-report-content mx-auto max-w-7xl px-4 py-10 sm:px-6">
         <div className="flex flex-wrap items-end justify-between gap-4">
           <div>
             <h1 className="font-display text-3xl font-semibold sm:text-4xl">Performance report</h1>
@@ -929,7 +933,7 @@ function ReportPage() {
               answers
             </p>
           </div>
-          <Button variant="outline" size="sm" onClick={() => window.print()}>
+          <Button variant="outline" size="sm" className="print:hidden" onClick={() => window.print()}>
             <Download className="mr-1.5 h-4 w-4" /> Save as PDF
           </Button>
         </div>
@@ -950,6 +954,7 @@ function ReportPage() {
                 <Button
                   variant="outline"
                   size="sm"
+                  className="print:hidden"
                   onClick={() => {
                     reportBuildStartedRef.current = false;
                     setReport(null);
@@ -1331,7 +1336,7 @@ function ReportPage() {
               </div>
             </section>
 
-            <div className="flex flex-wrap gap-3">
+            <div className="flex flex-wrap gap-3 print:hidden">
               <Button asChild size="lg">
                 <Link to="/interviewer/setup" search={{ focus: undefined }}>
                   Run another interview <ArrowRight className="ml-1.5 h-4 w-4" />

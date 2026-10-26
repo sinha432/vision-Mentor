@@ -463,16 +463,38 @@ export function NovaChat({
 
             <button
               type="button"
-              onClick={() =>
-                setMuted((value) => !value)
-              }
+              onClick={() => {
+                const nextMuted = !muted;
+                setMuted(nextMuted);
+
+                if (typeof window === "undefined" || !("speechSynthesis" in window)) {
+                  return;
+                }
+
+                const synthesis = window.speechSynthesis;
+
+                if (nextMuted && (synthesis.speaking || synthesis.pending)) {
+                  synthesis.pause();
+                  pulse.current += 1;
+                  onStatusChange?.({
+                    state: "idle",
+                    expression: "neutral",
+                    pulse: pulse.current,
+                  });
+                } else if (!nextMuted && synthesis.paused) {
+                  synthesis.resume();
+                  pulse.current += 1;
+                  onStatusChange?.({
+                    state: "speaking",
+                    expression: "happy",
+                    pulse: pulse.current,
+                  });
+                }
+              }}
               className="inline-flex items-center gap-1.5 rounded-full px-2 py-1 text-[10px] text-muted-foreground transition-colors hover:text-cyber"
               aria-pressed={muted}
-              title={
-                muted
-                  ? "Unmute Nova's voice"
-                  : "Mute Nova's voice"
-              }
+              aria-label={muted ? "Unmute Nova's voice" : "Mute Nova's voice"}
+              title={muted ? "Unmute Nova's voice" : "Mute Nova's voice"}
             >
               {muted ? (
                 <VolumeX className="size-3.5" />

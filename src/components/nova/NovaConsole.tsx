@@ -25,7 +25,7 @@ import type { CompanyNovaCommand } from "@/lib/nova/company-command";
 
 import { createAssessmentWithPersistence } from "@/lib/assessments.functions";
 import { sendAssessmentInvitations, type InvitationResult } from "@/lib/assessment-invitations";
-import type { StoredAssessment } from "@/lib/assessment-types";
+import type { CodeLanguage, StoredAssessment } from "@/lib/assessment-types";
 import {
   fetchScheduledInterviewsFromMongoDB,
   syncAssessmentToMongoDB,
@@ -75,7 +75,7 @@ interface GeneratedQuestion {
 
   correctChoiceId?: string;
 
-  language?: "java" | "javascript" | "python";
+  language?: CodeLanguage;
 
   starterCode?: string;
 

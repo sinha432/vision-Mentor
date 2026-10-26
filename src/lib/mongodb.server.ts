@@ -196,7 +196,7 @@ export interface StoredAssessment {
     }>;
 
     correctChoiceId?: string;
-    language?: "java" | "javascript" | "python" | "c" | "cpp";
+    language?: "java" | "javascript" | "python" | "c" | "cpp" | "sql";
     starterCode?: string;
 
     testCases?: Array<{
