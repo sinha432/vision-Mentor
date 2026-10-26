@@ -93,7 +93,9 @@ function Landing() {
               <Link to="/">Back to Nova</Link>
             </Button>
             <Button asChild size="sm">
-              <Link to="/interviewer/setup">Start interview</Link>
+              <Link to="/interviewer/setup" search={{ focus: undefined }}>
+                Start interview
+              </Link>
             </Button>
           </div>
         }
@@ -121,7 +123,7 @@ function Landing() {
               </p>
               <div className="mt-8 flex flex-wrap items-center gap-3">
                 <Button asChild size="lg">
-                  <Link to="/interviewer/setup">
+                  <Link to="/interviewer/setup" search={{ focus: undefined }}>
                     Start a mock interview <ArrowRight className="ml-1.5 h-4 w-4" />
                   </Link>
                 </Button>
@@ -253,7 +255,7 @@ function Landing() {
                 plan in minutes.
               </p>
               <Button asChild size="lg" className="mt-8">
-                <Link to="/interviewer/setup">
+                <Link to="/interviewer/setup" search={{ focus: undefined }}>
                   Begin interview <ArrowRight className="ml-1.5 h-4 w-4" />
                 </Link>
               </Button>

@@ -25,6 +25,7 @@ export function SiteHeader({ right }: { right?: React.ReactNode }) {
         <nav className="hidden items-center gap-7 text-sm text-muted-foreground md:flex">
           <Link
             to="/interviewer/setup"
+            search={{ focus: undefined }}
             activeProps={{ className: "text-foreground" }}
             className="transition-colors hover:text-foreground"
           >

@@ -246,6 +246,9 @@ export interface StructuredRequest<T> {
 export interface StructuredResult<T> {
   value: T;
   provider: ProviderId | null;
+  model: string | null;
+  durationMs: number;
+  attempts: number;
   /** Set when no provider produced a schema-valid answer. */
   error: AiStatusInfo | null;
 }
@@ -256,6 +259,7 @@ export interface StructuredResult<T> {
  * backoff so a long interview never dies on a transient failure.
  */
 export async function runStructured<T>(request: StructuredRequest<T>): Promise<StructuredResult<T>> {
+  const startedAt = Date.now();
   const vision = Boolean(request.vision || request.images?.length);
   const providers = activeProviders().filter((spec) => !vision || spec.supportsVision);
   if (!providers.length) {
@@ -265,12 +269,14 @@ export async function runStructured<T>(request: StructuredRequest<T>): Promise<S
 
   let lastError: AiStatusInfo = statusInfo("unknown_error");
   const MAX_ATTEMPTS = 4;
+  let attempts = 0;
 
   for (const spec of providers) {
     const apiKey = keyFor(spec);
     if (!apiKey) continue;
 
     for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
+      attempts += 1;
       const promptText =
         attempt === 0
           ? (request.prompt ?? "")
@@ -295,12 +301,30 @@ export async function runStructured<T>(request: StructuredRequest<T>): Promise<S
             : { prompt: promptText }),
         });
         const parsed = request.schema.safeParse(output);
-        if (parsed.success) return { value: parsed.data, provider: spec.id, error: null };
+        if (parsed.success) {
+          return {
+            value: parsed.data,
+            provider: spec.id,
+            model: modelFor(spec, vision),
+            durationMs: Date.now() - startedAt,
+            attempts,
+            error: null,
+          };
+        }
       } catch (error) {
         // Some providers wrap valid JSON in prose or fences — try to salvage it.
         if (NoObjectGeneratedError.isInstance(error) && error.text) {
           const salvaged = salvageJson(request.schema, error.text);
-          if (salvaged.success) return { value: salvaged.data, provider: spec.id, error: null };
+          if (salvaged.success) {
+            return {
+              value: salvaged.data,
+              provider: spec.id,
+              model: modelFor(spec, vision),
+              durationMs: Date.now() - startedAt,
+              attempts,
+              error: null,
+            };
+          }
         }
         const info = classifyAiError(error);
         lastError = info;
@@ -316,7 +340,14 @@ export async function runStructured<T>(request: StructuredRequest<T>): Promise<S
   }
 
   if (request.fallback !== undefined) {
-    return { value: request.fallback, provider: null, error: lastError };
+    return {
+      value: request.fallback,
+      provider: null,
+      model: null,
+      durationMs: Date.now() - startedAt,
+      attempts,
+      error: lastError,
+    };
   }
   throw new NoAiProviderError(lastError);
 }

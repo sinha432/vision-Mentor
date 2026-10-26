@@ -1,5 +1,9 @@
-import { CheckCircle2, Target, TrendingDown, XCircle } from "lucide-react";
-import { PHASE_LABELS, type Turn } from "@/interviewer/lib/interview-types";
+import { CheckCircle2, Target, ThumbsDown, ThumbsUp, TrendingDown, XCircle } from "lucide-react";
+import {
+  PHASE_LABELS,
+  type Turn,
+  type TurnEvaluation,
+} from "@/interviewer/lib/interview-types";
 import { cn } from "@/lib/utils";
 
 function verdictTone(verdict: string) {
@@ -13,7 +17,15 @@ function verdictTone(verdict: string) {
  * Live per-answer scoring: rubric coverage, points lost and what to do better,
  * plus a running average per interview round.
  */
-export function AnswerScoreCard({ turns, className }: { turns: Turn[]; className?: string }) {
+export function AnswerScoreCard({
+  turns,
+  className,
+  onFeedback,
+}: {
+  turns: Turn[];
+  className?: string;
+  onFeedback?: (feedback: NonNullable<TurnEvaluation["feedback"]>) => void;
+}) {
   const scored = turns.filter((t) => t.evaluation && t.answer);
   const last = scored[scored.length - 1];
   if (!last?.evaluation) return null;
@@ -53,9 +65,16 @@ export function AnswerScoreCard({ turns, className }: { turns: Turn[]; className
 
       <p className="mt-2 text-[11px] text-muted-foreground">
         {PHASE_LABELS[last.phase]}
-        {evaluation.verified ? " · rubric-verified" : ""}
+        {evaluation.verified ? " · evidence checked" : " · evaluation needs review"}
         {lost > 0 ? ` · ${lost} points lost` : " · full marks"}
       </p>
+
+      {typeof evaluation.evidenceCoverage === "number" && (
+        <p className="mt-2 text-[11px] text-muted-foreground">
+          Evidence coverage: {evaluation.evidenceCoverage}% · coverage is not a probability of
+          correctness
+        </p>
+      )}
 
       {(matched.length > 0 || missed.length > 0) && (
         <div className="mt-3 space-y-1.5">
@@ -79,11 +98,56 @@ export function AnswerScoreCard({ turns, className }: { turns: Turn[]; className
         </div>
       )}
 
+      {evaluation.evidence && evaluation.evidence.length > 0 && (
+        <div className="mt-3 space-y-2">
+          <h3 className="text-[10px] uppercase tracking-widest text-muted-foreground">
+            Evidence from your answer
+          </h3>
+          {evaluation.evidence.map((item, index) => (
+            <blockquote
+              key={`${item.criterion}-${index}`}
+              className="rounded-lg border-l-2 border-primary/50 bg-secondary/30 px-3 py-2 text-[11px]"
+            >
+              <span className="font-medium">{item.criterion}</span>
+              <p className="mt-1 text-muted-foreground">&ldquo;{item.quote}&rdquo;</p>
+            </blockquote>
+          ))}
+        </div>
+      )}
+
       {evaluation.note && (
         <p className="mt-3 rounded-lg bg-secondary/40 px-3 py-2 text-[11px] leading-relaxed">
           <span className="text-primary">Do better next: </span>
           {evaluation.note}
         </p>
+      )}
+
+      {onFeedback && (
+        <div className="mt-3 flex items-center gap-2">
+          <span className="text-[11px] text-muted-foreground">Was this evaluation useful?</span>
+          <button
+            type="button"
+            aria-pressed={evaluation.feedback === "helpful"}
+            onClick={() => onFeedback("helpful")}
+            className={cn(
+              "inline-flex items-center gap-1 rounded-md border border-border/60 px-2 py-1 text-[11px] hover:bg-secondary",
+              evaluation.feedback === "helpful" && "border-primary text-primary",
+            )}
+          >
+            <ThumbsUp className="h-3 w-3" /> Yes
+          </button>
+          <button
+            type="button"
+            aria-pressed={evaluation.feedback === "needs_review"}
+            onClick={() => onFeedback("needs_review")}
+            className={cn(
+              "inline-flex items-center gap-1 rounded-md border border-border/60 px-2 py-1 text-[11px] hover:bg-secondary",
+              evaluation.feedback === "needs_review" && "border-warning text-warning",
+            )}
+          >
+            <ThumbsDown className="h-3 w-3" /> Needs review
+          </button>
+        </div>
       )}
 
       {rounds.size > 0 && (

@@ -437,7 +437,7 @@ function LiveSessionReport({ session }: { session: InterviewSession }) {
         />
         <LiveEventList
           title="Attire, hair & grooming"
-          empty="No live appearance assessment yet. Enable AI camera review in the interview to assess attire, hair and beard grooming."
+          empty="Appearance is not assessed during live coaching. You can request a separate cloud appearance review below."
           items={presentation}
         />
       </section>
@@ -675,8 +675,7 @@ function ReportPage() {
       setForensics(normalizeForensics(stored.forensics));
       return;
     }
-    if (stored.cloudMediaAnalysisConsent !== true && stored.appearanceReviewConsent !== true)
-      return;
+    if (stored.appearanceReviewConsent !== true) return;
     if (!stored.recording?.id) {
       if (!stored.snapshot?.startsWith("data:image/")) return;
       let cancelled = false;
@@ -793,8 +792,7 @@ function ReportPage() {
       setReplayAppearanceError(null);
       return;
     }
-    if (stored.cloudMediaAnalysisConsent !== true && stored.appearanceReviewConsent !== true)
-      return;
+    if (stored.appearanceReviewConsent !== true) return;
 
     let cancelled = false;
     setAppearanceLoading(true);
@@ -854,7 +852,10 @@ function ReportPage() {
           <p className="mt-2 text-muted-foreground">
             This interview session isn't stored in this browser.
           </p>
-          <Button className="mt-6" onClick={() => navigate({ to: "/interviewer/setup" })}>
+          <Button
+            className="mt-6"
+            onClick={() => navigate({ to: "/interviewer/setup", search: { focus: undefined } })}
+          >
             Start a new interview
           </Button>
         </main>
@@ -913,7 +914,9 @@ function ReportPage() {
       <SiteHeader
         right={
           <Button asChild size="sm" variant="secondary">
-            <Link to="/interviewer/setup">New interview</Link>
+            <Link to="/interviewer/setup" search={{ focus: undefined }}>
+              New interview
+            </Link>
           </Button>
         }
       />
@@ -1023,10 +1026,7 @@ function ReportPage() {
               analysisStatus={replayAppearanceStatus}
               analysisError={replayAppearanceError}
               hasRecording={Boolean(session?.recording?.id || session?.snapshot)}
-              cloudReviewAllowed={
-                session?.cloudMediaAnalysisConsent === true ||
-                session?.appearanceReviewConsent === true
-              }
+              cloudReviewAllowed={session?.appearanceReviewConsent === true}
               liveCoaching={groomingEvents}
               onEnableCloudReview={requestAppearanceReview}
             />
@@ -1267,6 +1267,23 @@ function ReportPage() {
                       {t.evaluation?.note && (
                         <p className="mt-2 text-xs text-primary">{t.evaluation.note}</p>
                       )}
+                      {t.evaluation?.evidence && t.evaluation.evidence.length > 0 && (
+                        <div className="mt-3 space-y-2">
+                          <p className="text-[10px] uppercase tracking-widest text-muted-foreground">
+                            Evidence coverage: {t.evaluation.evidenceCoverage ?? 0}% (not a
+                            probability)
+                          </p>
+                          {t.evaluation.evidence.map((item, index) => (
+                            <blockquote
+                              key={`${item.criterion}-${index}`}
+                              className="rounded-lg border-l-2 border-primary/50 bg-secondary/30 px-3 py-2 text-xs"
+                            >
+                              <span className="font-medium">{item.criterion}</span>
+                              <p className="mt-1 text-muted-foreground">&ldquo;{item.quote}&rdquo;</p>
+                            </blockquote>
+                          ))}
+                        </div>
+                      )}
                       {coaching[t.id] ? (
                         <div className="mt-3 rounded-lg border border-primary/25 bg-primary/5 p-3">
                           <h3 className="text-[10px] uppercase tracking-widest text-primary">
@@ -1316,7 +1333,7 @@ function ReportPage() {
 
             <div className="flex flex-wrap gap-3">
               <Button asChild size="lg">
-                <Link to="/interviewer/setup">
+                <Link to="/interviewer/setup" search={{ focus: undefined }}>
                   Run another interview <ArrowRight className="ml-1.5 h-4 w-4" />
                 </Link>
               </Button>

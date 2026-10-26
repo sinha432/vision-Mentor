@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { runStructured } from "./ai-providers.server";
+import { NoAiProviderError, runStructured } from "./ai-providers.server";
 import { getCompany, getHiring } from "./companies";
 import type {
   AppearanceAnalysisResult,
@@ -8,6 +8,8 @@ import type {
   FlagSeverity,
   InterviewConfig,
   InterviewPhase,
+  ModelCallTelemetry,
+  SourceCitation,
   Turn,
 } from "./interview-types";
 import { deriveSeverity } from "./coach-priority";
@@ -18,6 +20,12 @@ import {
   type BankPhase,
   type BankQuestion,
 } from "./question-bank";
+import { evidenceCoverage, validateEvidence } from "./evaluation-evidence";
+import {
+  retrieveGroundedSources,
+  validateSourceCitations,
+} from "./job-grounding";
+import type { StructuredResult } from "./ai-providers.server";
 
 /* ------------------------------------------------------------------ */
 /* payload types                                                       */
@@ -32,6 +40,7 @@ export interface TurnQuestion {
   language: "java" | "python" | "javascript" | "sql" | "none";
   starterCode: string;
   bankId: string | null;
+  sourceCitations?: SourceCitation[];
 }
 
 export interface TurnEvaluationPayload {
@@ -40,6 +49,9 @@ export interface TurnEvaluationPayload {
   note: string;
   matched: string[];
   missed: string[];
+  evidence: { criterion: string; quote: string; start: number; end: number }[];
+  evidenceCoverage: number;
+  evaluatorVersion: string;
   verified: boolean;
 }
 
@@ -49,6 +61,7 @@ export interface TurnPayload {
   phase: InterviewPhase;
   evaluationOfPrevious: TurnEvaluationPayload | null;
   question: TurnQuestion | null;
+  modelTelemetry: ModelCallTelemetry[];
   done: boolean;
 }
 
@@ -106,12 +119,39 @@ async function structured<T>(options: {
   prompt: string;
   fallback: T;
   throwOnError?: boolean;
+  telemetry?: ModelCallTelemetry[];
+  operation?: ModelCallTelemetry["operation"];
 }): Promise<T> {
-  const result = await runStructured({
-    schema: options.schema,
-    system: options.system,
-    prompt: options.prompt,
-    fallback: options.fallback,
+  let result: StructuredResult<T>;
+  const startedAt = Date.now();
+  try {
+    result = await runStructured({
+      schema: options.schema,
+      system: options.system,
+      prompt: options.prompt,
+      fallback: options.fallback,
+    });
+  } catch (error) {
+    options.telemetry?.push({
+      operation: options.operation ?? "question_generation",
+      provider: null,
+      model: null,
+      durationMs: Date.now() - startedAt,
+      attempts: 0,
+      outcome: "error",
+      errorCode: error instanceof NoAiProviderError ? error.info.code : "unknown_error",
+    });
+    throw error;
+  }
+
+  options.telemetry?.push({
+    operation: options.operation ?? "question_generation",
+    provider: result.provider,
+    model: result.model,
+    durationMs: result.durationMs,
+    attempts: result.attempts,
+    outcome: result.error ? "fallback" : "success",
+    ...(result.error ? { errorCode: result.error.code } : {}),
   });
 
   if (options.throwOnError && result.error) {
@@ -163,8 +203,7 @@ const gradeSchema = z.object({
   score: z.number(),
   verdict: z.enum(["strong", "adequate", "weak"]),
   note: z.string(),
-  matched: z.array(z.string()),
-  missed: z.array(z.string()),
+  evidence: z.array(z.object({ criterion: z.string(), quote: z.string() })).max(12),
 });
 
 function clampScore(value: number): number {
@@ -176,6 +215,7 @@ async function verifyAnswer(
   config: InterviewConfig,
   turn: Turn,
   answer: string,
+  telemetry: ModelCallTelemetry[],
 ): Promise<TurnEvaluationPayload> {
   const bank = getBankQuestion(turn.bankId);
   const question = turn.question;
@@ -184,6 +224,7 @@ async function verifyAnswer(
   if (bank && bank.kind === "mcq") {
     const correct = gradeMcq(bank, answer);
     if (correct !== null) {
+      const quote = answer.trim();
       return {
         score: correct ? 100 : 10,
         verdict: correct ? "strong" : "weak",
@@ -192,6 +233,16 @@ async function verifyAnswer(
           : `Incorrect. The right answer is "${bank.options?.[bank.correctOption ?? 0]}". ${bank.referenceAnswer}`,
         matched: correct ? bank.keyPoints : [],
         missed: correct ? [] : bank.keyPoints,
+        evidence: correct
+          ? bank.keyPoints.map((criterion) => ({
+              criterion,
+              quote,
+              start: answer.indexOf(quote),
+              end: answer.indexOf(quote) + quote.length,
+            }))
+          : [],
+        evidenceCoverage: correct ? 100 : 0,
+        evaluatorVersion: "rubric-eval-v1",
         verified: true,
       };
     }
@@ -216,6 +267,9 @@ async function verifyAnswer(
     note: "This answer could not be verified automatically.",
     matched: [],
     missed: bank?.keyPoints ?? [],
+    evidence: [],
+    evidenceCoverage: 0,
+    evaluatorVersion: "rubric-eval-v1",
     verified: false,
   };
 
@@ -227,7 +281,8 @@ async function verifyAnswer(
       isCoding
         ? `This is a coding answer: mentally execute the candidate's code against the expected behaviour. Wrong output on any case caps the score at 40, regardless of how clean the code looks. Also judge complexity and edge cases.`
         : `Judge only against the reference and key points; an eloquent answer that misses the key points is not strong.`,
-      `"matched" lists the key points the candidate actually covered, "missed" the ones they did not. Quote or paraphrase only what they said.`,
+      `For every criterion supported by the candidate, return its exact text from KEY POINTS and an exact, contiguous quote copied verbatim from CANDIDATE ANSWER. Never invent or paraphrase a quote. Omit unsupported criteria.`,
+      `For an answer without a stored rubric, name only clearly demonstrated criteria and provide exact answer quotes. Return no evidence when the answer is empty or unsupported.`,
       `Keep the note under 40 words and address the candidate in the second person.`,
     ].join("\n"),
     prompt: [
@@ -243,24 +298,34 @@ async function verifyAnswer(
       score: fallback.score,
       verdict: "weak" as const,
       note: fallback.note,
-      matched: fallback.matched,
-      missed: fallback.missed,
+      evidence: [],
     },
+    telemetry,
+    operation: "answer_evaluation",
   });
 
   const known = bank?.keyPoints ?? [];
+  const validatedEvidence = validateEvidence(answer, graded.evidence);
   const matched = known.length
-    ? known.filter((k) => graded.matched.some((m) => similar(m, k)))
-    : graded.matched.slice(0, 6);
+    ? known.filter((criterion) =>
+        validatedEvidence.some((item) => similar(item.criterion, criterion)),
+      )
+    : validatedEvidence.map((item) => item.criterion).slice(0, 6);
+  const evidence = validatedEvidence.map((item) => {
+    const criterion = known.find((entry) => similar(item.criterion, entry)) ?? item.criterion;
+    return { ...item, criterion };
+  });
   const missed = known.length
-    ? known.filter((k) => !matched.includes(k))
-    : graded.missed.slice(0, 6);
+    ? known.filter((criterion) => !matched.includes(criterion))
+    : [];
 
-  // With a rubric, the score must track coverage — the model cannot inflate it.
+  // Evidence coverage contributes to the score so unsupported model claims cannot inflate it.
   let score = clampScore(graded.score);
   if (known.length) {
-    const coverage = (matched.length / known.length) * 100;
+    const coverage = evidenceCoverage(matched.length, known.length);
     score = clampScore(score * 0.5 + coverage * 0.5);
+  } else if (!evidence.length) {
+    score = 0;
   }
   const verdict: "strong" | "adequate" | "weak" =
     score >= 71 ? "strong" : score >= 41 ? "adequate" : "weak";
@@ -271,7 +336,10 @@ async function verifyAnswer(
     note: graded.note || "Evaluated against the reference answer.",
     matched,
     missed,
-    verified: true,
+    evidence,
+    evidenceCoverage: evidenceCoverage(matched.length, known.length || evidence.length),
+    evaluatorVersion: "rubric-eval-v1",
+    verified: evidence.length > 0,
   };
 }
 
@@ -307,14 +375,24 @@ function bankToQuestion(bank: BankQuestion): TurnQuestion {
 }
 
 const generatedQuestionSchema = z.object({
-  prompt: z.string(),
-  topic: z.string(),
+  prompt: z.string().max(2_000),
+  topic: z.string().max(120),
+  sourceCitations: z
+    .array(
+      z.object({
+        sourceId: z.string().max(30),
+        quote: z.string().max(500),
+      }),
+    )
+    .max(4)
+    .default([]),
 });
 
 async function resumeQuestion(
   config: InterviewConfig,
   turns: Turn[],
   difficulty: number,
+  telemetry: ModelCallTelemetry[],
 ): Promise<TurnQuestion> {
   const resume = config.resume;
   const asked = turns
@@ -327,9 +405,45 @@ async function resumeQuestion(
 
   const fit = config.resumeFit;
   const company = getCompany(config.companyId);
+  const query = [
+    config.role,
+    config.practiceFocus,
+    ...(resume?.skills ?? []),
+    ...(resume?.projects ?? []).map((project) => project.title),
+    ...company.focus,
+  ]
+    .filter(Boolean)
+    .join(" ");
+  let sources = retrieveGroundedSources(
+    config.jobDescription ?? "",
+    resume?.resumeText ?? "",
+    query,
+    5,
+  );
+  if (
+    config.jobDescription &&
+    !sources.some((source) => source.source === "job_description")
+  ) {
+    sources = [
+      ...sources,
+      ...retrieveGroundedSources(config.jobDescription, "", config.jobDescription, 2),
+    ].slice(0, 5);
+  }
+  const sourcePrompt = sources.length
+    ? `Grounding sources (cite exact excerpts using sourceId):\n${sources
+        .map((source) => `${source.id} [${source.source}]: ${source.text}`)
+        .join("\n")}`
+    : "No source excerpts were retrieved. Do not invent resume or job-description details.";
+  const fallbackCitations = sources.slice(0, 2).map((source) => ({
+    sourceId: source.id,
+    quote: source.text.slice(0, Math.min(180, source.text.length)),
+  }));
+  const groundedFallback = fallbackCitations.length
+    ? `Your materials mention ${fallbackCitations.map((citation) => `“${citation.quote}”`).join(" and ")}. What experience can you share that demonstrates this, and how did you measure the result?`
+    : fallbackPrompt;
   const generated = await structured({
     schema: generatedQuestionSchema,
-    system: `You write one sharp resume-probing interview question for a ${config.experience} ${config.role} candidate interviewing at ${company.name} (${company.interviewStyle}). Ground the question in something actually written on their resume, and press on the gaps ${company.name} cares about. Interrogate a specific choice they made (algorithm, dataset, architecture, metric, trade-off). One question only, no preamble, no numbering.`,
+    system: `You write one sharp, source-grounded interview question for a ${config.experience} ${config.role} candidate interviewing at ${company.name} (${company.interviewStyle}). Prefer requirements from the job description and connect them to the candidate's resume when possible. Use only the supplied grounding sources for personal or job-specific claims; cite one or two exact excerpts by sourceId and quote. If no source supports a detail, do not claim it. Press on a specific choice, metric or trade-off. One question only, no preamble, no numbering.`,
     prompt: [
       resume
         ? `Resume — skills: ${resume.skills.join(", ") || "n/a"}; projects: ${(resume.projects ?? []).map((p) => `${p.title}: ${p.summary}`).join("; ") || "n/a"}; experience: ${resume.experience.join("; ") || "n/a"}.`
@@ -338,21 +452,39 @@ async function resumeQuestion(
         ? `Company fit review — verdict: ${fit.verdict}; missing for ${company.name}: ${fit.missing.join(", ") || "n/a"}; strengths that land: ${fit.matched.join(", ") || "n/a"}. Probe one of the missing areas through their own resume content.`
         : ``,
       `${company.name} focus areas: ${company.focus.join(", ")}.`,
+      sourcePrompt,
       asked ? `Already asked (do not repeat): ${asked}` : ``,
       `topic: a short label like "Project depth" or the technology involved.`,
     ].join("\n"),
-    fallback: { prompt: fallbackPrompt, topic: "Project depth" },
+    fallback: {
+      prompt: groundedFallback,
+      topic: "Project depth",
+      sourceCitations: fallbackCitations,
+    },
+    telemetry,
+    operation: "resume_question_generation",
   });
+  const sourceCitations = validateSourceCitations(generated.sourceCitations ?? [], sources);
+  const prompt =
+    sources.length === 0 || sourceCitations.length > 0
+      ? generated.prompt.trim() || groundedFallback
+      : groundedFallback;
 
   return {
     kind: "text",
-    prompt: generated.prompt.trim() || fallbackPrompt,
+    prompt,
     topic: generated.topic.trim() || "Project depth",
     difficulty,
     options: [],
     language: "none",
     starterCode: "",
     bankId: null,
+    sourceCitations:
+      sourceCitations.length > 0
+        ? sourceCitations
+        : sources.length > 0
+          ? fallbackCitations
+          : [],
   };
 }
 
@@ -389,12 +521,13 @@ async function pickQuestion(
   turns: Turn[],
   phase: InterviewPhase,
   difficulty: number,
+  telemetry: ModelCallTelemetry[],
 ): Promise<TurnQuestion | null> {
   const usedIds = turns.map((t) => t.bankId).filter((id): id is string => Boolean(id));
   const company = getCompany(config.companyId);
 
   if (phase === "greeting") return greetingQuestion();
-  if (phase === "resume") return resumeQuestion(config, turns, difficulty);
+  if (phase === "resume") return resumeQuestion(config, turns, difficulty, telemetry);
   if (phase === "closing") return closingQuestion();
   if (phase === "complete") return null;
 
@@ -403,12 +536,43 @@ async function pickQuestion(
     phase: phase as BankPhase,
     difficulty,
     usedIds,
-    focus: company.focus,
+    focus: config.practiceFocus
+      ? [...company.focus, config.practiceFocus]
+      : company.focus,
   });
   if (bank) return bankToQuestion(bank);
 
   // Bank exhausted for this slot — generate, and grade it without a reference.
   const hiring = getHiring(config.companyId);
+  let groundedSources = config.jobDescription
+    ? retrieveGroundedSources(
+        config.jobDescription,
+        config.resume?.resumeText ?? "",
+        `${config.role} ${phase} ${config.practiceFocus ?? ""} ${company.focus.join(" ")}`,
+        4,
+      )
+    : [];
+  if (
+    config.jobDescription &&
+    !groundedSources.some((source) => source.source === "job_description")
+  ) {
+    groundedSources = [
+      ...groundedSources,
+      ...retrieveGroundedSources(config.jobDescription, "", config.jobDescription, 2),
+    ].slice(0, 4);
+  }
+  const groundingPrompt = groundedSources.length
+    ? `Candidate-provided job/resume excerpts; cite only exact excerpts with sourceId:\n${groundedSources
+        .map((source) => `${source.id} [${source.source}]: ${source.text}`)
+        .join("\n")}`
+    : "";
+  const generatedFallbackCitations = groundedSources.slice(0, 1).map((source) => ({
+    sourceId: source.id,
+    quote: source.text.slice(0, Math.min(180, source.text.length)),
+  }));
+  const generatedFallbackPrompt = generatedFallbackCitations.length
+    ? `The job or resume materials mention “${generatedFallbackCitations[0].quote}”. How would you apply or demonstrate that in a ${phase} situation?`
+    : `Tell me about a hard problem you solved recently in ${company.focus[0] ?? "your work"}, and how you validated your solution.`;
   const generated = await structured({
     schema: generatedQuestionSchema,
     system: [
@@ -419,29 +583,47 @@ async function pickQuestion(
       `Interview style: ${company.interviewStyle}. Evaluation: ${company.evaluationStyle}. Focus areas: ${company.focus.join(", ")}.`,
       `Write the question the way a real ${company.name} interviewer in this round would phrase it: concrete, scenario-grounded, one clear ask, and it must expose one of the rejection reasons above if the candidate is weak.`,
       `${phase === "coding" ? "State the input/output contract and one constraint." : phase === "behavioral" || phase === "hr" ? "Ask for a specific past situation with their action and measurable outcome." : "Press on trade-offs and why, not definitions."}`,
+      "When grounding excerpts are supplied, base the question on them and return an exact quote citation. Do not invent candidate-specific details.",
       `One question only, no numbering, no preamble, no multi-part checklists.`,
     ].join("\n"),
-    prompt: `Already asked (do not repeat or rephrase): ${
-      turns
-        .map((t) => t.question?.prompt)
-        .filter(Boolean)
-        .join(" | ") || "nothing yet"
-    }`,
+    prompt: [
+      `Already asked (do not repeat or rephrase): ${
+        turns
+          .map((t) => t.question?.prompt)
+          .filter(Boolean)
+          .join(" | ") || "nothing yet"
+      }`,
+      groundingPrompt,
+    ]
+      .filter(Boolean)
+      .join("\n"),
     fallback: {
-      prompt: `Tell me about a hard problem you solved recently in ${company.focus[0] ?? "your work"}, and how you validated your solution.`,
+      prompt: generatedFallbackPrompt,
       topic: company.focus[0] ?? "Engineering depth",
+      sourceCitations: generatedFallbackCitations,
     },
+    telemetry,
+    operation: "question_generation",
   });
+  const sourceCitations = validateSourceCitations(
+    generated.sourceCitations ?? [],
+    groundedSources,
+  );
 
   return {
     kind: phase === "coding" ? "coding" : phase === "behavioral" ? "scenario" : "text",
-    prompt: generated.prompt,
+    prompt:
+      groundedSources.length > 0 && sourceCitations.length === 0
+        ? generatedFallbackPrompt
+        : generated.prompt,
     topic: generated.topic || "General",
     difficulty,
     options: [],
     language: phase === "coding" ? "python" : "none",
     starterCode: "",
     bankId: null,
+    sourceCitations:
+      sourceCitations.length > 0 ? sourceCitations : generatedFallbackCitations,
   };
 }
 
@@ -471,6 +653,7 @@ async function speakLine(
   evaluation: TurnEvaluationPayload | null,
   question: TurnQuestion | null,
   done: boolean,
+  telemetry: ModelCallTelemetry[],
 ): Promise<{ say: string; mood: TurnPayload["mood"] }> {
   const last = [...turns].reverse().find((t) => t.answer);
   const fallback = done
@@ -504,6 +687,8 @@ async function speakLine(
       .filter(Boolean)
       .join("\n"),
     fallback,
+    telemetry,
+    operation: "narration",
   });
 
   return { say: result.say.trim() || fallback.say, mood: result.mood };
@@ -515,12 +700,13 @@ async function speakLine(
 
 export async function generateTurn(config: InterviewConfig, turns: Turn[]): Promise<TurnPayload> {
   const company = getCompany(config.companyId);
+  const modelTelemetry: ModelCallTelemetry[] = [];
 
   // 1. Verify the previous answer against the stored ground truth.
   const previous = turns[turns.length - 1];
   let evaluation: TurnEvaluationPayload | null = null;
   if (previous?.question && previous.answer?.trim()) {
-    evaluation = await verifyAnswer(config, previous, previous.answer.trim());
+    evaluation = await verifyAnswer(config, previous, previous.answer.trim(), modelTelemetry);
   }
 
   const scoredTurns: Turn[] = evaluation
@@ -544,10 +730,28 @@ export async function generateTurn(config: InterviewConfig, turns: Turn[]): Prom
   const phase: InterviewPhase = done ? "complete" : PHASE_PLAN[index];
   const difficulty = targetDifficulty(company.difficulty, scoredTurns);
 
-  const question = done ? null : await pickQuestion(config, scoredTurns, phase, difficulty);
-  const { say, mood } = await speakLine(config, scoredTurns, phase, evaluation, question, done);
+  const question = done
+    ? null
+    : await pickQuestion(config, scoredTurns, phase, difficulty, modelTelemetry);
+  const { say, mood } = await speakLine(
+    config,
+    scoredTurns,
+    phase,
+    evaluation,
+    question,
+    done,
+    modelTelemetry,
+  );
 
-  return { say, mood, phase, evaluationOfPrevious: evaluation, question, done };
+  return {
+    say,
+    mood,
+    phase,
+    evaluationOfPrevious: evaluation,
+    question,
+    modelTelemetry,
+    done,
+  };
 }
 
 const reportSchema = z.object({
@@ -1138,30 +1342,6 @@ export interface CoachPayload {
   visible: boolean;
   items: CoachItem[];
   integrity: CoachIntegrity;
-  appearance: AppearanceReview;
-}
-
-const appearanceAssessmentSchema = z.object({
-  status: z.enum(["positive", "needs_attention", "uncertain", "not_visible"]),
-  confidence: z.number().min(0).max(100),
-  evidence: z.string(),
-  recommendation: z.string(),
-});
-
-function emptyLiveAppearance(): AppearanceReview {
-  const assessment: AppearanceAssessment = {
-    status: "not_visible",
-    confidence: 0,
-    evidence: "",
-    recommendation: "",
-    t: null,
-  };
-  return {
-    assessed: false,
-    grooming: { ...assessment },
-    hair: { ...assessment },
-    attire: { ...assessment },
-  };
 }
 
 const coachSchema = z.object({
@@ -1172,15 +1352,6 @@ const coachSchema = z.object({
   eyeContact: z.string(),
   eyeContactReason: z.string(),
   eyeContactConfidence: z.number(),
-  hair: z.string(),
-  hairReason: z.string(),
-  hairConfidence: z.number(),
-  grooming: z.string(),
-  groomingReason: z.string(),
-  groomingConfidence: z.number(),
-  attire: z.string(),
-  attireReason: z.string(),
-  attireConfidence: z.number(),
   framing: z.string(),
   framingReason: z.string(),
   framingConfidence: z.number(),
@@ -1191,12 +1362,6 @@ const coachSchema = z.object({
   deviceVisible: z.boolean(),
   deviceConfidence: z.number(),
   deviceReason: z.string(),
-  appearance: z.object({
-    assessed: z.boolean(),
-    grooming: appearanceAssessmentSchema,
-    hair: appearanceAssessmentSchema,
-    attire: appearanceAssessmentSchema,
-  }),
 });
 
 const NO_INTEGRITY: CoachIntegrity = {
@@ -1218,18 +1383,13 @@ export interface CoachSignals {
 }
 
 /**
- * One live coaching pass on the current webcam frame. Returns short,
- * professional corrections only for things that are actually off — clothing,
- * hair, facial grooming, posture, gaze and framing. Never comments on the
- * person's body or looks.
+ * One live coaching pass on the current webcam frame. Returns corrections
+ * only for posture, gaze, framing and objective integrity signals.
  */
 export async function coachPresence(
   dataUrl: string,
-  companyId: string,
-  role: string,
   signals: CoachSignals,
 ): Promise<CoachPayload> {
-  const company = getCompany(companyId);
   const items: CoachItem[] = [];
 
   // Deterministic delivery coaching from the voice metrics — no model needed.
@@ -1261,21 +1421,17 @@ export async function coachPresence(
   }
 
   if (!dataUrl.startsWith("data:image/")) {
-    return { visible: false, items, integrity: NO_INTEGRITY, appearance: emptyLiveAppearance() };
+    return { visible: false, items, integrity: NO_INTEGRITY };
   }
 
   const system = [
-    `You are a live interview presentation coach for a candidate interviewing at ${company.name} for a ${role} role.`,
-    `Give a separate appearance assessment for attire, scalp hair, and facial grooming. Attire must say whether the visible clothing is suitable for this company's formal interview style; use a concrete clothing observation, not assumptions about unseen clothing. Hair means visible scalp hair neatness and whether it obscures the face. Grooming means visible beard/facial-hair tidiness and whether it looks maintained, not whether the person should remove facial hair.`,
-    `Also assess posture (slouching, leaning into the lens, sideways body), gaze/eye contact (looking away from the camera, down at notes), and framing/lighting (too close, too low, backlit, cut off).`,
-    `Never comment on body, weight, skin, age, gender, ethnicity, attractiveness, clothing brand, religion, or identity. Do not treat a beard or a particular hairstyle as inherently unprofessional. Never guess details that are not visible.`,
-    `${company.name}'s interview style is ${company.interviewStyle}; keep the bar professional for that.`,
-    `For appearance assessments, status is positive only when clearly suitable, needs_attention only for a concrete visible improvement, uncertain when the feature is visible but ambiguous, and not_visible when the frame cannot support a judgment. State one short observable evidence sentence and one neutral, practical recommendation. When suitable, recommendation may say no change is needed.`,
+    "You are a neutral live interview setup coach. Assess only observable posture, gaze direction and camera framing/lighting.",
+    "Do not assess appearance, attire, hair, grooming, attractiveness, personality, confidence, employability or hiring suitability.",
     `Assess every area on every frame. If it already looks correct, return an EMPTY STRING for the instruction and 0 for the confidence. Only write an instruction when there is something to fix.`,
     `When you do write an instruction, use one short second-person sentence in professional language, max 16 words, e.g. "Sit back and square your shoulders to the camera."`,
     `Each <area>Reason must state the visual evidence you actually saw, max 18 words, e.g. "Shoulders rolled forward and head about 20cm from the lens."`,
     `Each <area>Confidence is an integer 0-100: how certain you are the problem is really present. Use below 55 only when unsure.`,
-    `Set visible=false with all correction instructions empty and appearance.assessed=false if the frame is too dark, too blurry, or no person is visible.`,
+    `Set visible=false with all correction instructions empty if the frame is too dark, too blurry, or no person is visible.`,
     `Also report interview integrity, factually: people = how many distinct people are visible in the frame (peopleConfidence 0-100); faceVisible = whether the candidate's face is clearly in frame; lookingAway = whether they are clearly reading something off-camera; deviceVisible = whether a mobile phone, tablet, smartwatch screen, printed notes or a second screen is visible in their hands or frame, with deviceConfidence 0-100 and deviceReason describing exactly what you saw.`,
   ].join("\n");
 
@@ -1289,24 +1445,11 @@ export async function coachPresence(
 
     const parsed = coachSchema.safeParse(output);
     if (!parsed.success) {
-      return { visible: false, items, integrity: NO_INTEGRITY, appearance: emptyLiveAppearance() };
+      return { visible: false, items, integrity: NO_INTEGRITY };
     }
     const r = parsed.data;
     const pct = (value: number) =>
       Number.isFinite(value) ? Math.max(0, Math.min(100, Math.round(value))) : 0;
-    const normalizeAppearance = (assessment: (typeof r.appearance)["grooming"]): AppearanceAssessment => ({
-      status: assessment.status,
-      confidence: pct(assessment.confidence),
-      evidence: assessment.evidence.trim(),
-      recommendation: assessment.recommendation.trim(),
-      t: null,
-    });
-    const appearance: AppearanceReview = {
-      assessed: r.appearance.assessed,
-      grooming: normalizeAppearance(r.appearance.grooming),
-      hair: normalizeAppearance(r.appearance.hair),
-      attire: normalizeAppearance(r.appearance.attire),
-    };
     const integrity: CoachIntegrity = {
       people: Number.isFinite(r.people) ? Math.max(0, Math.round(r.people)) : 1,
       faceVisible: r.faceVisible !== false,
@@ -1316,14 +1459,11 @@ export async function coachPresence(
       deviceReason: r.deviceReason.trim(),
       peopleConfidence: pct(r.peopleConfidence),
     };
-    if (!r.visible) return { visible: false, items, integrity, appearance };
+    if (!r.visible) return { visible: false, items, integrity };
 
     const map: [CoachArea, string, string, number][] = [
       ["posture", r.posture, r.postureReason, r.postureConfidence],
       ["eye_contact", r.eyeContact, r.eyeContactReason, r.eyeContactConfidence],
-      ["hair", r.hair, r.hairReason, r.hairConfidence],
-      ["grooming", r.grooming, r.groomingReason, r.groomingConfidence],
-      ["attire", r.attire, r.attireReason, r.attireConfidence],
       ["framing", r.framing, r.framingReason, r.framingConfidence],
     ];
     for (const [area, text, reason, confidence] of map) {
@@ -1338,9 +1478,9 @@ export async function coachPresence(
         severity: deriveSeverity(area, pct(confidence)),
       });
     }
-    return { visible: true, items, integrity, appearance };
+    return { visible: true, items, integrity };
   } catch {
-    return { visible: false, items, integrity: NO_INTEGRITY, appearance: emptyLiveAppearance() };
+    return { visible: false, items, integrity: NO_INTEGRITY };
   }
 }
 

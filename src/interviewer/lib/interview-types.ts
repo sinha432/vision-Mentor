@@ -37,6 +37,22 @@ export interface QuestionSpec {
   options: string[];
   language: CodeLanguage | "none";
   starterCode: string;
+  sourceCitations?: SourceCitation[];
+}
+
+export interface SourceCitation {
+  sourceId: string;
+  quote: string;
+}
+
+export interface ModelCallTelemetry {
+  operation: "answer_evaluation" | "question_generation" | "resume_question_generation" | "narration";
+  provider: string | null;
+  model: string | null;
+  durationMs: number;
+  attempts: number;
+  outcome: "success" | "fallback" | "error";
+  errorCode?: string;
 }
 
 export interface ResumeInsights {
@@ -80,6 +96,9 @@ export interface InterviewConfig {
   candidateName: string;
   resume: ResumeInsights | null;
   resumeFit?: ResumeFit | null;
+  practiceFocus?: string;
+  jobDescription?: string;
+  cloudMediaAnalysisConsent?: boolean;
 }
 
 export interface TurnEvaluation {
@@ -88,6 +107,11 @@ export interface TurnEvaluation {
   note: string;
   matched?: string[];
   missed?: string[];
+  evidence?: { criterion: string; quote: string; start: number; end: number }[];
+  /** Evidence coverage, not a calibrated probability of correctness. */
+  evidenceCoverage?: number;
+  evaluatorVersion?: string;
+  feedback?: "helpful" | "needs_review" | null;
   verified?: boolean;
 }
 
@@ -101,6 +125,7 @@ export interface Turn {
   bankId?: string | null;
   answer?: string;
   evaluation?: TurnEvaluation;
+  modelTelemetry?: ModelCallTelemetry[];
   askedAt: number;
 }
 

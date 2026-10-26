@@ -9,7 +9,31 @@ const questionSchema = z.object({
   options: z.array(z.string()),
   language: z.enum(["java", "python", "javascript", "sql", "none"]),
   starterCode: z.string(),
+  sourceCitations: z
+    .array(z.object({ sourceId: z.string().max(30), quote: z.string().max(500) }))
+    .max(4)
+    .optional(),
 });
+
+const modelTelemetrySchema = z
+  .array(
+    z.object({
+      operation: z.enum([
+        "answer_evaluation",
+        "question_generation",
+        "resume_question_generation",
+        "narration",
+      ]),
+      provider: z.string().max(40).nullable(),
+      model: z.string().max(120).nullable(),
+      durationMs: z.number().int().nonnegative().max(120_000),
+      attempts: z.number().int().nonnegative().max(8),
+      outcome: z.enum(["success", "fallback", "error"]),
+      errorCode: z.string().max(40).optional(),
+    }),
+  )
+  .max(8)
+  .optional();
 
 const turnSchema = z.object({
   id: z.string(),
@@ -27,7 +51,7 @@ const turnSchema = z.object({
   mood: z.enum(["neutral", "smile", "nod", "thinking", "curious"]),
   question: questionSchema.nullable(),
   bankId: z.string().nullable().optional(),
-  answer: z.string().optional(),
+  answer: z.string().max(12_000).optional(),
   evaluation: z
     .object({
       score: z.number(),
@@ -35,10 +59,25 @@ const turnSchema = z.object({
       note: z.string(),
       matched: z.array(z.string()).optional(),
       missed: z.array(z.string()).optional(),
+      evidence: z
+        .array(
+          z.object({
+            criterion: z.string().max(240),
+            quote: z.string().max(500),
+            start: z.number().int().nonnegative(),
+            end: z.number().int().nonnegative(),
+          }),
+        )
+        .max(12)
+        .optional(),
+      evidenceCoverage: z.number().min(0).max(100).optional(),
+      evaluatorVersion: z.string().max(40).optional(),
+      feedback: z.enum(["helpful", "needs_review"]).nullable().optional(),
       verified: z.boolean().optional(),
     })
     .optional(),
   askedAt: z.number(),
+  modelTelemetry: modelTelemetrySchema,
 });
 
 const resumeSchema = z.object({
@@ -52,6 +91,7 @@ const resumeSchema = z.object({
   strengths: z.array(z.string()),
   gaps: z.array(z.string()),
   atsScore: z.number(),
+  resumeText: z.string().max(20_000).optional(),
 });
 
 const configSchema = z.object({
@@ -59,6 +99,9 @@ const configSchema = z.object({
   role: z.string(),
   experience: z.string(),
   candidateName: z.string(),
+  practiceFocus: z.string().max(120).optional(),
+  jobDescription: z.string().max(12_000).optional(),
+  cloudMediaAnalysisConsent: z.boolean().optional(),
   resume: resumeSchema.nullable(),
   resumeFit: z
     .object({
@@ -206,8 +249,6 @@ export const coachPresenceNow = createServerFn({ method: "POST" })
     z
       .object({
         dataUrl: z.string().min(32),
-        companyId: z.string(),
-        role: z.string(),
         signals: z.object({
           eyeContact: z.number(),
           attention: z.number(),
@@ -220,7 +261,7 @@ export const coachPresenceNow = createServerFn({ method: "POST" })
   )
   .handler(async ({ data }) => {
     const { coachPresence } = await import("./interview-engine.server");
-    return coachPresence(data.dataUrl, data.companyId, data.role, data.signals);
+    return coachPresence(data.dataUrl, data.signals);
   });
 
 /** Reports whether any AI provider is usable, so the UI can show a setup notice. */

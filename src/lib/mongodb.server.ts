@@ -11,6 +11,11 @@ import {
   ObjectId,
 } from "mongodb";
 import { loadDotEnv } from "@/lib/server-env";
+import {
+  interviewOwnerFilter,
+  interviewRecordFilter,
+  isInterviewOwnedBy,
+} from "@/lib/interview-access";
 
 let cachedClient: MongoClient | null = null;
 let cachedDb: Db | null = null;
@@ -82,9 +87,13 @@ export interface StoredInterview {
   assessmentCode?: string;
 
   config: {
+    companyId?: string;
     companyName?: string;
     role?: string;
     level?: string;
+    experience?: string;
+    candidateName?: string;
+    cloudMediaAnalysisConsent?: boolean;
   };
 
   phases: string[];
@@ -92,10 +101,31 @@ export interface StoredInterview {
   turns: Array<{
     questionId?: string | null;
     question?: string | null;
+    topic?: string | null;
+    phase?: string | null;
     answer?: string | null;
     code?: string | null;
     language?: string | null;
     score?: number | null;
+    evaluation?: {
+      matched?: string[];
+      missed?: string[];
+      evidence?: { criterion: string; quote: string; start: number; end: number }[];
+      evidenceCoverage?: number;
+      evaluatorVersion?: string;
+      feedback?: "helpful" | "needs_review" | null;
+      verified?: boolean;
+    };
+    sourceCitations?: { sourceId: string; quote: string }[];
+    modelTelemetry?: {
+      operation: string;
+      provider: string | null;
+      model: string | null;
+      durationMs: number;
+      attempts: number;
+      outcome: "success" | "fallback" | "error";
+      errorCode?: string;
+    }[];
   }>;
 
   startedAt: string;
@@ -110,6 +140,26 @@ export interface StoredInterview {
 
   createdAt: string;
   updatedAt: string;
+}
+
+export interface StoredInterviewSummary {
+  sessionId: string;
+  turns: Array<{
+    topic?: string;
+    score?: number;
+    evaluation?: {
+      evidenceCoverage?: number;
+      verified?: boolean;
+    };
+    modelTelemetry?: Array<{
+      operation: string;
+      provider: string | null;
+      model: string | null;
+      durationMs: number;
+      attempts: number;
+      outcome: "success" | "fallback" | "error";
+    }>;
+  }>;
 }
 
 export interface StoredScheduledInterview {
@@ -363,22 +413,34 @@ export async function getIndividualUsersByIds(
 
 export async function saveInterview(
   interview: StoredInterview,
-): Promise<StoredInterview> {
+  owner: { id: string; email: string },
+): Promise<StoredInterview | null> {
   const collection =
     await getCollection<StoredInterview>("interviews");
+
+  const existing = await collection.findOne({
+    ...interviewRecordFilter(interview.sessionId, owner),
+  });
+  const anyExisting = existing ?? (await collection.findOne({ sessionId: interview.sessionId }));
+  if (anyExisting && !isInterviewOwnedBy(anyExisting, owner)) return null;
 
   const now = new Date().toISOString();
 
   const doc = {
     ...interview,
+    userId: owner.id,
+    email: owner.email,
     updatedAt: now,
-    createdAt: interview.createdAt || now,
+    createdAt: existing?.createdAt ?? interview.createdAt ?? now,
   };
 
   await collection.updateOne(
-    { sessionId: doc.sessionId },
+    {
+      sessionId: doc.sessionId,
+      ...interviewOwnerFilter(owner),
+    },
     { $set: doc },
-    { upsert: true },
+    { upsert: !anyExisting },
   );
 
   return doc;
@@ -386,22 +448,70 @@ export async function saveInterview(
 
 export async function getInterview(
   sessionId: string,
+  owner: { id: string; email: string },
 ): Promise<StoredInterview | null> {
   const collection =
     await getCollection<StoredInterview>("interviews");
 
-  return collection.findOne({ sessionId });
+  return collection.findOne(interviewRecordFilter(sessionId, owner));
+}
+
+export async function deleteInterview(
+  sessionId: string,
+  owner: { id: string; email: string },
+): Promise<boolean> {
+  const collection = await getCollection<StoredInterview>("interviews");
+  const result = await collection.deleteOne(interviewRecordFilter(sessionId, owner));
+  return result.deletedCount > 0;
 }
 
 export async function getUserInterviews(
-  email: string,
-): Promise<StoredInterview[]> {
+  owner: { id: string; email: string },
+): Promise<StoredInterviewSummary[]> {
   const collection =
     await getCollection<StoredInterview>("interviews");
 
   return collection
-    .find({ email })
-    .sort({ createdAt: -1 })
+    .aggregate<StoredInterviewSummary>([
+      { $match: interviewOwnerFilter(owner) },
+      { $sort: { createdAt: -1 } },
+      {
+        $project: {
+          _id: 0,
+          sessionId: 1,
+          turns: {
+            $map: {
+              input: { $cond: [{ $isArray: "$turns" }, "$turns", []] },
+              as: "turn",
+              in: {
+                topic: "$$turn.topic",
+                score: "$$turn.score",
+                evaluation: {
+                  evidenceCoverage: "$$turn.evaluation.evidenceCoverage",
+                  verified: "$$turn.evaluation.verified",
+                },
+                modelTelemetry: {
+                  $map: {
+                    input: {
+                      $cond: [{ $isArray: "$$turn.modelTelemetry" }, "$$turn.modelTelemetry", []],
+                    },
+                    as: "call",
+                    in: {
+                      operation: "$$call.operation",
+                      provider: "$$call.provider",
+                      model: "$$call.model",
+                      durationMs: "$$call.durationMs",
+                      attempts: "$$call.attempts",
+                      outcome: "$$call.outcome",
+                    },
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
+    ])
     .toArray();
 }
 

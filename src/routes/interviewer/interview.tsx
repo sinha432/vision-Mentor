@@ -36,9 +36,9 @@ import { useSpeaker } from "@/interviewer/hooks/useSpeaker";
 import { useVisionMetrics } from "@/interviewer/hooks/useVisionMetrics";
 import { useSessionRecorder } from "@/interviewer/hooks/useSessionRecorder";
 import { saveRecording } from "@/interviewer/lib/recording-store";
+import { shouldSendCloudMedia } from "@/interviewer/lib/cloud-media-consent";
 import { getCompany } from "@/interviewer/lib/companies";
 import {
-  analyzeAppearanceFrames,
   coachPresenceNow,
   nextInterviewTurn,
 } from "@/interviewer/lib/interview.functions";
@@ -46,8 +46,6 @@ import {
   EMPTY_VOICE,
   PHASE_LABELS,
   PHASE_ORDER,
-  type AppearanceAnalysisStatus,
-  type AppearanceReview,
   type CoachingEvent,
   type CodeLanguage,
   type InterviewConfig,
@@ -121,14 +119,10 @@ function InterviewRoom() {
   }));
   const [camOn, setCamOn] = useState(false);
   const [clipAudio, setClipAudio] = useState(false);
-  const [cloudMediaAnalysisConsent] = useState(true);
+  const [cloudMediaAnalysisConsent, setCloudMediaAnalysisConsent] = useState(false);
   const [elapsed, setElapsed] = useState(0);
   const [finishing, setFinishing] = useState(false);
   const [coaching, setCoaching] = useState<CoachingEvent[]>([]);
-  const [liveAppearance, setLiveAppearance] = useState<AppearanceReview | null>(null);
-  const [liveAppearanceStatus, setLiveAppearanceStatus] =
-    useState<AppearanceAnalysisStatus>("pending");
-  const [liveAppearanceError, setLiveAppearanceError] = useState<string | null>(null);
   const [coachChecking, setCoachChecking] = useState(false);
   const [proctor, setProctor] = useState<ProctorEvent[]>([]);
   const [tabWarnings, setTabWarnings] = useState(0);
@@ -154,7 +148,6 @@ function InterviewRoom() {
   });
   const multiFaceStreakRef = useRef(0);
   const lastVisionCheckRef = useRef(0);
-  const lastAppearanceReviewAtRef = useRef(0);
   const presenceRef = useRef<PresenceSample[]>([]);
   const recordingRef = useRef<RecordingMeta | null>(null);
   const pendingCoachRef = useRef<CoachingEvent[]>([]);
@@ -304,7 +297,7 @@ function InterviewRoom() {
   useEffect(() => {
     const draft = loadDraftConfig<InterviewConfig>();
     if (!draft) {
-      navigate({ to: "/interviewer/setup" });
+      navigate({ to: "/interviewer/setup", search: { focus: undefined } });
       return;
     }
     if (
@@ -312,10 +305,11 @@ function InterviewRoom() {
       !draft.resume.name ||
       !candidateNameMatchesResume(draft.candidateName, draft.resume.name)
     ) {
-      navigate({ to: "/interviewer/setup" });
+      navigate({ to: "/interviewer/setup", search: { focus: undefined } });
       return;
     }
     setConfig(draft);
+    setCloudMediaAnalysisConsent(draft.cloudMediaAnalysisConsent === true);
   }, [navigate]);
 
   // Consume the shared camera and microphone stream for the interview.
@@ -376,6 +370,7 @@ function InterviewRoom() {
               answer: t.answer,
               evaluation: t.evaluation,
               askedAt: t.askedAt,
+              modelTelemetry: t.modelTelemetry,
             })),
           },
         });
@@ -389,6 +384,9 @@ function InterviewRoom() {
             note: evalOfPrevious.note ?? "",
             matched: evalOfPrevious.matched ?? [],
             missed: evalOfPrevious.missed ?? [],
+            evidence: evalOfPrevious.evidence ?? [],
+            evidenceCoverage: evalOfPrevious.evidenceCoverage ?? 0,
+            evaluatorVersion: evalOfPrevious.evaluatorVersion ?? "legacy",
             verified: evalOfPrevious.verified ?? false,
           };
           updated = history.map((t, i) => (i === history.length - 1 ? { ...t, evaluation } : t));
@@ -403,6 +401,7 @@ function InterviewRoom() {
               options: payload.question.options ?? [],
               language: payload.question.language ?? "none",
               starterCode: payload.question.starterCode ?? "",
+              sourceCitations: payload.question.sourceCitations ?? [],
             }
           : null;
 
@@ -413,6 +412,7 @@ function InterviewRoom() {
           mood: payload.mood ?? "neutral",
           question,
           bankId: payload.question?.bankId ?? null,
+          modelTelemetry: payload.modelTelemetry ?? [],
           askedAt: Date.now(),
         };
         const next = [...updated, turn];
@@ -467,7 +467,15 @@ function InterviewRoom() {
   coachStateRef.current.voice = voice;
 
   useEffect(() => {
-    if (!camOn || !config || !cloudMediaAnalysisConsent) return;
+    if (
+      !shouldSendCloudMedia({
+        consent: cloudMediaAnalysisConsent,
+        mediaAvailable: camOn,
+        interviewReady: Boolean(config),
+      })
+    ) {
+      return;
+    }
     let cancelled = false;
 
     async function runCheck() {
@@ -475,55 +483,15 @@ function InterviewRoom() {
       if (state.busy || cancelled) return;
       const frame = await visionApiRef.current.captureSnapshotNow();
       if (!frame) {
-        setLiveAppearanceStatus("frame_unusable");
-        setLiveAppearanceError("The camera did not provide a readable frame. Check camera access and framing.");
         return;
       }
       setLastPresenceCaptureAt(Date.now());
       state.busy = true;
       setCoachChecking(true);
       try {
-        const appearanceCheckAt = Date.now();
-        if (appearanceCheckAt - lastAppearanceReviewAtRef.current >= 30_000) {
-          lastAppearanceReviewAtRef.current = appearanceCheckAt;
-          setLiveAppearanceStatus("checking");
-          setLiveAppearanceError(null);
-          try {
-            const appearanceResult = await analyzeAppearanceFrames({
-              data: {
-                frames: [{ t: elapsedRef.current, dataUrl: frame }],
-                companyId: config!.companyId,
-                role: config!.role,
-              },
-            });
-            if (cancelled) return;
-            setLiveAppearanceStatus(appearanceResult.status);
-            if (appearanceResult.status === "assessed" && appearanceResult.appearance) {
-              const timestamp = elapsedRef.current;
-              setLiveAppearance({
-                ...appearanceResult.appearance,
-                grooming: { ...appearanceResult.appearance.grooming, t: timestamp },
-                hair: { ...appearanceResult.appearance.hair, t: timestamp },
-                attire: { ...appearanceResult.appearance.attire, t: timestamp },
-              });
-            } else {
-              setLiveAppearanceError(appearanceResult.message ?? "Appearance could not be assessed.");
-            }
-          } catch (error) {
-            if (!cancelled) {
-              setLiveAppearanceStatus("analysis_failed");
-              setLiveAppearanceError(
-                error instanceof Error ? error.message : "Appearance analysis failed.",
-              );
-            }
-          }
-        }
-
         const result = await coachPresenceNow({
           data: {
             dataUrl: frame,
-            companyId: config!.companyId,
-            role: config!.role,
             signals: {
               eyeContact: state.live.eyeContact,
               attention: state.live.attention,
@@ -620,7 +588,15 @@ function InterviewRoom() {
   // Groq vision phone check: samples a frame every ~6s while the candidate is
   // in the interview, on top of the continuous on-device object detector.
   useEffect(() => {
-    if (!camOn || !config || !cloudMediaAnalysisConsent) return;
+    if (
+      !shouldSendCloudMedia({
+        consent: cloudMediaAnalysisConsent,
+        mediaAvailable: camOn,
+        interviewReady: Boolean(config),
+      })
+    ) {
+      return;
+    }
     let cancelled = false;
     let checking = false;
     async function checkPhone() {
@@ -666,7 +642,15 @@ function InterviewRoom() {
 
   // Rolling ~10s audio chunks while answering, checked for music/second voice.
   useEffect(() => {
-    if (!recorder.recording || !cloudMediaAnalysisConsent) return;
+    if (
+      !shouldSendCloudMedia({
+        consent: cloudMediaAnalysisConsent,
+        mediaAvailable: recorder.recording,
+        interviewReady: Boolean(config),
+      })
+    ) {
+      return;
+    }
     const stream = liveStream;
     if (!stream || !stream.getAudioTracks().length || typeof MediaRecorder === "undefined") return;
     let cancelled = false;
@@ -745,7 +729,7 @@ function InterviewRoom() {
         /* already stopped */
       }
     };
-  }, [recorder.recording, liveStream, cloudMediaAnalysisConsent, flagIntegrity, escalate]);
+  }, [recorder.recording, liveStream, cloudMediaAnalysisConsent, config, flagIntegrity, escalate]);
 
   const persist = useCallback(
     (allTurns: Turn[], completed: boolean, syncRemote = true) => {
@@ -759,9 +743,6 @@ function InterviewRoom() {
         vision: vision.summarize(),
         voice,
         cloudMediaAnalysisConsent,
-        liveAppearance,
-        liveAppearanceStatus,
-        liveAppearanceError,
         report: undefined,
         snapshot: vision.getSnapshot(),
         coaching,
@@ -789,6 +770,7 @@ function InterviewRoom() {
             role: config.role,
             experience: config.experience,
             candidateName: config.candidateName,
+            cloudMediaAnalysisConsent,
           },
 
           phases: allTurns.map((t) => t.phase),
@@ -796,6 +778,10 @@ function InterviewRoom() {
           turns: allTurns.map((t) => ({
             questionId: t.bankId ?? null,
             question: t.question?.prompt ?? t.say,
+            topic: t.question?.topic ?? t.phase,
+            phase: t.phase,
+            sourceCitations: t.question?.sourceCitations ?? [],
+            modelTelemetry: t.modelTelemetry ?? [],
             answer: t.answer ?? "",
 
             code:
@@ -806,6 +792,17 @@ function InterviewRoom() {
             language: t.question?.language ?? "none",
 
             score: t.evaluation?.score ?? null,
+            evaluation: t.evaluation
+              ? {
+                  matched: t.evaluation.matched ?? [],
+                  missed: t.evaluation.missed ?? [],
+                  evidence: t.evaluation.evidence ?? [],
+                  evidenceCoverage: t.evaluation.evidenceCoverage ?? 0,
+                  evaluatorVersion: t.evaluation.evaluatorVersion ?? "legacy",
+                  feedback: t.evaluation.feedback ?? null,
+                  verified: t.evaluation.verified ?? false,
+                }
+              : undefined,
           })),
 
           startedAt: new Date(session.createdAt).toISOString(),
@@ -835,9 +832,6 @@ function InterviewRoom() {
       vision,
       voice,
       cloudMediaAnalysisConsent,
-      liveAppearance,
-      liveAppearanceStatus,
-      liveAppearanceError,
       coaching,
       proctor,
       detection,
@@ -896,7 +890,13 @@ function InterviewRoom() {
           "Interview ended — a second voice kept answering after two warnings.",
         );
       }
-          if (result.audioBlob && cloudMediaAnalysisConsent) {
+      if (
+        shouldSendCloudMedia({
+          consent: cloudMediaAnalysisConsent,
+          mediaAvailable: Boolean(result.audioBlob),
+          interviewReady: Boolean(config),
+        })
+      ) {
         void (async () => {
           try {
             const audioBase64 = await blobToBase64(result.audioBlob!);
@@ -1073,6 +1073,17 @@ function InterviewRoom() {
             >
               Live report
             </Button>
+            <label className="flex max-w-56 items-center gap-2 text-xs text-muted-foreground">
+              <input
+                type="checkbox"
+                className="accent-primary"
+                checked={cloudMediaAnalysisConsent}
+                onChange={(event) => setCloudMediaAnalysisConsent(event.target.checked)}
+                aria-label="Allow cloud camera and audio analysis"
+                title="Unchecking stops future media-analysis requests; it cannot recall a request already sent."
+              />
+              Cloud media analysis
+            </label>
             <Button variant="destructive" size="sm" onClick={() => void endInterview()}>
               <PhoneOff className="mr-1.5 h-3.5 w-3.5" /> End & report
             </Button>
@@ -1147,6 +1158,18 @@ function InterviewRoom() {
                 <p className="mt-3 whitespace-pre-wrap text-base leading-relaxed">
                   {question.prompt}
                 </p>
+                {question.sourceCitations && question.sourceCitations.length > 0 && (
+                  <div className="mt-3 space-y-1 rounded-lg border border-primary/20 bg-primary/5 p-3">
+                    <p className="text-[10px] font-semibold uppercase tracking-wider text-primary">
+                      Grounded in your materials
+                    </p>
+                    {question.sourceCitations.map((citation, index) => (
+                      <p key={`${citation.sourceId}-${index}`} className="text-xs text-muted-foreground">
+                        “{citation.quote}”
+                      </p>
+                    ))}
+                  </div>
+                )}
               </>
             ) : (
               <p className="text-sm text-muted-foreground">
@@ -1261,15 +1284,30 @@ function InterviewRoom() {
         <aside className="flex min-w-0 flex-col gap-5">
           <PresenceCoach
             events={coaching}
-            appearance={liveAppearance}
-            appearanceStatus={liveAppearanceStatus}
-            appearanceError={liveAppearanceError}
             checking={coachChecking}
             enabled={camOn}
+            cloudAnalysisEnabled={shouldSendCloudMedia({
+              consent: cloudMediaAnalysisConsent,
+              mediaAvailable: camOn,
+              interviewReady: Boolean(config),
+            })}
             lastCaptureAt={lastPresenceCaptureAt}
           />
 
-          <AnswerScoreCard turns={turns} />
+          <AnswerScoreCard
+            turns={turns}
+            onFeedback={(feedback) => {
+              const index = [...turns].map((turn) => Boolean(turn.evaluation)).lastIndexOf(true);
+              if (index < 0 || !turns[index].evaluation) return;
+              const updated = turns.map((turn, turnIndex) =>
+                turnIndex === index && turn.evaluation
+                  ? { ...turn, evaluation: { ...turn.evaluation, feedback } }
+                  : turn,
+              );
+              setTurns(updated);
+              persist(updated, false);
+            }}
+          />
 
           {phoneBanner && (
             <div className="animate-pulse rounded-2xl border-2 border-destructive bg-destructive/15 p-4 text-center text-sm font-semibold text-destructive">
@@ -1356,6 +1394,14 @@ function InterviewRoom() {
                     {t.question && (
                       <span className="mt-1.5 block text-foreground/90">{t.question.prompt}</span>
                     )}
+                    {t.question?.sourceCitations?.map((citation, index) => (
+                      <span
+                        key={`${citation.sourceId}-${index}`}
+                        className="mt-1 block text-[10px] text-muted-foreground"
+                      >
+                        Source: “{citation.quote}”
+                      </span>
+                    ))}
                   </div>
                   {t.answer && (
                     <div className="rounded-lg border border-border/70 p-3 text-xs leading-relaxed">

@@ -9,7 +9,7 @@ import type {
  * This runs in the browser and calls the server API endpoints.
  */
 
-export async function syncInterviewToMongoDB(interview: any): Promise<any> {
+export async function syncInterviewToMongoDB(interview: unknown): Promise<unknown> {
   try {
     const response = await fetch("/api/db/interview", {
       method: "POST",
@@ -86,11 +86,58 @@ export async function fetchInterviewFromMongoDB(sessionId: string): Promise<any>
   }
 }
 
-export async function fetchUserInterviewsFromMongoDB(email: string): Promise<any[]> {
+export async function deleteInterviewFromMongoDB(sessionId: string): Promise<boolean> {
   try {
-    const response = await fetch(`/api/db/interview?email=${encodeURIComponent(email)}`);
+    const response = await fetch(
+      `/api/db/interview?sessionId=${encodeURIComponent(sessionId)}`,
+      { method: "DELETE" },
+    );
+    return response.ok;
+  } catch (error) {
+    console.warn("Failed to delete interview from MongoDB:", error);
+    return false;
+  }
+}
+
+export interface SyncedInterviewSummary {
+  sessionId: string;
+  turns: Array<{
+    topic?: string | null;
+    score?: number | null;
+    evaluation?: {
+      evidenceCoverage?: number;
+      verified?: boolean;
+    };
+    modelTelemetry?: Array<{
+      operation: string;
+      provider: string | null;
+      model: string | null;
+      durationMs: number;
+      attempts: number;
+      outcome: "success" | "fallback" | "error";
+    }>;
+  }>;
+}
+
+export async function fetchUserInterviewsFromMongoDB(): Promise<SyncedInterviewSummary[]> {
+  try {
+    const response = await fetch("/api/db/interview");
     if (!response.ok) return [];
-    return await response.json();
+    const data: unknown = await response.json();
+    if (!Array.isArray(data)) return [];
+    return data.flatMap((row): SyncedInterviewSummary[] => {
+      if (!row || typeof row !== "object") return [];
+      const interview = row as Partial<SyncedInterviewSummary>;
+      if (typeof interview.sessionId !== "string" || !Array.isArray(interview.turns)) return [];
+      return [
+        {
+          sessionId: interview.sessionId,
+          turns: interview.turns.flatMap((turn) =>
+            turn && typeof turn === "object" ? [turn] : [],
+          ),
+        },
+      ];
+    });
   } catch (error) {
     console.warn("Failed to fetch user interviews from MongoDB:", error);
     return [];

@@ -50,6 +50,9 @@ import { saveDraftConfig } from "@/interviewer/lib/session-store";
 import { cn } from "@/lib/utils";
 
 export const Route = createFileRoute("/interviewer/setup")({
+  validateSearch: (search: Record<string, unknown>) => ({
+    focus: typeof search.focus === "string" ? search.focus.slice(0, 120) : undefined,
+  }),
   head: () => ({
     meta: [
       { title: "Set up your interview — Vision Mentor X" },
@@ -71,6 +74,7 @@ export const Route = createFileRoute("/interviewer/setup")({
 const MAX_FILE = 8 * 1024 * 1024;
 
 function SetupPage() {
+  const { focus } = Route.useSearch();
   const navigate = useNavigate();
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const [name, setName] = useState("");
@@ -78,6 +82,8 @@ function SetupPage() {
   const [role, setRole] = useState<string>(ROLES[0]);
   const [experience, setExperience] = useState<string>(EXPERIENCE_LEVELS[1].label);
   const [resumeText, setResumeText] = useState("");
+  const [jobDescription, setJobDescription] = useState("");
+  const [cloudMediaAnalysisConsent, setCloudMediaAnalysisConsent] = useState(false);
   const [resumeError, setResumeError] = useState<string | null>(null);
   const [startError, setStartError] = useState<string | null>(null);
 
@@ -279,6 +285,9 @@ function SetupPage() {
       candidateName: name.trim(),
       resume,
       resumeFit: fit,
+      practiceFocus: focus,
+      jobDescription: jobDescription.trim(),
+      cloudMediaAnalysisConsent,
     };
     saveDraftConfig(config);
     navigate({ to: "/interviewer/interview" });
@@ -448,6 +457,22 @@ function SetupPage() {
                     loading={fitLoading}
                   />
                 )}
+                <div className="space-y-2 border-t border-border/50 pt-4">
+                  <Label htmlFor="job-description">Target job description (optional)</Label>
+                  <Textarea
+                    id="job-description"
+                    rows={4}
+                    maxLength={12_000}
+                    value={jobDescription}
+                    onChange={(e) => setJobDescription(e.target.value)}
+                    placeholder="Paste the job posting to ground interview questions in its stated requirements."
+                  />
+                  <p className="text-xs text-muted-foreground">
+                    Used to retrieve relevant job and resume excerpts for question generation. If
+                    you sync while signed in, exact cited excerpts may be included with relevant
+                    turns; the full job description is not synced.
+                  </p>
+                </div>
               </div>
             </section>
 
@@ -506,10 +531,29 @@ function SetupPage() {
               </Button>
               {mediaError && <p className="mt-3 text-xs text-destructive">{mediaError}</p>}
               <p className="mt-3 text-xs text-muted-foreground">
-                Camera powers presence analytics. We prefer the Mac front-facing camera so your
-                face, posture and gestures stay visible. Without it you can still speak or type
-                your answers.
+                On-device presence metrics can run locally. Your camera and microphone samples are
+                not sent to an AI provider unless you explicitly opt in below. You can change this
+                choice during the interview.
               </p>
+              <label className="mt-4 flex cursor-pointer items-start gap-3 rounded-xl border border-border/70 bg-background/40 p-3 text-sm">
+                <input
+                  type="checkbox"
+                  className="mt-0.5 accent-primary"
+                  checked={cloudMediaAnalysisConsent}
+                  onChange={(event) => setCloudMediaAnalysisConsent(event.target.checked)}
+                />
+                <span>
+                  <span className="font-medium">Allow cloud camera/audio analysis</span>
+                  <span className="mt-1 block text-xs text-muted-foreground">
+                    When enabled, short camera frames and audio samples may be sent to the
+                    configured AI provider                     for live posture, gaze, framing, objective proctoring and background-noise checks.
+                    Appearance review is not part of live coaching. Turning this off stops future
+                    sends but cannot recall a request already sent. Raw media is excluded from model
+                    telemetry. This is optional; typing and on-device metrics remain available
+                    without it.
+                  </span>
+                </span>
+              </label>
             </section>
 
             <section className="rounded-2xl glass p-6">
