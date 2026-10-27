@@ -79,6 +79,11 @@ export function AppearanceGroomingPanel({
   analysisError,
 }: AppearanceGroomingPanelProps) {
   const recentCorrections = liveCoaching.slice(-3).reverse();
+  const needsCategoryRetry =
+    appearance &&
+    [appearance.grooming, appearance.hair, appearance.attire].some(
+      (assessment) => assessment.status === "uncertain" || assessment.status === "not_visible",
+    );
   return (
     <section className="rounded-2xl glass p-6">
       <h2 className="flex items-center gap-2 font-display text-lg font-semibold">
@@ -95,11 +100,19 @@ export function AppearanceGroomingPanel({
           frames…
         </p>
       ) : appearance?.assessed ? (
-        <div className="mt-4 grid gap-4 md:grid-cols-3">
-          <AssessmentRow label={labels.grooming} assessment={appearance.grooming} />
-          <AssessmentRow label={labels.hair} assessment={appearance.hair} />
-          <AssessmentRow label={labels.attire} assessment={appearance.attire} />
-        </div>
+        <>
+          <div className="mt-4 grid gap-4 md:grid-cols-3">
+            <AssessmentRow label={labels.grooming} assessment={appearance.grooming} />
+            <AssessmentRow label={labels.hair} assessment={appearance.hair} />
+            <AssessmentRow label={labels.attire} assessment={appearance.attire} />
+          </div>
+          {needsCategoryRetry && (
+            <p className="mt-3 text-xs text-muted-foreground">
+              Some categories were not clear in the saved frames. Recheck the framing and lighting,
+              then retry the review.
+            </p>
+          )}
+        </>
       ) : analysisStatus === "frame_unusable" ? (
         <p className="mt-4 rounded-xl bg-warning/10 p-4 text-sm text-warning">
           Saved camera frames could not be used. Check that the recording opens and that your face,
@@ -167,7 +180,7 @@ export function AppearanceGroomingPanel({
         </div>
       )}
 
-      {!appearance?.assessed && hasRecording && onEnableCloudReview && (
+      {(!appearance?.assessed || needsCategoryRetry) && hasRecording && onEnableCloudReview && (
         <Button
           className="mt-4"
           size="sm"

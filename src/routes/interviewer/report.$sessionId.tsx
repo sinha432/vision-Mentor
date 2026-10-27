@@ -275,7 +275,10 @@ async function captureSavedAppearanceFrames(session: InterviewSession) {
         await metadata;
 
         const duration = video.duration || session.recording.duration;
-        const timestamps = duration > 1 ? [duration * 0.2, duration * 0.5, duration * 0.8] : [0];
+        const timestamps =
+          duration > 1
+            ? Array.from({ length: 7 }, (_, index) => (duration * (index + 1)) / 8)
+            : [0];
         const width = Math.min(1280, video.videoWidth || 1280);
         const height = Math.max(
           360,
@@ -796,13 +799,16 @@ function ReportPage() {
       setReplayAppearanceStatus(stored.replayAppearanceStatus);
       setReplayAppearance(stored.replayAppearance ?? null);
       setReplayAppearanceError(stored.replayAppearanceError ?? null);
-      return;
-    }
-    if (stored.forensics?.appearance?.assessed) {
-      setReplayAppearanceStatus("assessed");
-      setReplayAppearance(stored.forensics.appearance);
-      setReplayAppearanceError(null);
-      return;
+      const assessments = [
+        stored.replayAppearance?.grooming,
+        stored.replayAppearance?.hair,
+        stored.replayAppearance?.attire,
+      ];
+      const hasUnclearCategory = assessments.some(
+        (assessment) =>
+          !assessment || assessment.status === "uncertain" || assessment.status === "not_visible",
+      );
+      if (stored.replayAppearanceStatus !== "assessed" || !hasUnclearCategory) return;
     }
     if (stored.appearanceReviewConsent !== true) return;
 
