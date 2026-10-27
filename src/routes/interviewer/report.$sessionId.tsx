@@ -15,6 +15,7 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 import { SiteHeader } from "@/interviewer/components/vmx/SiteHeader";
+import { AnswerScoreCard } from "@/interviewer/components/vmx/AnswerScoreCard";
 import { ResumeFitCard } from "@/interviewer/components/vmx/ResumeFitCard";
 import { ReplayTimeline } from "@/interviewer/components/vmx/ReplayTimeline";
 import { AppearanceGroomingPanel } from "@/interviewer/components/vmx/AppearanceGroomingPanel";
@@ -371,7 +372,8 @@ function LiveSessionReport({ session }: { session: InterviewSession }) {
   const samples = session.detection?.samples ?? [];
   const latest = samples.length ? samples[samples.length - 1] : null;
   const coaching = (session.coaching ?? []).slice(-4).reverse();
-  const events = (session.proctor ?? []).slice(-4).reverse();
+  const allEvents = session.proctor ?? [];
+  const events = allEvents.slice(-4).reverse();
   const presentation = session.liveAppearance
     ? [
         { label: "Formal attire", assessment: session.liveAppearance.attire },
@@ -419,7 +421,7 @@ function LiveSessionReport({ session }: { session: InterviewSession }) {
             label="Filler words"
             value={voiceCaptured(session) ? String(session.voice.fillerWords) : "Not captured"}
           />
-          <Stat label="Integrity events" value={String(events.length)} />
+          <Stat label="Integrity events" value={String(allEvents.length)} />
           <Stat label="Camera samples" value={String(samples.length)} />
         </div>
       </section>
@@ -484,13 +486,22 @@ function ReportPage() {
   const [sessionRevision, setSessionRevision] = useState(0);
   const [reportRetry, setReportRetry] = useState(0);
   const reportBuildStartedRef = useRef(false);
+  const completedAtRef = useRef<number | null>(null);
 
   useEffect(() => {
     const refresh = () => {
       const latest = getSession(sessionId);
       if (!latest) return;
+      const justCompleted = !completedAtRef.current && Boolean(latest.completedAt);
+      completedAtRef.current = latest.completedAt ?? null;
       setSession(latest);
       setSessionRevision((revision) => revision + 1);
+      if (justCompleted) {
+        setReport(null);
+        setReportError(null);
+        setLoading(true);
+        setReportRetry((retry) => retry + 1);
+      }
     };
     const onStorage = (event: StorageEvent) => {
       if (event.key === "vmx.sessions.v1") refresh();
@@ -510,6 +521,7 @@ function ReportPage() {
       return;
     }
     setSession(stored);
+    completedAtRef.current = stored.completedAt ?? null;
     if (!stored.completedAt) {
       setLoading(false);
       return;
@@ -871,7 +883,12 @@ function ReportPage() {
     (event) => event.area === "hair" || event.area === "grooming" || event.area === "attire",
   );
   const reportProctor = session?.proctor ?? [];
-  const cameraMeasured = session?.vision.enabled === true || session?.detection?.onDevice === true;
+  const cameraMeasured =
+    (session?.detection?.samples.length ?? 0) > 0 ||
+    (session?.vision.emotionTimeline.length ?? 0) > 0;
+  const voiceMeasured = voiceCaptured(session);
+  const answerEvaluated = session?.turns.some((turn) => Boolean(turn.evaluation)) ?? false;
+  const behaviourMeasured = cameraMeasured || reportProctor.length > 0;
   const noteByArea = new Map(
     (report?.subScoreNotes ?? []).map((note) => [note.area.toLowerCase(), note.note]),
   );
@@ -884,11 +901,14 @@ function ReportPage() {
   ]);
   const detailScores = report
     ? [
-        { area: "Grammar", score: report.grammar },
+        { area: "Grammar", score: voiceMeasured ? report.grammar : null },
         { area: "Body language", score: cameraMeasured ? report.bodyLanguage : null },
         { area: "Eye contact", score: cameraMeasured ? report.eyeContact : null },
-        { area: "Professionalism", score: report.professionalism },
-        { area: "Behaviour", score: report.behaviour },
+        {
+          area: "Professionalism",
+          score: voiceMeasured || answerEvaluated ? report.professionalism : null,
+        },
+        { area: "Behaviour", score: behaviourMeasured ? report.behaviour : null },
         ...report.subScoreNotes
           .filter((note) => !standardAreas.has(note.area.toLowerCase()))
           .map((note) => ({ area: note.area, score: note.score })),
@@ -933,7 +953,12 @@ function ReportPage() {
               answers
             </p>
           </div>
-          <Button variant="outline" size="sm" className="print:hidden" onClick={() => window.print()}>
+          <Button
+            variant="outline"
+            size="sm"
+            className="print:hidden"
+            onClick={() => window.print()}
+          >
             <Download className="mr-1.5 h-4 w-4" /> Save as PDF
           </Button>
         </div>
@@ -1257,11 +1282,6 @@ function ReportPage() {
                         <span className="text-primary">Q{i + 1}</span>
                         <span>{t.question?.topic}</span>
                         <span>difficulty {t.question?.difficulty}/5</span>
-                        {t.evaluation && (
-                          <span className="ml-auto text-foreground">
-                            {t.evaluation.score}/100 · {t.evaluation.verdict}
-                          </span>
-                        )}
                       </div>
                       <p className="mt-2 text-sm">{t.question?.prompt}</p>
                       {t.answer && (
@@ -1269,31 +1289,27 @@ function ReportPage() {
                           {t.answer}
                         </p>
                       )}
-                      {t.evaluation?.note && (
-                        <p className="mt-2 text-xs text-primary">{t.evaluation.note}</p>
-                      )}
-                      {t.evaluation?.evidence && t.evaluation.evidence.length > 0 && (
-                        <div className="mt-3 space-y-2">
-                          <p className="text-[10px] uppercase tracking-widest text-muted-foreground">
-                            Evidence coverage: {t.evaluation.evidenceCoverage ?? 0}% (not a
-                            probability)
-                          </p>
-                          {t.evaluation.evidence.map((item, index) => (
-                            <blockquote
-                              key={`${item.criterion}-${index}`}
-                              className="rounded-lg border-l-2 border-primary/50 bg-secondary/30 px-3 py-2 text-xs"
-                            >
-                              <span className="font-medium">{item.criterion}</span>
-                              <p className="mt-1 text-muted-foreground">&ldquo;{item.quote}&rdquo;</p>
-                            </blockquote>
-                          ))}
-                        </div>
-                      )}
+                      {t.evaluation ? (
+                        <AnswerScoreCard
+                          turns={[t]}
+                          turn={t}
+                          showRounds={false}
+                          embedded
+                          className="mt-3"
+                        />
+                      ) : t.answer ? (
+                        <p className="mt-3 text-xs text-muted-foreground">
+                          Answer submitted; a score was not recorded for this question.
+                        </p>
+                      ) : null}
                       {coaching[t.id] ? (
                         <div className="mt-3 rounded-lg border border-primary/25 bg-primary/5 p-3">
                           <h3 className="text-[10px] uppercase tracking-widest text-primary">
                             How to score 100/100
                           </h3>
+                          <p className="mt-1 text-[11px] text-muted-foreground">
+                            Practice guidance, not a guaranteed score.
+                          </p>
                           <p className="mt-1.5 text-xs text-muted-foreground">
                             <span className="font-medium text-foreground">Ideal shape: </span>
                             {coaching[t.id].idealShape}
@@ -1330,7 +1346,22 @@ function ReportPage() {
                         <p className="mt-2 text-xs text-muted-foreground">
                           Generating a model answer from your resume…
                         </p>
-                      ) : null}
+                      ) : (
+                        <div className="mt-3 rounded-lg bg-secondary/35 p-3">
+                          <h3 className="text-[10px] uppercase tracking-widest text-primary">
+                            Practice suggestion
+                          </h3>
+                          <p className="mt-1 text-[11px] text-muted-foreground">
+                            Guidance for improvement, not a guaranteed score.
+                          </p>
+                          <p className="mt-1.5 text-xs leading-relaxed text-muted-foreground">
+                            {t.evaluation?.note ||
+                              (t.evaluation?.missed?.length
+                                ? `Make sure to cover: ${t.evaluation.missed.join("; ")}`
+                                : "No additional question-specific guidance was generated for this answer.")}
+                          </p>
+                        </div>
+                      )}
                     </article>
                   ))}
               </div>

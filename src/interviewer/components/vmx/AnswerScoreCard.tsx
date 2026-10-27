@@ -1,9 +1,5 @@
 import { CheckCircle2, Target, ThumbsDown, ThumbsUp, TrendingDown, XCircle } from "lucide-react";
-import {
-  PHASE_LABELS,
-  type Turn,
-  type TurnEvaluation,
-} from "@/interviewer/lib/interview-types";
+import { PHASE_LABELS, type Turn, type TurnEvaluation } from "@/interviewer/lib/interview-types";
 import { cn } from "@/lib/utils";
 
 function verdictTone(verdict: string) {
@@ -19,34 +15,47 @@ function verdictTone(verdict: string) {
  */
 export function AnswerScoreCard({
   turns,
+  turn,
+  showRounds = true,
+  embedded = false,
   className,
   onFeedback,
 }: {
   turns: Turn[];
+  turn?: Turn;
+  showRounds?: boolean;
+  embedded?: boolean;
   className?: string;
   onFeedback?: (feedback: NonNullable<TurnEvaluation["feedback"]>) => void;
 }) {
   const scored = turns.filter((t) => t.evaluation && t.answer);
-  const last = scored[scored.length - 1];
-  if (!last?.evaluation) return null;
+  const scoredTurn = turn ?? scored[scored.length - 1];
+  if (!scoredTurn?.evaluation || !scoredTurn.answer) return null;
 
-  const evaluation = last.evaluation;
+  const evaluation = scoredTurn.evaluation;
   const tone = verdictTone(evaluation.verdict);
   const lost = Math.max(0, 100 - evaluation.score);
   const missed = evaluation.missed ?? [];
   const matched = evaluation.matched ?? [];
 
   const rounds = new Map<string, { total: number; count: number }>();
-  for (const t of scored) {
-    const key = t.phase;
-    const entry = rounds.get(key) ?? { total: 0, count: 0 };
-    entry.total += t.evaluation?.score ?? 0;
-    entry.count += 1;
-    rounds.set(key, entry);
+  if (showRounds) {
+    for (const t of scored) {
+      const key = t.phase;
+      const entry = rounds.get(key) ?? { total: 0, count: 0 };
+      entry.total += t.evaluation?.score ?? 0;
+      entry.count += 1;
+      rounds.set(key, entry);
+    }
   }
 
   return (
-    <section className={cn("animate-rise rounded-2xl glass p-4", className)}>
+    <section
+      className={cn(
+        embedded ? "border-t border-border/70 pt-3" : "animate-rise rounded-2xl glass p-4",
+        className,
+      )}
+    >
       <div className="flex items-center justify-between gap-3">
         <h2 className="flex items-center gap-2 font-display text-sm font-semibold">
           <Target className="h-4 w-4 text-primary" /> Answer score
@@ -64,7 +73,7 @@ export function AnswerScoreCard({
       </div>
 
       <p className="mt-2 text-[11px] text-muted-foreground">
-        {PHASE_LABELS[last.phase]}
+        {PHASE_LABELS[scoredTurn.phase]}
         {evaluation.verified ? " · evidence checked" : " · evaluation needs review"}
         {lost > 0 ? ` · ${lost} points lost` : " · full marks"}
       </p>
@@ -150,7 +159,7 @@ export function AnswerScoreCard({
         </div>
       )}
 
-      {rounds.size > 0 && (
+      {showRounds && rounds.size > 0 && (
         <div className="mt-3 space-y-1">
           <h3 className="text-[10px] uppercase tracking-widest text-muted-foreground">
             Round average
