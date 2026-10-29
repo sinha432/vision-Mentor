@@ -1,6 +1,7 @@
 import { Link } from "@tanstack/react-router";
-import { Github, Linkedin, Mail, Sparkles } from "lucide-react";
+import { Github, Linkedin, Mail } from "lucide-react";
 
+import { BrandLogo } from "@/components/shared/BrandLogo";
 import { FooterTeam } from "@/components/shared/FooterTeam";
 
 const SOCIALS = [Mail, Github, Linkedin];
@@ -21,9 +22,7 @@ export function SiteFooter() {
           {/* Brand */}
           <div className="min-w-0">
             <div className="flex min-w-0 items-center gap-3">
-              <span className="flex size-10 shrink-0 items-center justify-center rounded-xl bg-aurora shadow-[0_14px_32px_-16px_color-mix(in_oklab,var(--cyber)_80%,transparent)]">
-                <Sparkles className="size-4 text-primary-foreground" strokeWidth={2} />
-              </span>
+              <BrandLogo className="size-10 rounded-xl shadow-[0_14px_32px_-16px_color-mix(in_oklab,var(--cyber)_80%,transparent)]" />
               <span className="truncate font-display text-sm tracking-[0.16em] text-foreground">
                 VISION MENTOR X
               </span>

@@ -20,6 +20,7 @@ import {
 import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
+import { BrandLogo } from "@/components/shared/BrandLogo";
 import { Textarea } from "@/components/ui/textarea";
 import { useDemoAuth } from "@/contexts/DemoAuthContext";
 import {
@@ -1119,8 +1120,11 @@ function AssessmentPage() {
       <header className="sticky top-0 z-40 border-b border-border/60 bg-background/95 backdrop-blur-xl">
         <div className="mx-auto flex max-w-7xl items-center justify-between gap-4 px-4 py-3 sm:px-6">
           <div className="min-w-0">
-            <div className="font-display text-sm font-bold tracking-[0.18em] text-gradient">
-              VISION MENTOR X
+            <div className="flex items-center gap-2">
+              <BrandLogo className="size-7 rounded-md" />
+              <span className="font-display text-sm font-bold tracking-[0.18em] text-gradient">
+                VISION MENTOR X
+              </span>
             </div>
 
             <div className="truncate text-xs text-muted-foreground">

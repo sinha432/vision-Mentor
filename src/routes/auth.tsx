@@ -22,6 +22,7 @@ import {
 import { toast } from "sonner";
 import { Toaster } from "@/components/ui/sonner";
 import { Button } from "@/components/ui/button";
+import { BrandLogo } from "@/components/shared/BrandLogo";
 import { useDemoAuth, type UserRole } from "@/contexts/DemoAuthContext";
 import novaAvatar from "@/assets/nova-cutout.png";
 
@@ -445,9 +446,7 @@ function AuthPage() {
           </Link>
 
           <Link to="/welcome" className="mb-10 flex w-fit items-center gap-3">
-            <span className="grid size-11 place-items-center rounded-2xl border border-cyan-200/25 bg-cyan-300/10 shadow-[0_0_22px_-8px_rgba(0,217,255,0.75)]">
-              <Sparkles className="size-5 text-cyan-200" />
-            </span>
+            <BrandLogo className="size-11 rounded-xl border border-cyan-200/25 bg-slate-950/60 shadow-[0_0_22px_-8px_rgba(0,217,255,0.75)]" />
             <span>
               <span className="block font-display text-sm tracking-[0.16em] text-white">
                 VISION MENTOR <span className="text-[#BD55F5]">X</span>
@@ -517,9 +516,7 @@ function AuthPage() {
           className="relative z-10 mx-auto w-full max-w-[420px] rounded-[26px] border border-[#12365A] bg-[#09142B]/95 p-6 shadow-[0_24px_80px_-32px_rgba(0,170,255,0.42)] backdrop-blur-2xl sm:p-8 xl:mx-0"
         >
           <div className="mb-6 flex flex-col items-center text-center">
-            <div className="mb-3 flex size-14 items-center justify-center rounded-2xl bg-linear-to-br from-[#00D9FF] via-[#168BFF] to-[#BD55F5] shadow-[0_0_28px_-8px_rgba(0,217,255,0.8)]">
-              <Sparkles className="size-7 text-white" />
-            </div>
+            <BrandLogo className="mb-3 size-14 rounded-2xl shadow-[0_0_28px_-8px_rgba(0,217,255,0.8)]" />
 
             <h1 className="font-display text-xl tracking-[0.12em] text-white">
               VISION MENTOR <span className="text-[#BD55F5]">X</span>

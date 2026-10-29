@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { Link, useRouterState } from "@tanstack/react-router";
-import { Menu, Sparkles, X } from "lucide-react";
+import { Menu, X } from "lucide-react";
+import { BrandLogo } from "@/components/shared/BrandLogo";
 
 const LINKS = [
   { to: "/welcome", label: "Home" },
@@ -76,18 +77,7 @@ export function SiteNav({ variant = "default" }: SiteNavProps) {
           to="/welcome"
           className={`flex items-center gap-2 ${isPublic ? "welcome-nav-logo" : ""}`}
         >
-          <span
-            className={
-              isPublic
-                ? "grid size-8 place-items-center rounded-full border border-cyan-300/30 bg-cyan-300/10"
-                : "chip-3d flex size-8 items-center justify-center rounded-xl"
-            }
-          >
-            <Sparkles
-              className={`size-4 ${isPublic ? "text-cyan-200" : "text-cyber"}`}
-              strokeWidth={2}
-            />
-          </span>
+          <BrandLogo className="size-9 rounded-lg" />
           <span
             className={
               isPublic

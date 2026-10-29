@@ -1,12 +1,5 @@
 import { Link, useNavigate, useRouterState } from "@tanstack/react-router";
-import {
-  LayoutDashboard,
-  ClipboardList,
-  Users,
-  Settings,
-  UserCircle,
-  Building2,
-} from "lucide-react";
+import { LayoutDashboard, ClipboardList, Users, Settings, UserCircle } from "lucide-react";
 
 import {
   Sidebar,
@@ -22,6 +15,7 @@ import {
 } from "@/components/ui/sidebar";
 import { CompanyNovaActions } from "@/components/nova/CompanyNovaActions";
 import { useCompanyNovaActions } from "@/components/nova/CompanyNovaActionsContext";
+import { BrandLogo } from "@/components/shared/BrandLogo";
 
 const items = [
   { title: "Dashboard", url: "/dashboard", icon: LayoutDashboard, exact: true },
@@ -52,17 +46,11 @@ export function AppSidebar({ companyName }: { companyName: string }) {
     <Sidebar collapsible="icon">
       <SidebarHeader>
         <div className="flex min-w-0 items-center gap-3 px-1 py-2">
-          <div className="gradient-aurora grid h-9 w-9 shrink-0 place-items-center rounded-xl">
-            <Building2 className="h-4 w-4 text-primary-foreground" />
-          </div>
+          <BrandLogo className="size-9 rounded-xl" />
           {!collapsed && (
             <div className="min-w-0">
-              <p className="truncate font-display text-sm font-semibold">
-                {companyName}
-              </p>
-              <p className="truncate text-xs text-muted-foreground">
-                Company dashboard
-              </p>
+              <p className="truncate font-display text-sm font-semibold">{companyName}</p>
+              <p className="truncate text-xs text-muted-foreground">Company dashboard</p>
             </div>
           )}
         </div>

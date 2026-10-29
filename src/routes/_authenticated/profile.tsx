@@ -26,7 +26,6 @@ import {
   FileText,
   Upload,
   X,
-  Sparkles,
   ArrowLeft,
   Save,
   CheckCircle2,
@@ -34,6 +33,7 @@ import {
 import { toast } from "sonner";
 import { Toaster } from "@/components/ui/sonner";
 import { Button } from "@/components/ui/button";
+import { BrandLogo } from "@/components/shared/BrandLogo";
 import { useDemoAuth } from "@/contexts/DemoAuthContext";
 
 export const Route = createFileRoute("/_authenticated/profile")({
@@ -430,12 +430,7 @@ function ProfilePage() {
           </Link>
 
           <div className="flex items-center gap-2">
-            <div
-              className="w-8 h-8 rounded-lg flex items-center justify-center glow-primary"
-              style={{ background: "var(--gradient-aurora)" }}
-            >
-              <Sparkles className="w-4 h-4 text-white" />
-            </div>
+            <BrandLogo className="size-8 rounded-lg glow-primary" />
 
             <span className="font-display text-sm text-gradient">
               VISION MENTOR X

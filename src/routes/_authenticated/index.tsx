@@ -24,6 +24,7 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 import { Toaster } from "@/components/ui/sonner";
+import { BrandLogo } from "@/components/shared/BrandLogo";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { SettingsPanel, SettingsValues } from "@/components/SettingsPanel";
 import { Companion } from "@/components/nova/Companion";
@@ -876,7 +877,7 @@ export function VisionMentor() {
                 style={{ animationDirection: "reverse" }}
               />
               <div className="absolute inset-0 flex items-center justify-center">
-                <Sparkles className="w-12 h-12 text-cyber animate-pulse" />
+                <BrandLogo className="size-16 rounded-2xl animate-pulse" />
               </div>
             </div>
             <h1 className="mt-8 font-display text-3xl text-gradient animate-gradient">
@@ -909,12 +910,7 @@ export function VisionMentor() {
 
       <header className="flex items-center justify-between px-6 py-4 border-b border-border/50 glass-strong">
         <div className="flex items-center gap-3">
-          <div
-            className="w-9 h-9 rounded-lg flex items-center justify-center glow-primary"
-            style={{ background: "var(--gradient-aurora)" }}
-          >
-            <Zap className="w-5 h-5 text-white" />
-          </div>
+          <BrandLogo className="size-9 rounded-lg glow-primary" />
           <div>
             <h1 className="font-display text-sm text-gradient">VISION MENTOR X</h1>
           </div>

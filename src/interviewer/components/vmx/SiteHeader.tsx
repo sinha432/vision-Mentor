@@ -1,17 +1,12 @@
 import { Link } from "@tanstack/react-router";
 import { MessageCircle } from "lucide-react";
+import { BrandLogo } from "@/components/shared/BrandLogo";
 import { cn } from "@/lib/utils";
-
-const logo = "/logo.png";
 
 export function Brand({ className }: { className?: string }) {
   return (
     <Link to="/interviewer" className={cn("group flex items-center gap-2.5", className)}>
-      <img
-        src={logo}
-        alt="Vision Mentor X logo"
-        className="h-9 w-9 rounded-xl border border-border/60 bg-primary/10 object-cover shadow-[0_0_18px_rgba(59,130,246,0.35)]"
-      />
+      <BrandLogo className="h-9 w-9 rounded-xl border border-border/60 bg-primary/10 shadow-[0_0_18px_rgba(59,130,246,0.35)]" />
       <span className="font-display text-base font-semibold tracking-tight">
         Vision Mentor <span className="text-signal">X</span>
       </span>
