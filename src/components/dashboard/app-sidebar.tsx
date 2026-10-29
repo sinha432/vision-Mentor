@@ -1,4 +1,4 @@
-import { Link, useRouterState } from "@tanstack/react-router";
+import { Link, useNavigate, useRouterState } from "@tanstack/react-router";
 import {
   LayoutDashboard,
   ClipboardList,
@@ -20,6 +20,8 @@ import {
   SidebarMenuItem,
   useSidebar,
 } from "@/components/ui/sidebar";
+import { CompanyNovaActions } from "@/components/nova/CompanyNovaActions";
+import { useCompanyNovaActions } from "@/components/nova/CompanyNovaActionsContext";
 
 const items = [
   { title: "Dashboard", url: "/dashboard", icon: LayoutDashboard, exact: true },
@@ -35,8 +37,10 @@ const items = [
 ];
 
 export function AppSidebar({ companyName }: { companyName: string }) {
-  const { state } = useSidebar();
+  const { state, isMobile, setOpenMobile } = useSidebar();
   const collapsed = state === "collapsed";
+  const navigate = useNavigate();
+  const { dispatchAction } = useCompanyNovaActions();
   const pathname = useRouterState({
     select: (router) => router.location.pathname,
   });
@@ -84,6 +88,22 @@ export function AppSidebar({ companyName }: { companyName: string }) {
                 </SidebarMenuItem>
               ))}
             </SidebarMenu>
+            <div className="mt-4 border-t border-sidebar-border pt-3">
+              <CompanyNovaActions
+                collapsed={collapsed}
+                onAction={(action) => {
+                  const handled = dispatchAction(action);
+
+                  if (!handled) {
+                    void navigate({ to: "/dashboard" });
+                  }
+
+                  if (isMobile) {
+                    setOpenMobile(false);
+                  }
+                }}
+              />
+            </div>
           </SidebarGroupContent>
         </SidebarGroup>
       </SidebarContent>

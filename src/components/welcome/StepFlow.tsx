@@ -23,7 +23,10 @@ const STEPS = [
 
 export function StepFlow() {
   return (
-    <section className="glass-strong relative px-6 py-10 sm:px-10 sm:py-12">
+    <section
+      id="how-it-works"
+      className="glass-strong relative scroll-mt-24 px-6 py-10 sm:px-10 sm:py-12"
+    >
       <h2 className="font-display text-xs tracking-[0.32em] text-muted-foreground uppercase sm:text-sm">
         How it works
       </h2>

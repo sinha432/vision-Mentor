@@ -2,12 +2,14 @@ import type { ReactNode } from "react";
 import type { LucideIcon } from "lucide-react";
 
 export function AboutSection({
+  id,
   icon: Icon,
   eyebrow,
   title,
   delay = 0,
   children,
 }: {
+  id?: string;
   icon: LucideIcon;
   eyebrow: string;
   title: string;
@@ -16,7 +18,8 @@ export function AboutSection({
 }) {
   return (
     <section
-      className="reveal-on-scroll glass-strong relative overflow-hidden px-6 py-9 sm:px-10 sm:py-11"
+      id={id}
+      className="reveal-on-scroll glass-strong relative scroll-mt-24 overflow-hidden px-6 py-9 sm:px-10 sm:py-11"
       style={{ animationDelay: `${delay}s` }}
     >
       <span aria-hidden className="absolute inset-x-0 top-0 h-px bg-aurora opacity-45" />

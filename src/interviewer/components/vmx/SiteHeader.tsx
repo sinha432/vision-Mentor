@@ -1,6 +1,8 @@
 import { Link } from "@tanstack/react-router";
+import { MessageCircle } from "lucide-react";
 import { cn } from "@/lib/utils";
-import logo from "@/assets/ai-interviewer.png";
+
+const logo = "/logo.png";
 
 export function Brand({ className }: { className?: string }) {
   return (
@@ -22,21 +24,28 @@ export function SiteHeader({ right }: { right?: React.ReactNode }) {
     <header className="sticky top-0 z-40 border-b border-border/70 bg-background/70 backdrop-blur-xl">
       <div className="mx-auto flex h-16 max-w-7xl items-center justify-between px-4 sm:px-6">
         <Brand />
-        <nav className="hidden items-center gap-7 text-sm text-muted-foreground md:flex">
+        <nav className="flex items-center gap-2 text-sm sm:gap-4 lg:gap-7">
           <Link
             to="/interviewer/setup"
             search={{ focus: undefined }}
             activeProps={{ className: "text-foreground" }}
-            className="transition-colors hover:text-foreground"
+            className="hidden transition-colors hover:text-foreground lg:inline-flex"
           >
             New interview
           </Link>
           <Link
             to="/interviewer/dashboard"
             activeProps={{ className: "text-foreground" }}
-            className="transition-colors hover:text-foreground"
+            className="hidden transition-colors hover:text-foreground lg:inline-flex"
           >
             Dashboard
+          </Link>
+          <Link
+            to="/chatbot"
+            className="inline-flex items-center gap-1.5 rounded-lg border border-primary/60 bg-primary/10 px-2.5 py-2 text-xs font-semibold text-primary shadow-[0_0_20px_-10px_hsl(var(--primary))] transition-colors hover:bg-primary/20 sm:gap-2 sm:px-3 sm:text-sm"
+          >
+            <MessageCircle className="size-4 shrink-0" />
+            <span>Chat with Nova</span>
           </Link>
         </nav>
         <div className="flex items-center gap-2">{right}</div>

@@ -13,7 +13,7 @@ import {
 } from "@/components/nova/NovaConversationPanel";
 
 import { NovaVoiceControl } from "@/components/nova/NovaVoiceControl";
-import { CompanyNovaActions } from "@/components/nova/CompanyNovaActions";
+import { useCompanyNovaActions } from "@/components/nova/CompanyNovaActionsContext";
 
 import {
   CompanyQuestionGenerator,
@@ -109,6 +109,7 @@ export function NovaConsole({
 }) {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
+  const { registerActionHandler } = useCompanyNovaActions();
 
   const [status, setStatus] =
     useState<NovaConversationStatus>({
@@ -1012,7 +1013,7 @@ export function NovaConsole({
 
   /*
    * ---------------------------------------------------------
-   * RIGHT-SIDE COMPANY ACTION BUTTONS
+   * COMPANY HIRING ACTIONS
    * ---------------------------------------------------------
    */
   const handleCompanyAction =
@@ -1111,6 +1112,11 @@ export function NovaConsole({
       },
       [navigate, openSchedulePanel],
     );
+
+  useEffect(
+    () => registerActionHandler(handleCompanyAction),
+    [handleCompanyAction, registerActionHandler],
+  );
 
   /*
    * ---------------------------------------------------------
@@ -1428,7 +1434,7 @@ export function NovaConsole({
       </div>
 
       {/* =====================================================
-          RIGHT — COMPANY HIRING COPILOT
+          RIGHT — VOICE AND GENERATION TOOLS
           ===================================================== */}
       <div className="flex min-h-0 flex-col gap-5 overflow-y-auto pr-1">
         <NovaVoiceControl
@@ -1562,12 +1568,6 @@ export function NovaConsole({
             )}
           </section>
         )}
-
-        <div className="card-3d rounded-2xl p-4">
-          <CompanyNovaActions
-            onAction={handleCompanyAction}
-          />
-        </div>
 
         {showSchedulePanel && (
           <div className="card-3d rounded-2xl p-4">

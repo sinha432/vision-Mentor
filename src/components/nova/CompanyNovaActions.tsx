@@ -12,6 +12,7 @@ export interface CompanyNovaAction {
 }
 
 interface CompanyNovaActionsProps {
+  collapsed?: boolean;
   onAction?: (action: CompanyNovaAction) => void;
 }
 
@@ -52,21 +53,24 @@ const icons = {
 };
 
 export function CompanyNovaActions({
+  collapsed = false,
   onAction,
 }: CompanyNovaActionsProps) {
   return (
-    <div className="space-y-3">
-      <div>
-        <h3 className="text-sm font-semibold text-foreground">
-          Nova Hiring Copilot
-        </h3>
+    <section className={collapsed ? "space-y-2" : "space-y-2.5"}>
+      {!collapsed && (
+        <div className="px-2">
+          <h3 className="text-xs font-semibold text-foreground">
+            Nova Hiring Copilot
+          </h3>
 
-        <p className="mt-1 text-xs text-muted-foreground">
-          Choose a hiring task or ask Nova directly.
-        </p>
-      </div>
+          <p className="mt-1 text-[10px] leading-relaxed text-muted-foreground">
+            Quick actions for your hiring workflow.
+          </p>
+        </div>
+      )}
 
-      <div className="grid gap-2">
+      <div className="grid gap-1.5">
         {actions.map((action) => {
           const Icon = icons[action.type];
 
@@ -75,25 +79,33 @@ export function CompanyNovaActions({
               key={action.type}
               type="button"
               onClick={() => onAction?.(action)}
-              className="group flex items-center gap-3 rounded-xl border border-border/60 bg-background/50 p-3 text-left transition-all hover:-translate-y-0.5 hover:border-cyber/50 hover:bg-cyber/5"
+              title={collapsed ? action.label : undefined}
+              aria-label={action.label}
+              className={`group flex min-h-10 items-center rounded-lg border border-sidebar-border bg-background/30 text-left transition-colors hover:border-cyber/50 hover:bg-cyber/5 ${
+                collapsed
+                  ? "justify-center p-2"
+                  : "gap-2.5 px-2.5 py-2"
+              }`}
             >
-              <span className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-cyber/10 text-cyber">
-                <Icon className="size-4" />
+              <span className="flex size-7 shrink-0 items-center justify-center rounded-md bg-cyber/10 text-cyber">
+                <Icon className="size-3.5" />
               </span>
 
-              <span className="min-w-0">
-                <span className="block text-xs font-medium text-foreground">
-                  {action.label}
-                </span>
+              {!collapsed && (
+                <span className="min-w-0">
+                  <span className="block text-[11px] font-medium leading-tight text-foreground">
+                    {action.label}
+                  </span>
 
-                <span className="mt-0.5 block text-[10px] leading-relaxed text-muted-foreground">
-                  {action.description}
+                  <span className="mt-0.5 block truncate text-[9px] leading-tight text-muted-foreground">
+                    {action.description}
+                  </span>
                 </span>
-              </span>
+              )}
             </button>
           );
         })}
       </div>
-    </div>
+    </section>
   );
 }

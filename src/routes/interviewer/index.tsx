@@ -15,6 +15,7 @@ import { AIInterviewer } from "@/interviewer/components/interview/AIInterviewer"
 import { SiteHeader } from "@/interviewer/components/vmx/SiteHeader";
 import { Button } from "@/components/ui/button";
 import { COMPANIES } from "@/interviewer/lib/companies";
+import { useDemoAuth } from "@/contexts/DemoAuthContext";
 
 export const Route = createFileRoute("/interviewer/")({
   head: () => ({
@@ -79,18 +80,17 @@ const FLOW = [
 ];
 
 function Landing() {
+  const { signOut } = useDemoAuth();
+
   return (
     <div className="min-h-screen">
       <SiteHeader
         right={
           <div className="flex items-center gap-2">
-            <Button
-              asChild
-              variant="ghost"
-              size="sm"
-              onClick={() => window.sessionStorage.setItem("vmx_auth_redirect", "1")}
-            >
-              <Link to="/">Back to Nova</Link>
+            <Button asChild variant="ghost" size="sm">
+              <Link to="/auth" onClick={signOut}>
+                Back to Login
+              </Link>
             </Button>
             <Button asChild size="sm">
               <Link to="/interviewer/setup" search={{ focus: undefined }}>

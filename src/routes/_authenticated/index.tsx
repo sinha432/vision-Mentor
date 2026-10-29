@@ -2,12 +2,28 @@ import { useEffect, useRef, useState, useCallback } from "react";
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { motion, AnimatePresence } from "framer-motion";
 import {
-  Mic, MicOff, Send, Video, VideoOff, Volume2, VolumeX,
-  Cpu, Activity, Sparkles, Settings as SettingsIcon, Radio, Power, Zap, Sun, Moon, UserCircle, ClipboardList, GraduationCap,
+  Mic,
+  MicOff,
+  Send,
+  Video,
+  VideoOff,
+  Volume2,
+  VolumeX,
+  Cpu,
+  Activity,
+  Sparkles,
+  Settings as SettingsIcon,
+  Radio,
+  Power,
+  Zap,
+  Sun,
+  Moon,
+  UserCircle,
+  ClipboardList,
+  GraduationCap,
 } from "lucide-react";
 import { toast } from "sonner";
 import { Toaster } from "@/components/ui/sonner";
-import { Switch } from "@/components/ui/switch";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { SettingsPanel, SettingsValues } from "@/components/SettingsPanel";
 import { Companion } from "@/components/nova/Companion";
@@ -22,7 +38,6 @@ import { AudioMonitor } from "@/lib/audio-monitor";
 import { useMedia } from "@/contexts/MediaProvider";
 
 export const Route = createFileRoute("/_authenticated/")({ component: VisionMentor });
-
 
 type Status = "idle" | "listening" | "thinking" | "speaking" | "offline";
 type Message = { id: string; role: "ai" | "user"; text: string; ts: number };
@@ -53,19 +68,27 @@ function Particles() {
 
 function StatusIndicator({ status }: { status: Status }) {
   const map = {
-    idle:      { label: "Idle",      color: "var(--muted-foreground)" },
+    idle: { label: "Idle", color: "var(--muted-foreground)" },
     listening: { label: "Listening", color: "var(--cyber)" },
-    thinking:  { label: "Thinking",  color: "var(--accent)" },
-    speaking:  { label: "Speaking",  color: "var(--primary)" },
-    offline:   { label: "Offline",   color: "var(--destructive)" },
+    thinking: { label: "Thinking", color: "var(--accent)" },
+    speaking: { label: "Speaking", color: "var(--primary)" },
+    offline: { label: "Offline", color: "var(--destructive)" },
   }[status];
   return (
     <div className="flex items-center gap-2 px-3 py-1.5 rounded-full glass">
       <span className="relative flex h-2 w-2">
-        <span className="absolute inline-flex h-full w-full rounded-full opacity-75 animate-ping" style={{ background: map.color }} />
-        <span className="relative inline-flex rounded-full h-2 w-2" style={{ background: map.color }} />
+        <span
+          className="absolute inline-flex h-full w-full rounded-full opacity-75 animate-ping"
+          style={{ background: map.color }}
+        />
+        <span
+          className="relative inline-flex rounded-full h-2 w-2"
+          style={{ background: map.color }}
+        />
       </span>
-      <span className="text-xs font-display uppercase tracking-widest" style={{ color: map.color }}>{map.label}</span>
+      <span className="text-xs font-display uppercase tracking-widest" style={{ color: map.color }}>
+        {map.label}
+      </span>
     </div>
   );
 }
@@ -91,17 +114,29 @@ function AvatarPanel({
   const vision = useVisionStatus();
   const { voices: novaVoices, active: activeVoice, setVoice, fellBack } = useNovaVoice();
   const novaState: NovaState =
-    status === "speaking" ? "speaking" : status === "listening" ? "listening" : status === "thinking" ? "thinking" : "idle";
+    status === "speaking"
+      ? "speaking"
+      : status === "listening"
+        ? "listening"
+        : status === "thinking"
+          ? "thinking"
+          : "idle";
   return (
     <div className="relative flex flex-col items-center justify-center gap-6 p-6">
       <div className="relative w-64 h-64 flex items-center justify-center">
         <div className="absolute inset-0 rounded-full border border-primary/30 animate-orbit" />
-        <div className="absolute inset-4 rounded-full border border-accent/30 animate-orbit" style={{ animationDirection: "reverse", animationDuration: "16s" }} />
+        <div
+          className="absolute inset-4 rounded-full border border-accent/30 animate-orbit"
+          style={{ animationDirection: "reverse", animationDuration: "16s" }}
+        />
         <div className="absolute inset-8 rounded-full border border-cyber/40" />
         {(status === "speaking" || status === "listening") && (
           <>
             <span className="absolute inset-6 rounded-full bg-primary/20 animate-pulse-ring" />
-            <span className="absolute inset-6 rounded-full bg-accent/20 animate-pulse-ring" style={{ animationDelay: "0.6s" }} />
+            <span
+              className="absolute inset-6 rounded-full bg-accent/20 animate-pulse-ring"
+              style={{ animationDelay: "0.6s" }}
+            />
           </>
         )}
         <div className="absolute inset-8 flex items-center justify-center">
@@ -130,7 +165,10 @@ function AvatarPanel({
       </div>
       {novaVoices.length > 0 && (
         <div className="w-full space-y-2">
-          <label htmlFor="nova-voice-select" className="flex items-center justify-center gap-2 text-[9px] tracking-[0.18em] text-muted-foreground uppercase">
+          <label
+            htmlFor="nova-voice-select"
+            className="flex items-center justify-center gap-2 text-[9px] tracking-[0.18em] text-muted-foreground uppercase"
+          >
             <Radio className="size-3" />
             Nova's voice
           </label>
@@ -148,7 +186,8 @@ function AvatarPanel({
           </select>
           {fellBack && (
             <p className="text-[10px] text-muted-foreground text-center">
-              Preferred voice unavailable — using {activeVoice ? voiceLabel(activeVoice) : "the browser default"}.
+              Preferred voice unavailable — using{" "}
+              {activeVoice ? voiceLabel(activeVoice) : "the browser default"}.
             </p>
           )}
         </div>
@@ -159,8 +198,12 @@ function AvatarPanel({
           <PopoverTrigger asChild>
             <button className="chip-3d rounded-lg p-2 flex flex-col items-center gap-1">
               <Radio className="w-4 h-4 text-cyber" />
-              <span className="text-[10px] uppercase tracking-wider text-muted-foreground">Voice</span>
-              <span className="text-[10px] text-cyber">{status === "offline" ? "OFFLINE" : "ONLINE"}</span>
+              <span className="text-[10px] uppercase tracking-wider text-muted-foreground">
+                Voice
+              </span>
+              <span className="text-[10px] text-cyber">
+                {status === "offline" ? "OFFLINE" : "ONLINE"}
+              </span>
             </button>
           </PopoverTrigger>
           <PopoverContent className="popover-3d w-64 text-xs">
@@ -176,10 +219,14 @@ function AvatarPanel({
           <PopoverTrigger asChild>
             <button className="chip-3d rounded-lg p-2 flex flex-col items-center gap-1">
               <Activity className="w-4 h-4 text-cyber" />
-              <span className="text-[10px] uppercase tracking-wider text-muted-foreground">Vision</span>
+              <span className="text-[10px] uppercase tracking-wider text-muted-foreground">
+                Vision
+              </span>
               <span
                 className="text-[10px] text-center leading-tight"
-                style={{ color: status === "offline" ? "var(--destructive)" : levelColor(vision.eye.level) }}
+                style={{
+                  color: status === "offline" ? "var(--destructive)" : levelColor(vision.eye.level),
+                }}
               >
                 {status === "offline"
                   ? "OFFLINE"
@@ -198,7 +245,6 @@ function AvatarPanel({
   );
 }
 
-
 function Waveform({ active }: { active: boolean }) {
   return (
     <div className="flex items-center justify-center gap-1 h-8">
@@ -208,7 +254,9 @@ function Waveform({ active }: { active: boolean }) {
           className="w-0.5 bg-gradient-to-t from-primary to-accent rounded-full"
           style={{
             height: active ? `${20 + Math.sin(i) * 60}%` : "20%",
-            animation: active ? `wave ${0.6 + (i % 5) * 0.1}s ease-in-out ${i * 0.04}s infinite` : "none",
+            animation: active
+              ? `wave ${0.6 + (i % 5) * 0.1}s ease-in-out ${i * 0.04}s infinite`
+              : "none",
             transformOrigin: "center",
           }}
         />
@@ -217,20 +265,40 @@ function Waveform({ active }: { active: boolean }) {
   );
 }
 
-function AnimatedMicButton({ active, disabled, onClick }: { active: boolean; disabled?: boolean; onClick: () => void }) {
+function AnimatedMicButton({
+  active,
+  disabled,
+  onClick,
+}: {
+  active: boolean;
+  disabled?: boolean;
+  onClick: () => void;
+}) {
   return (
-    <button onClick={onClick} disabled={disabled} className="relative group disabled:opacity-50" aria-label="microphone">
+    <button
+      onClick={onClick}
+      disabled={disabled}
+      className="relative group disabled:opacity-50"
+      aria-label="microphone"
+    >
       {active && (
         <>
           <span className="absolute inset-0 rounded-full bg-primary/40 animate-pulse-ring" />
-          <span className="absolute inset-0 rounded-full bg-accent/40 animate-pulse-ring" style={{ animationDelay: "0.7s" }} />
+          <span
+            className="absolute inset-0 rounded-full bg-accent/40 animate-pulse-ring"
+            style={{ animationDelay: "0.7s" }}
+          />
         </>
       )}
       <span
         className={`relative flex items-center justify-center w-16 h-16 rounded-full transition-all ${active ? "glow-primary" : "glow-cyber"}`}
         style={{ background: "var(--gradient-aurora)" }}
       >
-        {active ? <MicOff className="w-7 h-7 text-white" /> : <Mic className="w-7 h-7 text-white" />}
+        {active ? (
+          <MicOff className="w-7 h-7 text-white" />
+        ) : (
+          <Mic className="w-7 h-7 text-white" />
+        )}
       </span>
     </button>
   );
@@ -258,14 +326,18 @@ function MessageBubble({ m, mounted }: { m: Message; mounted: boolean }) {
       <div className={`max-w-[78%] ${isUser ? "items-end" : "items-start"} flex flex-col gap-1`}>
         <div
           className={`px-4 py-2.5 rounded-2xl text-sm leading-relaxed ${
-            isUser ? "rounded-br-sm bg-primary/20 border border-primary/40 text-foreground" : "rounded-bl-sm glass text-foreground"
+            isUser
+              ? "rounded-br-sm bg-primary/20 border border-primary/40 text-foreground"
+              : "rounded-bl-sm glass text-foreground"
           }`}
           style={isUser ? { boxShadow: "0 0 16px var(--shadow-glow)" } : {}}
         >
           {m.text}
         </div>
         <span className="text-[10px] text-muted-foreground px-2">
-          {mounted ? new Date(m.ts).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : ""}
+          {mounted
+            ? new Date(m.ts).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
+            : ""}
         </span>
       </div>
     </div>
@@ -280,15 +352,20 @@ function VisionMetrics() {
     v.eye.level === "good" && v.posture.level === "good"
       ? { text: "Calm", level: "good" as Level }
       : v.eye.level === "bad" || v.posture.level === "bad"
-      ? { text: "Tense", level: "bad" as Level }
-      : { text: "Focused", level: "warn" as Level };
-  const peopleText = v.people > 1 ? `${v.people} people` : v.people === 1 ? "1 person" : "No face detected";
+        ? { text: "Tense", level: "bad" as Level }
+        : { text: "Focused", level: "warn" as Level };
+  const peopleText =
+    v.people > 1 ? `${v.people} people` : v.people === 1 ? "1 person" : "No face detected";
   const phoneText = v.phone ? "Phone detected" : "No phone detected";
   const items = [
     { label: "Posture", value: postureShort, level: v.posture.level },
     { label: "Eye", value: eyeShort, level: v.eye.level },
-    { label: "People", value: peopleText, level: v.people > 1 ? "bad" as Level : "good" as Level },
-    { label: "Phone", value: phoneText, level: v.phone ? "bad" as Level : "good" as Level },
+    {
+      label: "People",
+      value: peopleText,
+      level: v.people > 1 ? ("bad" as Level) : ("good" as Level),
+    },
+    { label: "Phone", value: phoneText, level: v.phone ? ("bad" as Level) : ("good" as Level) },
     { label: "Audio", value: v.audio.text, level: v.audio.level },
     { label: "Mood", value: mood.text, level: mood.level },
   ];
@@ -296,8 +373,15 @@ function VisionMetrics() {
     <div className="grid grid-cols-2 gap-2 mt-3">
       {items.map((m) => (
         <div key={m.label} className="glass rounded-lg p-2 text-center">
-          <div className="text-[9px] uppercase tracking-widest text-muted-foreground">{m.label}</div>
-          <div className="text-xs font-display mt-0.5 truncate" style={{ color: levelColor(m.level) }}>{m.value}</div>
+          <div className="text-[9px] uppercase tracking-widest text-muted-foreground">
+            {m.label}
+          </div>
+          <div
+            className="text-xs font-display mt-0.5 truncate"
+            style={{ color: levelColor(m.level) }}
+          >
+            {m.value}
+          </div>
         </div>
       ))}
     </div>
@@ -328,7 +412,15 @@ function VisionWarnings() {
   );
 }
 
-function VideoPanel({ enabled, micEnabled, onToggle }: { enabled: boolean; micEnabled: boolean; onToggle: () => void }) {
+function VideoPanel({
+  enabled,
+  micEnabled,
+  onToggle,
+}: {
+  enabled: boolean;
+  micEnabled: boolean;
+  onToggle: () => void;
+}) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const [error, setError] = useState<string | null>(null);
   const { stream, cameraConnected, micConnected, error: mediaError } = useMedia();
@@ -364,10 +456,19 @@ function VideoPanel({ enabled, micEnabled, onToggle }: { enabled: boolean; micEn
     <div className="relative rounded-2xl overflow-hidden card-3d aspect-video">
       <div className="absolute top-3 left-3 z-10 flex items-center gap-2 px-2 py-1 rounded-md bg-background/60 backdrop-blur">
         <span className="w-1.5 h-1.5 rounded-full bg-destructive animate-pulse" />
-        <span className="text-[10px] font-display uppercase tracking-widest text-foreground">{cameraConnected ? "CONNECTED" : "DISCONNECTED"}</span>
+        <span className="text-[10px] font-display uppercase tracking-widest text-foreground">
+          {cameraConnected ? "CONNECTED" : "DISCONNECTED"}
+        </span>
       </div>
-      <button onClick={onToggle} className="absolute top-3 right-3 z-10 p-2 rounded-md glass hover:glow-cyber transition-shadow">
-        {enabled ? <Video className="w-4 h-4 text-cyber" /> : <VideoOff className="w-4 h-4 text-muted-foreground" />}
+      <button
+        onClick={onToggle}
+        className="absolute top-3 right-3 z-10 p-2 rounded-md glass hover:glow-cyber transition-shadow"
+      >
+        {enabled ? (
+          <Video className="w-4 h-4 text-cyber" />
+        ) : (
+          <VideoOff className="w-4 h-4 text-muted-foreground" />
+        )}
       </button>
       {enabled && cameraConnected && !error ? (
         <>
@@ -383,7 +484,9 @@ function VideoPanel({ enabled, micEnabled, onToggle }: { enabled: boolean; micEn
       ) : (
         <div className="w-full h-full grid-bg flex flex-col items-center justify-center gap-2">
           <VideoOff className="w-10 h-10 text-muted-foreground" />
-          <p className="text-xs text-muted-foreground">{error ?? mediaError ?? "Camera disconnected"}</p>
+          <p className="text-xs text-muted-foreground">
+            {error ?? mediaError ?? "Camera disconnected"}
+          </p>
         </div>
       )}
     </div>
@@ -401,7 +504,9 @@ function useSpeech(lang = "en-US", voice: SpeechSynthesisVoice | null = null) {
     setSupported(Boolean(SR));
     return () => {
       stoppingRef.current = true;
-      try { recognitionRef.current?.abort(); } catch {}
+      try {
+        recognitionRef.current?.abort();
+      } catch {}
       recognitionRef.current = null;
     };
   }, [lang]);
@@ -419,7 +524,9 @@ function useSpeech(lang = "en-US", voice: SpeechSynthesisVoice | null = null) {
       }
 
       try {
-        try { recognitionRef.current?.abort(); } catch {}
+        try {
+          recognitionRef.current?.abort();
+        } catch {}
         stoppingRef.current = false;
         const r = new SR();
         r.continuous = false;
@@ -427,7 +534,8 @@ function useSpeech(lang = "en-US", voice: SpeechSynthesisVoice | null = null) {
         r.lang = lang;
         recognitionRef.current = r;
         r.onresult = (e: any) => {
-          let interim = ""; let finalText = "";
+          let interim = "";
+          let finalText = "";
           for (let i = e.resultIndex; i < e.results.length; i++) {
             const res = e.results[i];
             if (res.isFinal) finalText += res[0].transcript;
@@ -462,7 +570,9 @@ function useSpeech(lang = "en-US", voice: SpeechSynthesisVoice | null = null) {
 
   const stop = useCallback(() => {
     stoppingRef.current = true;
-    try { recognitionRef.current?.abort(); } catch {}
+    try {
+      recognitionRef.current?.abort();
+    } catch {}
     recognitionRef.current = null;
   }, []);
 
@@ -504,21 +614,15 @@ function useSpeech(lang = "en-US", voice: SpeechSynthesisVoice | null = null) {
 
 export function VisionMentor() {
   const { resolved, toggle } = useTheme();
-  const { cameraEnabled, micEnabled: micSettingEnabled, setCameraEnabled, setMicEnabled } = useMedia();
+  const {
+    cameraEnabled,
+    micEnabled: micSettingEnabled,
+    setCameraEnabled,
+    setMicEnabled,
+  } = useMedia();
   const navigate = useNavigate();
   const [status, setStatus] = useState<Status>("idle");
   const [systemOnline, setSystemOnline] = useState(true);
-  const [interviewerMode, setInterviewerMode] = useState(false);
-  // Turning AI Interviewer Mode on opens the full AI Interviewer experience.
-  // Nova's own structured-interview behaviour is kept intact for when it is off.
-  const handleInterviewerMode = useCallback(
-    (next: boolean) => {
-      setInterviewerMode(next);
-   if (next) navigate({ to: "/interviewer" });
-    },
-    [navigate],
-  );
-
   const [expression, setExpression] = useState<NovaExpression>("neutral");
   const [pulse, setPulse] = useState(0);
   const [voiceReplies, setVoiceReplies] = useState(true);
@@ -528,14 +632,22 @@ export function VisionMentor() {
   const userEmail = user?.email ?? null;
   const [mounted, setMounted] = useState(false);
   const [messages, setMessages] = useState<Message[]>([
-    { id: "w", role: "ai", text: "Welcome to Vision Mentor X. I'm Nova, your AI interview coach. Ask me anything about the app, your interview prep — or switch on AI Interviewer Mode and I'll interview you.", ts: Date.now() },
+    {
+      id: "w",
+      role: "ai",
+      text: "Welcome to Vision Mentor X. I'm Nova, your AI interview coach. Ask me anything about the app or your interview prep.",
+      ts: Date.now(),
+    },
   ]);
   const [input, setInput] = useState("");
   const [interim, setInterim] = useState("");
   const [booted, setBooted] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
   const { active: novaVoice } = useNovaVoice();
-  const { supported, listen, stop, speak, speechProgress } = useSpeech(novaVoice?.lang || "en-US", novaVoice);
+  const { supported, listen, stop, speak, speechProgress } = useSpeech(
+    novaVoice?.lang || "en-US",
+    novaVoice,
+  );
 
   const updateVoiceReplies = (enabled: boolean) => {
     setVoiceReplies(enabled);
@@ -551,7 +663,7 @@ export function VisionMentor() {
         synthesis.resume();
         if (status === "idle" || status === "speaking") {
           setStatus("speaking");
-          setExpression(interviewerMode ? "thinking" : "happy");
+          setExpression("happy");
         }
       }
     } else if (synthesis.speaking || synthesis.pending) {
@@ -571,29 +683,31 @@ export function VisionMentor() {
     return cleaned || text.trim();
   }
 
-  useEffect(() => { setMounted(true); }, []);
   useEffect(() => {
-  sessionStorage.removeItem("vmx_return_to_chatbot");
-}, []);
-useEffect(() => {
-  if (user?.role === "company") {
-    navigate({ to: "/dashboard", replace: true });
-  }
-}, [user, navigate]);
- useEffect(() => {
-  setBooted(true);
-}, []);
-useEffect(() => {
-  sessionStorage.removeItem("vmx_return_to_chatbot");
-}, []);
-useEffect(() => {
-  const el = scrollRef.current;
-  if (!el) return;
+    setMounted(true);
+  }, []);
+  useEffect(() => {
+    sessionStorage.removeItem("vmx_return_to_chatbot");
+  }, []);
+  useEffect(() => {
+    if (user?.role === "company") {
+      navigate({ to: "/dashboard", replace: true });
+    }
+  }, [user, navigate]);
+  useEffect(() => {
+    setBooted(true);
+  }, []);
+  useEffect(() => {
+    sessionStorage.removeItem("vmx_return_to_chatbot");
+  }, []);
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (!el) return;
 
-  requestAnimationFrame(() => {
-    el.scrollTop = el.scrollHeight;
-  });
-}, [messages.length, status]);
+    requestAnimationFrame(() => {
+      el.scrollTop = el.scrollHeight;
+    });
+  }, [messages.length, status]);
   const videoOn = systemOnline && settings.cameraEnabled;
   const micEnabled = systemOnline && micSettingEnabled;
 
@@ -612,9 +726,17 @@ useEffect(() => {
   const sendMessage = async (text: string) => {
     const trimmed = text.trim();
     if (!trimmed) return;
-    if (!systemOnline) { toast.error("System is offline"); return; }
+    if (!systemOnline) {
+      toast.error("System is offline");
+      return;
+    }
 
-    const userMsg: Message = { id: crypto.randomUUID(), role: "user", text: trimmed, ts: Date.now() };
+    const userMsg: Message = {
+      id: crypto.randomUUID(),
+      role: "user",
+      text: trimmed,
+      ts: Date.now(),
+    };
     const history = [...messages, userMsg].map((m) => ({
       role: m.role === "ai" ? ("assistant" as const) : ("user" as const),
       text: m.text,
@@ -631,15 +753,20 @@ useEffect(() => {
     try {
       const reply = await streamNovaReply({
         history,
-        interviewerMode,
+        interviewerMode: false,
         onChunk: (full) => {
           const sanitized = sanitizeNovaText(full);
           if (!started) {
             started = true;
-            setMessages((m) => [...m, { id: replyId, role: "ai", text: sanitized, ts: Date.now() }]);
+            setMessages((m) => [
+              ...m,
+              { id: replyId, role: "ai", text: sanitized, ts: Date.now() },
+            ]);
             return;
           }
-          setMessages((m) => m.map((msg) => (msg.id === replyId ? { ...msg, text: sanitized } : msg)));
+          setMessages((m) =>
+            m.map((msg) => (msg.id === replyId ? { ...msg, text: sanitized } : msg)),
+          );
         },
       });
 
@@ -648,14 +775,14 @@ useEffect(() => {
 
       if (settings.voiceReplies && systemOnline && sanitizedReply) {
         setStatus("speaking");
-        setExpression(interviewerMode ? "thinking" : "happy");
+        setExpression("happy");
         setPulse((p) => p + 1);
         speechStarted = true;
 
         speak(sanitizedReply, {
           onStart: () => {
             setStatus("speaking");
-            setExpression(interviewerMode ? "thinking" : "happy");
+            setExpression("happy");
             setPulse((p) => p + 1);
           },
           onBoundary: () => {
@@ -677,10 +804,15 @@ useEffect(() => {
     }
   };
 
-
   const handleMic = async () => {
-    if (!systemOnline) { toast.error("System is offline"); return; }
-    if (!supported) { toast.error("Speech recognition not supported. Try Chrome or Edge."); return; }
+    if (!systemOnline) {
+      toast.error("System is offline");
+      return;
+    }
+    if (!supported) {
+      toast.error("Speech recognition not supported. Try Chrome or Edge.");
+      return;
+    }
 
     if (!micEnabled) {
       try {
@@ -697,13 +829,21 @@ useEffect(() => {
         }
         setMicEnabled(true);
       } catch {
-        toast.error("Microphone access denied. Allow mic permission in your browser and try again.");
+        toast.error(
+          "Microphone access denied. Allow mic permission in your browser and try again.",
+        );
         return;
       }
     }
 
-    if (status === "listening") { stop(); setStatus("idle"); setInterim(""); return; }
-    setStatus("listening"); setInterim("");
+    if (status === "listening") {
+      stop();
+      setStatus("idle");
+      setInterim("");
+      return;
+    }
+    setStatus("listening");
+    setInterim("");
     listen(
       (text) => {
         setInterim("");
@@ -724,37 +864,59 @@ useEffect(() => {
     <div className="relative min-h-screen text-foreground">
       <AnimatePresence>
         {!booted && (
-          <motion.div exit={{ opacity: 0 }} transition={{ duration: 0.6 }} className="fixed inset-0 z-50 flex flex-col items-center justify-center bg-background">
+          <motion.div
+            exit={{ opacity: 0 }}
+            transition={{ duration: 0.6 }}
+            className="fixed inset-0 z-50 flex flex-col items-center justify-center bg-background"
+          >
             <div className="relative w-32 h-32">
               <div className="absolute inset-0 rounded-full border-2 border-primary/40 animate-orbit" />
-              <div className="absolute inset-3 rounded-full border-2 border-accent/40 animate-orbit" style={{ animationDirection: "reverse" }} />
+              <div
+                className="absolute inset-3 rounded-full border-2 border-accent/40 animate-orbit"
+                style={{ animationDirection: "reverse" }}
+              />
               <div className="absolute inset-0 flex items-center justify-center">
                 <Sparkles className="w-12 h-12 text-cyber animate-pulse" />
               </div>
             </div>
-            <h1 className="mt-8 font-display text-3xl text-gradient animate-gradient">VISION MENTOR X</h1>
-            <p className="mt-2 text-xs uppercase tracking-[0.4em] text-muted-foreground">Initializing core systems…</p>
+            <h1 className="mt-8 font-display text-3xl text-gradient animate-gradient">
+              VISION MENTOR X
+            </h1>
+            <p className="mt-2 text-xs uppercase tracking-[0.4em] text-muted-foreground">
+              Initializing core systems…
+            </p>
           </motion.div>
         )}
       </AnimatePresence>
 
       <div className="fixed inset-0 -z-10">
-        <div className="absolute inset-0" style={{ background: resolved === "dark"
-          ? "radial-gradient(ellipse at top, oklch(0.20 0.10 280) 0%, oklch(0.10 0.04 270) 60%)"
-          : "radial-gradient(ellipse at top, oklch(0.95 0.04 240) 0%, oklch(0.98 0.01 250) 60%)" }} />
+        <div
+          className="absolute inset-0"
+          style={{
+            background:
+              resolved === "dark"
+                ? "radial-gradient(ellipse at top, oklch(0.20 0.10 280) 0%, oklch(0.10 0.04 270) 60%)"
+                : "radial-gradient(ellipse at top, oklch(0.95 0.04 240) 0%, oklch(0.98 0.01 250) 60%)",
+          }}
+        />
         <div className="absolute inset-0 grid-bg opacity-40" />
         <Particles />
-        <div className="absolute -top-32 -left-32 w-[500px] h-[500px] rounded-full" style={{ background: "var(--gradient-glow)" }} />
+        <div
+          className="absolute -top-32 -left-32 w-[500px] h-[500px] rounded-full"
+          style={{ background: "var(--gradient-glow)" }}
+        />
       </div>
 
       <header className="flex items-center justify-between px-6 py-4 border-b border-border/50 glass-strong">
         <div className="flex items-center gap-3">
-          <div className="w-9 h-9 rounded-lg flex items-center justify-center glow-primary" style={{ background: "var(--gradient-aurora)" }}>
+          <div
+            className="w-9 h-9 rounded-lg flex items-center justify-center glow-primary"
+            style={{ background: "var(--gradient-aurora)" }}
+          >
             <Zap className="w-5 h-5 text-white" />
           </div>
           <div>
             <h1 className="font-display text-sm text-gradient">VISION MENTOR X</h1>
-            
           </div>
         </div>
         <div className="flex items-center gap-2">
@@ -766,59 +928,53 @@ useEffect(() => {
             title="Click to toggle system"
           >
             <Power className={`w-3 h-3 ${systemOnline ? "text-cyber" : "text-destructive"}`} />
-            <span className={`text-[10px] uppercase tracking-widest ${systemOnline ? "text-cyber" : "text-destructive"}`}>
+            <span
+              className={`text-[10px] uppercase tracking-widest ${systemOnline ? "text-cyber" : "text-destructive"}`}
+            >
               {systemOnline ? "System Online" : "System Offline"}
             </span>
           </button>
 
-          <div
-            className={`hidden md:flex items-center gap-2 px-3 py-1.5 rounded-full chip-3d transition-all ${
-              interviewerMode ? "glow-primary" : ""
-            }`}
+          <Link
+            to="/interviewer"
+            className="inline-flex items-center gap-1.5 rounded-full border border-cyber/40 bg-cyber/10 px-2 py-2 text-[9px] font-semibold uppercase tracking-wider text-cyber transition-colors hover:border-cyber/70 hover:bg-cyber/15 sm:gap-2 sm:px-3 sm:text-[10px]"
           >
-            <Popover>
-              <PopoverTrigger asChild>
-                <button className="flex items-center gap-2" title="About AI Interviewer Mode">
-                  <GraduationCap className={`w-3 h-3 ${interviewerMode ? "text-primary" : "text-muted-foreground"}`} />
-                  <span
-                    className={`text-[10px] uppercase tracking-widest ${interviewerMode ? "text-primary" : "text-muted-foreground"}`}
-                  >
-                    AI Interviewer Mode
-                  </span>
-                </button>
-              </PopoverTrigger>
-              <PopoverContent align="end" className="popover-3d w-72 space-y-2 text-xs">
-                <p className="font-display text-[11px] uppercase tracking-widest">AI Interviewer Mode</p>
-                <p className="text-muted-foreground">
-                  {interviewerMode
-                    ? "On — Nova asks one interview question per turn, scores your answer on structure, clarity and evidence, then continues."
-                    : "Off — Nova acts as a free-form coach and assistant: ask about the app, interviews, or anything else."}
-                </p>
-                <div className="flex items-center justify-between pt-1">
-                  <span className="text-muted-foreground">Structured interview</span>
-                  <Switch checked={interviewerMode} onCheckedChange={handleInterviewerMode} />
-                </div>
-              </PopoverContent>
-            </Popover>
-            <Switch
-              checked={interviewerMode}
-              onCheckedChange={handleInterviewerMode}
-              aria-label="Toggle AI Interviewer Mode"
-              className="scale-75"
-            />
-          </div>
+            <GraduationCap className="h-3.5 w-3.5" />
+            <span className="sm:hidden">Interviewer</span>
+            <span className="hidden sm:inline">Interviewer Mode</span>
+          </Link>
 
-
-          <Link to="/reports" className="p-2 rounded-md chip-3d hover:glow-cyber transition-shadow" aria-label="My reports" title="My reports">
+          <Link
+            to="/reports"
+            className="p-2 rounded-md chip-3d hover:glow-cyber transition-shadow"
+            aria-label="My reports"
+            title="My reports"
+          >
             <ClipboardList className="w-4 h-4 text-foreground" />
           </Link>
-          <Link to="/profile" className="p-2 rounded-md chip-3d hover:glow-cyber transition-shadow" aria-label="Profile">
+          <Link
+            to="/profile"
+            className="p-2 rounded-md chip-3d hover:glow-cyber transition-shadow"
+            aria-label="Profile"
+          >
             <UserCircle className="w-4 h-4 text-foreground" />
           </Link>
-          <button onClick={toggle} className="p-2 rounded-md chip-3d hover:glow-cyber transition-shadow" aria-label="Toggle theme">
-            {resolved === "dark" ? <Sun className="w-4 h-4 text-foreground" /> : <Moon className="w-4 h-4 text-foreground" />}
+          <button
+            onClick={toggle}
+            className="p-2 rounded-md chip-3d hover:glow-cyber transition-shadow"
+            aria-label="Toggle theme"
+          >
+            {resolved === "dark" ? (
+              <Sun className="w-4 h-4 text-foreground" />
+            ) : (
+              <Moon className="w-4 h-4 text-foreground" />
+            )}
           </button>
-          <button onClick={() => setSettingsOpen(true)} className="p-2 rounded-md chip-3d hover:glow-cyber transition-shadow" aria-label="Settings">
+          <button
+            onClick={() => setSettingsOpen(true)}
+            className="p-2 rounded-md chip-3d hover:glow-cyber transition-shadow"
+            aria-label="Settings"
+          >
             <SettingsIcon className="w-4 h-4 text-foreground" />
           </button>
         </div>
@@ -826,9 +982,13 @@ useEffect(() => {
 
       <main className="grid grid-cols-1 lg:grid-cols-[320px_1fr_340px] gap-4 p-4 h-[calc(100vh-69px)]">
         <section className="card-3d rounded-2xl overflow-hidden">
-          <AvatarPanel status={status} expression={expression} pulse={pulse} speechProgress={speechProgress} />
+          <AvatarPanel
+            status={status}
+            expression={expression}
+            pulse={pulse}
+            speechProgress={speechProgress}
+          />
         </section>
-
 
         <section className="flex flex-col card-3d rounded-2xl overflow-hidden">
           <div className="flex items-center justify-between px-5 py-3 border-b border-border/50">
@@ -840,7 +1000,9 @@ useEffect(() => {
           </div>
 
           <div ref={scrollRef} className="flex-1 overflow-y-auto px-5 py-4 space-y-4">
-            {messages.map((m) => <MessageBubble key={m.id} m={m} mounted={mounted} />)}
+            {messages.map((m) => (
+              <MessageBubble key={m.id} m={m} mounted={mounted} />
+            ))}
             {interim && (
               <div className="flex justify-end animate-message-in">
                 <div className="max-w-[78%] flex flex-col items-end gap-1">
@@ -848,13 +1010,17 @@ useEffect(() => {
                     {interim}
                     <span className="inline-block w-1 h-3 bg-primary ml-1 animate-pulse align-middle" />
                   </div>
-                  <span className="text-[10px] text-primary/70 px-2 uppercase tracking-widest">Listening…</span>
+                  <span className="text-[10px] text-primary/70 px-2 uppercase tracking-widest">
+                    Listening…
+                  </span>
                 </div>
               </div>
             )}
             {status === "thinking" && (
               <div className="flex justify-start animate-message-in">
-                <div className="glass rounded-2xl rounded-bl-sm"><AIThinkingLoader /></div>
+                <div className="glass rounded-2xl rounded-bl-sm">
+                  <AIThinkingLoader />
+                </div>
               </div>
             )}
           </div>
@@ -865,7 +1031,9 @@ useEffect(() => {
                 value={input}
                 onChange={(e) => setInput(e.target.value)}
                 onKeyDown={(e) => e.key === "Enter" && sendMessage(input)}
-                placeholder={systemOnline ? "Ask anything or press the mic to talk…" : "System is offline"}
+                placeholder={
+                  systemOnline ? "Ask anything or press the mic to talk…" : "System is offline"
+                }
                 disabled={!systemOnline}
                 className="flex-1 bg-transparent outline-none px-3 py-2 text-sm placeholder:text-muted-foreground disabled:opacity-50"
               />
@@ -877,14 +1045,22 @@ useEffect(() => {
                 aria-pressed={!voiceReplies}
                 title={voiceReplies ? "Mute Nova's voice" : "Unmute Nova's voice"}
               >
-                {settings.voiceReplies ? <Volume2 className="w-4 h-4 text-cyber" /> : <VolumeX className="w-4 h-4 text-muted-foreground" />}
+                {settings.voiceReplies ? (
+                  <Volume2 className="w-4 h-4 text-cyber" />
+                ) : (
+                  <VolumeX className="w-4 h-4 text-muted-foreground" />
+                )}
               </button>
               <button
                 onClick={handleMic}
                 disabled={!systemOnline}
                 className={`p-2 rounded-lg transition-all disabled:opacity-50 ${status === "listening" ? "bg-primary/30 glow-primary" : "hover:bg-foreground/5"}`}
               >
-                {status === "listening" ? <MicOff className="w-4 h-4 text-primary" /> : <Mic className="w-4 h-4 text-foreground" />}
+                {status === "listening" ? (
+                  <MicOff className="w-4 h-4 text-primary" />
+                ) : (
+                  <Mic className="w-4 h-4 text-foreground" />
+                )}
               </button>
               <button
                 onClick={() => sendMessage(input)}
@@ -895,7 +1071,9 @@ useEffect(() => {
                 <Send className="w-4 h-4" />
               </button>
             </div>
-            <div className="mt-3"><Waveform active={status === "listening" || status === "speaking"} /></div>
+            <div className="mt-3">
+              <Waveform active={status === "listening" || status === "speaking"} />
+            </div>
           </div>
         </section>
 
@@ -925,9 +1103,19 @@ useEffect(() => {
               </div>
             </div>
             <div className="flex flex-col items-center gap-3 py-2">
-              <AnimatedMicButton active={status === "listening"} disabled={!systemOnline} onClick={handleMic} />
+              <AnimatedMicButton
+                active={status === "listening"}
+                disabled={!systemOnline}
+                onClick={handleMic}
+              />
               <p className="text-[11px] text-muted-foreground text-center">
-                {!systemOnline ? "System offline" : status === "listening" ? "Listening…" : status === "speaking" ? "AI speaking…" : "Tap to talk"}
+                {!systemOnline
+                  ? "System offline"
+                  : status === "listening"
+                    ? "Listening…"
+                    : status === "speaking"
+                      ? "AI speaking…"
+                      : "Tap to talk"}
               </p>
               <Waveform active={status === "listening" || status === "speaking"} />
             </div>
@@ -946,7 +1134,10 @@ useEffect(() => {
                 ["Mic", micEnabled ? "Ready" : "Disabled"],
                 ["Status", status.toUpperCase()],
               ].map(([k, v]) => (
-                <div key={k} className="flex justify-between border-b border-border/30 pb-1.5 last:border-0">
+                <div
+                  key={k}
+                  className="flex justify-between border-b border-border/30 pb-1.5 last:border-0"
+                >
                   <span className="text-muted-foreground">{k}</span>
                   <span className="text-cyber font-mono">{v}</span>
                 </div>

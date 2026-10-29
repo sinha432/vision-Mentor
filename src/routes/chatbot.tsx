@@ -6,11 +6,17 @@ export const Route = createFileRoute("/chatbot")({
   beforeLoad: () => {
     if (typeof window === "undefined") return;
 
-    const raw = window.localStorage.getItem("vmx_demo_user");
-
-    if (!raw) {
-      throw redirect({ to: "/welcome" });
+    let isAuthenticated = false;
+    try {
+      const raw = window.localStorage.getItem("vmx_user");
+      const user = raw ? (JSON.parse(raw) as { email?: unknown; role?: unknown }) : null;
+      isAuthenticated =
+        typeof user?.email === "string" && (user.role === "individual" || user.role === "company");
+    } catch {
+      isAuthenticated = false;
     }
+
+    if (!isAuthenticated) throw redirect({ to: "/auth" });
   },
   component: VisionMentor,
 });

@@ -10,7 +10,7 @@
     "preview": "vite preview",
     "test:interview": "node --experimental-strip-types --test src/interviewer/lib/evaluation-evidence.test.ts src/interviewer/lib/skill-mastery.test.ts src/interviewer/lib/job-grounding.test.ts src/interviewer/lib/model-telemetry.test.ts src/interviewer/lib/cloud-media-consent.test.ts src/lib/interview-access.test.ts",
     "test:integrity": "node --experimental-strip-types --test src/lib/assessment-integrity.test.ts",
-    "test:assessment": "node --experimental-strip-types --test src/lib/assessment-integrity.test.ts src/lib/judge0-languages.test.ts src/lib/assessment-email.test.ts",
+    "test:assessment": "node --experimental-strip-types --test src/lib/assessment-integrity.test.ts src/lib/judge0-languages.test.ts src/lib/assessment-email.test.ts src/lib/code-runner-utils.test.ts",
     "lint": "eslint .",
     "format": "prettier --write ."
   },
