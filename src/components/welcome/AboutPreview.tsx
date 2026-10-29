@@ -6,7 +6,7 @@ import { AboutJourney } from "@/components/about/AboutJourney";
 export function AboutPreview() {
   return (
     <div className="scroll-mt-24">
-      <AboutJourney />
+      <AboutJourney variant="home" />
       <div className="mt-6 flex justify-end">
         <Link
           to="/about"

@@ -1123,3 +1123,583 @@
     background-position: 200% 0;
   }
 }
+
+.about-orbit-hero {
+  width: 100%;
+  min-height: min(824px, calc(100svh - 120px));
+  aspect-ratio: 2 / 1;
+  border-radius: 26px;
+  background: radial-gradient(ellipse at 68% 54%, rgb(10 52 93 / 34%), transparent 48%), #030a19;
+}
+
+.about-orbit-ambient {
+  background:
+    radial-gradient(ellipse at 64% 57%, rgb(0 145 222 / 10%), transparent 48%),
+    linear-gradient(180deg, rgb(2 7 17 / 8%), rgb(1 5 14 / 20%));
+}
+
+.about-orbit-top-fragments {
+  z-index: 1;
+  display: flex;
+  height: 24px;
+  justify-content: flex-end;
+  gap: 12px;
+  overflow: hidden;
+  padding-right: 7%;
+  border-bottom: 1px solid rgb(148 174 199 / 14%);
+  opacity: 0.62;
+}
+
+.about-orbit-top-fragments span {
+  width: 100px;
+  height: 34px;
+  flex: 0 0 auto;
+  transform: translateY(-17px);
+  border: 1px solid rgb(141 165 189 / 25%);
+  border-radius: 999px;
+  background: rgb(22 33 49 / 74%);
+}
+
+.about-orbit-layout {
+  grid-template-columns: 38% minmax(0, 62%);
+  min-height: inherit;
+  height: 100%;
+}
+
+.about-orbit-copy {
+  padding: 48px 20px 48px 11%;
+}
+
+.about-orbit-title {
+  font-size: clamp(2.4rem, 3.5vw, 3.9rem);
+  line-height: 1.04;
+}
+
+.about-orbit-gradient {
+  background: linear-gradient(100deg, #35e9ff 0%, #298eff 55%, #c394ff 100%);
+  background-clip: text;
+  color: transparent;
+}
+
+.about-orbit-description {
+  max-width: 550px;
+  font-size: clamp(1rem, 1.35vw, 1.5rem);
+  line-height: 1.45;
+}
+
+.about-orbit-description span {
+  display: block;
+  white-space: nowrap;
+}
+
+.about-orbit-cta {
+  width: min(300px, 100%);
+  min-height: 55px;
+}
+
+.about-orbit-stage {
+  min-width: 0;
+  min-height: inherit;
+}
+
+.journey-orbit-track {
+  transform-box: view-box;
+  transform-origin: 450px 442px;
+  animation: journey-orbit-spin 46s linear infinite;
+}
+
+.journey-orbit-track-middle {
+  animation-direction: reverse;
+  animation-duration: 30s;
+}
+
+.journey-orbit-track-inner {
+  animation-duration: 20s;
+}
+
+.journey-orbit-planet {
+  stroke-width: 2;
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: journey-orbit-pulse 3.2s ease-in-out infinite;
+}
+
+.journey-orbit-planet-cyan {
+  fill: #bffaff;
+  stroke: #00dfff;
+  filter: drop-shadow(0 0 8px #00dfff);
+}
+
+.journey-orbit-planet-violet {
+  fill: #e4caff;
+  stroke: #9c4dff;
+  filter: drop-shadow(0 0 8px #9c4dff);
+  animation-delay: -1s;
+}
+
+.journey-orbit-planet-amber {
+  fill: #fff0c2;
+  stroke: #ffb52e;
+  filter: drop-shadow(0 0 8px #ffb52e);
+  animation-delay: -2s;
+}
+
+@keyframes journey-orbit-spin {
+  to {
+    transform: rotate(1turn);
+  }
+}
+
+@keyframes journey-orbit-pulse {
+  0%,
+  100% {
+    opacity: 0.75;
+    transform: scale(0.88);
+  }
+  50% {
+    opacity: 1;
+    transform: scale(1.12);
+  }
+}
+
+.journey-orbit-card {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 15px;
+  width: 100%;
+  min-height: 124px;
+  padding: 20px 22px;
+  border: 1px solid color-mix(in srgb, var(--card-accent) 32%, #283b56);
+  border-radius: 24px;
+  background: linear-gradient(135deg, rgb(13 29 49 / 96%), rgb(5 17 33 / 93%)), #071426;
+  box-shadow:
+    inset 0 1px 0 rgb(208 237 255 / 5%),
+    0 20px 46px rgb(0 0 0 / 34%);
+  -webkit-backdrop-filter: blur(18px);
+  backdrop-filter: blur(18px);
+  transition:
+    transform 220ms ease,
+    border-color 220ms ease,
+    box-shadow 220ms ease,
+    background-color 220ms ease;
+  cursor: pointer;
+  font: inherit;
+}
+
+.journey-orbit-card:hover,
+.journey-orbit-card:focus-visible,
+.journey-card-motion.is-active .journey-orbit-card {
+  transform: translateY(-4px);
+  border-color: color-mix(in srgb, var(--card-accent) 76%, #d7efff);
+  box-shadow:
+    inset 0 1px 0 rgb(208 237 255 / 8%),
+    0 22px 50px rgb(0 0 0 / 48%),
+    0 0 28px color-mix(in srgb, var(--card-accent) 18%, transparent);
+}
+
+.journey-card-motion.is-active {
+  z-index: 30;
+}
+
+.journey-orbit-card:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--card-accent) 82%, white);
+  outline-offset: 3px;
+}
+
+.journey-card-copy {
+  flex: 1 1 0%;
+}
+
+.journey-card-description {
+  overflow-wrap: anywhere;
+}
+
+.journey-detail-panel {
+  position: absolute;
+  z-index: 20;
+  width: min(320px, 34vw);
+  padding: 18px 20px;
+  border: 1px solid color-mix(in srgb, var(--card-accent) 56%, #49627c);
+  border-radius: 20px;
+  background: linear-gradient(145deg, rgb(15 34 56 / 96%), rgb(4 14 29 / 97%)), #071426;
+  box-shadow:
+    inset 0 1px 0 rgb(208 237 255 / 8%),
+    0 22px 54px rgb(0 0 0 / 55%),
+    0 0 24px color-mix(in srgb, var(--card-accent) 14%, transparent);
+  -webkit-backdrop-filter: blur(24px) saturate(135%);
+  backdrop-filter: blur(24px) saturate(135%);
+  opacity: 0;
+  pointer-events: none;
+  transform: translateY(7px) scale(0.98);
+  transition:
+    opacity 180ms ease,
+    transform 180ms ease,
+    visibility 180ms ease;
+  visibility: hidden;
+}
+
+.journey-detail-panel.is-open {
+  opacity: 1;
+  pointer-events: auto;
+  transform: translateY(0) scale(1);
+  visibility: visible;
+}
+
+.journey-detail-heading {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  color: #f4f7ff;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.journey-detail-panel p {
+  margin: 10px 0 0;
+  color: #c1cddf;
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.journey-detail-problem {
+  top: 0;
+  right: calc(100% + 12px);
+}
+
+.journey-detail-solution {
+  top: 0;
+  right: calc(100% + 12px);
+}
+
+.journey-detail-how {
+  top: auto;
+  right: calc(100% + 12px);
+  bottom: calc(100% - 5px);
+}
+
+.journey-detail-impact,
+.journey-detail-join {
+  top: 0;
+  left: calc(100% + 12px);
+}
+
+.journey-orbit-icon {
+  display: grid;
+  width: 58px;
+  height: 58px;
+  flex: 0 0 auto;
+  place-items: center;
+  border: 1px solid color-mix(in srgb, var(--card-accent) 75%, transparent);
+  border-radius: 50%;
+  color: #f4f7ff;
+  background: color-mix(in srgb, var(--card-accent) 12%, #071426);
+  box-shadow:
+    inset 0 0 16px color-mix(in srgb, var(--card-accent) 12%, transparent),
+    0 0 20px color-mix(in srgb, var(--card-accent) 20%, transparent);
+}
+
+.journey-card-problem {
+  position: absolute;
+  top: 5%;
+  left: 52%;
+  width: min(370px, 40%);
+  transform: translateX(-50%);
+}
+
+.journey-card-solution {
+  position: absolute;
+  top: 34%;
+  left: 79%;
+  width: min(355px, 38%);
+  transform: translateX(-50%);
+}
+
+.journey-card-how {
+  position: absolute;
+  top: 66%;
+  left: 79%;
+  width: min(350px, 38%);
+  transform: translateX(-50%);
+}
+
+.journey-card-impact {
+  position: absolute;
+  top: 68%;
+  left: 20%;
+  width: min(350px, 38%);
+  transform: translateX(-50%);
+}
+
+.journey-card-join {
+  position: absolute;
+  top: 27%;
+  left: 18%;
+  width: min(330px, 36%);
+  transform: translateX(-50%);
+}
+
+@media (min-width: 1500px) {
+  .journey-card-problem {
+    top: 4%;
+  }
+}
+
+@media (min-width: 1100px) {
+  .about-orbit-page .journey-card-join {
+    top: 23.5%;
+  }
+}
+
+@media (max-width: 1099px) {
+  .about-orbit-hero {
+    min-height: 0;
+    aspect-ratio: auto;
+  }
+
+  .about-orbit-layout {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .about-orbit-copy {
+    padding: 64px clamp(24px, 6vw, 72px) 28px;
+  }
+
+  .about-orbit-title {
+    font-size: clamp(2.5rem, 5vw, 3.75rem);
+  }
+
+  .about-orbit-description {
+    font-size: clamp(1rem, 2.2vw, 1.35rem);
+  }
+
+  .about-orbit-stage {
+    min-height: 900px;
+  }
+
+  .about-orbit-stage > svg {
+    top: auto;
+    bottom: 0;
+    height: 480px;
+    object-fit: cover;
+    object-position: center bottom;
+  }
+
+  .about-orbit-cards {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 12px;
+    padding: 0 24px;
+  }
+
+  .about-orbit-cards > div {
+    width: min(100%, 430px);
+  }
+
+  .journey-orbit-card {
+    position: relative;
+    width: 100%;
+    min-height: 105px;
+    transform: none;
+  }
+
+  .journey-orbit-card:hover,
+  .journey-orbit-card:focus-within {
+    transform: translateY(-2px);
+  }
+
+  .journey-card-motion {
+    position: relative;
+    top: auto;
+    left: auto;
+    width: 100%;
+    transform: none;
+  }
+
+  .journey-detail-panel,
+  .journey-detail-problem,
+  .journey-detail-solution,
+  .journey-detail-how,
+  .journey-detail-impact,
+  .journey-detail-join {
+    position: relative;
+    inset: auto;
+    width: 100%;
+    max-height: 0;
+    margin-top: 0;
+    overflow: hidden;
+    padding-block: 0;
+    border-color: transparent;
+    transform: translateY(-4px);
+  }
+
+  .journey-detail-panel.is-open {
+    max-height: 280px;
+    margin-top: 10px;
+    padding-block: 16px;
+    border-color: color-mix(in srgb, var(--card-accent) 56%, #49627c);
+    transform: translateY(0);
+  }
+
+  .about-orbit-stage > svg {
+    object-fit: fill;
+  }
+}
+
+.about-orbit-home {
+  min-height: 0;
+  aspect-ratio: auto;
+  container-type: inline-size;
+}
+
+.about-orbit-home .about-orbit-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  height: auto;
+}
+
+.about-orbit-home .about-orbit-copy {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  grid-template-areas:
+    "eyebrow eyebrow"
+    "title description"
+    "cta description";
+  align-content: center;
+  align-items: center;
+  column-gap: clamp(24px, 5cqw, 72px);
+  row-gap: 12px;
+  min-height: 360px;
+  padding: 58px 8% 34px;
+}
+
+.about-orbit-home .about-orbit-eyebrow {
+  grid-area: eyebrow;
+  margin: 0;
+}
+
+.about-orbit-home .about-orbit-home-title {
+  grid-area: title;
+  align-self: end;
+  width: 100%;
+  font-size: clamp(2rem, 3.8cqw, 3rem);
+}
+
+.about-orbit-home .about-orbit-home-description {
+  grid-area: description;
+  align-self: center;
+  max-width: 520px;
+  margin: 0;
+  font-size: clamp(1rem, 1.65cqw, 1.25rem);
+}
+
+.about-orbit-home .about-orbit-description span {
+  white-space: normal;
+}
+
+.about-orbit-home .about-orbit-home-cta {
+  grid-area: cta;
+  align-self: start;
+  margin-top: 12px;
+}
+
+.about-orbit-home .about-orbit-stage {
+  min-height: 800px;
+}
+
+.about-orbit-home .journey-card-problem {
+  top: 4%;
+}
+
+.about-orbit-home .journey-card-join {
+  top: 27%;
+}
+
+@media (max-width: 1099px) {
+  .about-orbit-home .about-orbit-copy {
+    display: flex;
+    align-items: flex-start;
+    min-height: 0;
+    padding: 56px clamp(24px, 6vw, 72px) 28px;
+  }
+
+  .about-orbit-home .about-orbit-home-title {
+    align-self: stretch;
+    font-size: clamp(1.75rem, 8vw, 2.25rem);
+  }
+
+  .about-orbit-home .about-orbit-home-description {
+    margin-top: 24px;
+  }
+
+  .about-orbit-home .about-orbit-home-cta {
+    margin-top: 28px;
+  }
+
+  .about-orbit-home .about-orbit-stage {
+    min-height: 900px;
+  }
+}
+
+@media (max-width: 520px) {
+  .about-orbit-title {
+    font-size: clamp(1.5rem, 7.5vw, 2.7rem);
+  }
+
+  .about-orbit-description span {
+    display: inline;
+    white-space: normal;
+  }
+
+  .about-orbit-description span::after {
+    content: " ";
+  }
+
+  .about-orbit-copy {
+    padding-inline: 20px;
+  }
+
+  .about-orbit-stage {
+    min-height: 900px;
+  }
+
+  .journey-detail-panel,
+  .journey-detail-problem,
+  .journey-detail-solution,
+  .journey-detail-how,
+  .journey-detail-impact,
+  .journey-detail-join {
+    width: 100%;
+  }
+
+  .about-orbit-stage > svg {
+    height: 360px;
+  }
+
+  .about-orbit-cards {
+    padding-inline: 16px;
+  }
+
+  .journey-orbit-card {
+    gap: 12px;
+    padding: 16px;
+    border-radius: 20px;
+  }
+
+  .journey-orbit-icon {
+    width: 50px;
+    height: 50px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .journey-orbit-card {
+    transition: none;
+  }
+
+  .journey-orbit-track,
+  .journey-orbit-planet {
+    animation: none;
+  }
+}
