@@ -1,6 +1,6 @@
 export type AssessmentViolation = "phone" | "audio";
 
-export const ASSESSMENT_PHONE_TERMINATION_CONFIDENCE = 90;
+export const ASSESSMENT_PHONE_DETECTION_PRIORITY_CONFIDENCE = 90;
 export const ASSESSMENT_HIGH_NOISE_DURATION_MS = 10_000;
 
 export type AssessmentStrikeState = {
@@ -24,17 +24,8 @@ export function assessmentViolationForEvent(kind: string): AssessmentViolation |
 export function shouldTerminateForAssessmentEvent(event: {
   kind: string;
   confidence: number;
-  deviceType?: "phone" | "other";
 }): boolean {
-  if (event.kind === "background_noise") {
-    return event.confidence >= 55;
-  }
-
-  return (
-    event.kind === "device_visible" &&
-    event.deviceType === "phone" &&
-    event.confidence >= ASSESSMENT_PHONE_TERMINATION_CONFIDENCE
-  );
+  return event.kind === "background_noise" && event.confidence >= 55;
 }
 
 export function recordAssessmentViolation(

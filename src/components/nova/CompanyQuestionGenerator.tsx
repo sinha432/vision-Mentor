@@ -7,6 +7,7 @@ import {
   Trash2,
   CheckCircle2,
   Send,
+  Mail,
 } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
@@ -101,6 +102,8 @@ export function CompanyQuestionGenerator({
   const [pendingAssessment, setPendingAssessment] = useState<StoredAssessment | null>(null);
   const [publishError, setPublishError] = useState<string | null>(null);
   const [retryingInvitations, setRetryingInvitations] = useState(false);
+  const [showAdditionalRecipientPicker, setShowAdditionalRecipientPicker] = useState(false);
+  const [sendingAdditionalInvitations, setSendingAdditionalInvitations] = useState(false);
 
   /*
    * Keep NovaConsole synchronized with the latest questions.
@@ -521,12 +524,18 @@ export function CompanyQuestionGenerator({
 
   const retryFailedInvitations = async () => {
     if (!publishedAssessment) return;
-    const failedIds = invitationResults.filter((result) => !result.success).map((result) => result.candidateId);
-    if (!failedIds.length) return;
+    const failedRecipients = invitationResults
+      .filter((result) => !result.success)
+      .map((result) => ({
+        id: result.candidateId,
+        name: result.name,
+        email: result.email,
+      }));
+    if (!failedRecipients.length) return;
 
     setRetryingInvitations(true);
     try {
-      const response = await sendAssessmentInvitations(publishedAssessment.code, failedIds);
+      const response = await sendAssessmentInvitations(publishedAssessment.code, failedRecipients);
       const updatedById = new Map(response.results.map((result) => [result.candidateId, result]));
       setInvitationResults((current) => current.map((result) => updatedById.get(result.candidateId) ?? result));
       if (response.testLink) {
@@ -540,6 +549,37 @@ export function CompanyQuestionGenerator({
     }
   };
 
+  const sendAdditionalInvitations = async () => {
+    if (!publishedAssessment || selectedCandidates.length === 0) return;
+    setSendingAdditionalInvitations(true);
+    try {
+      const response = await sendAssessmentInvitations(
+        publishedAssessment.code,
+        selectedCandidates,
+      );
+      setInvitationResults((current) => {
+        const byId = new Map(current.map((result) => [result.candidateId, result]));
+        for (const result of response.results) byId.set(result.candidateId, result);
+        return [...byId.values()];
+      });
+      if (response.testLink) {
+        setPublishedAssessment((current) =>
+          current ? { ...current, link: response.testLink! } : current,
+        );
+      }
+      const sent = response.results.filter((result) => result.success).length;
+      const failed = response.results.length - sent;
+      if (failed === 0) toast.success(`Assessment link emailed to ${sent} recipient(s).`);
+      else toast.error(`${sent} sent; ${failed} failed. You can retry failed invitations.`);
+      setSelectedCandidates([]);
+      setShowAdditionalRecipientPicker(false);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Could not email assessment link.");
+    } finally {
+      setSendingAdditionalInvitations(false);
+    }
+  };
+
   /*
   * Save to MongoDB before inviting selected candidates.
    */
@@ -548,11 +588,6 @@ export function CompanyQuestionGenerator({
       setShowPublishConfirmation(false);
       return;
     }
-    if (selectedCandidates.length === 0) {
-      toast.error("Select at least one candidate to receive the assessment link.");
-      return;
-    }
-
     setPublishing(true);
     setPublishError(null);
     setInvitationResults([]);
@@ -599,7 +634,10 @@ export function CompanyQuestionGenerator({
 
       if (!persisted) {
         setPendingAssessment(assessment);
-        const message = "MongoDB did not confirm the assessment save. No invitations were sent.";
+        const message =
+          "error" in created && created.error
+            ? `${created.error} No invitations were sent.`
+            : "MongoDB did not confirm the assessment save. No invitations were sent.";
         setPublishError(message);
         toast.error(message);
         return;
@@ -609,35 +647,46 @@ export function CompanyQuestionGenerator({
       const defaultLink = `${window.location.origin}/a/${encodeURIComponent(assessment.code)}`;
       setPublishedAssessment({ code: assessment.code, link: defaultLink });
 
-      try {
-        const response = await sendAssessmentInvitations(
-          assessment.code,
-          selectedCandidates.map((candidate) => candidate.id),
-        );
-        setInvitationResults(response.results);
-        setPublishedAssessment({
-          code: assessment.code,
-          link: response.testLink ?? defaultLink,
-        });
-        const sent = response.results.filter((result) => result.success).length;
-        const failed = response.results.length - sent;
-        if (failed === 0) {
-          toast.success(`Assessment published and sent to ${sent} candidate(s).`);
-        } else {
-          toast.error(`${sent} invitation(s) sent; ${failed} failed. Failed invitations can be retried.`);
+      let sent = 0;
+      let failed = 0;
+      let invitationRequestFailed = false;
+      if (selectedCandidates.length > 0) {
+        try {
+          const response = await sendAssessmentInvitations(
+            assessment.code,
+            selectedCandidates,
+          );
+          setInvitationResults(response.results);
+          setPublishedAssessment({
+            code: assessment.code,
+            link: response.testLink ?? defaultLink,
+          });
+          sent = response.results.filter((result) => result.success).length;
+          failed = response.results.length - sent;
+          if (failed > 0) {
+            toast.error(`${sent} invitation(s) sent; ${failed} failed. Failed invitations can be retried.`);
+          }
+        } catch (error) {
+          invitationRequestFailed = true;
+          const message = error instanceof Error ? error.message : "Could not send invitations.";
+          setInvitationResults(selectedCandidates.map((candidate) => ({
+            candidateId: candidate.id,
+            name: candidate.name,
+            email: candidate.email,
+            success: false,
+            error: message,
+          })));
+          toast.error("Assessment published, but invitations could not be sent.");
         }
-      } catch (error) {
-        const message = error instanceof Error ? error.message : "Could not send invitations.";
-        setInvitationResults(selectedCandidates.map((candidate) => ({
-          candidateId: candidate.id,
-          name: candidate.name,
-          email: candidate.email,
-          success: false,
-          error: message,
-        })));
-        toast.error("Assessment saved, but invitations could not be sent.");
       }
 
+      if (failed === 0 && !invitationRequestFailed) {
+        toast.success(
+          selectedCandidates.length > 0
+            ? `Assessment published and sent to ${sent} candidate(s).`
+            : "Assessment published. Copy the link or email it to candidates.",
+        );
+      }
       setQuestions([]);
       syncQuestionsWithNova([]);
       setSelectedCandidates([]);
@@ -672,10 +721,51 @@ export function CompanyQuestionGenerator({
 
       {publishedAssessment && (
         <section className="space-y-3 rounded-xl border border-border bg-background/40 p-4" aria-live="polite">
-          <div>
-            <h3 className="text-sm font-semibold">Assessment published</h3>
-            <p className="mt-1 break-all font-mono text-xs text-primary">{publishedAssessment.link}</p>
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div className="min-w-0">
+              <h3 className="text-sm font-semibold">Assessment published</h3>
+              <p className="mt-1 break-all font-mono text-xs text-primary">{publishedAssessment.link}</p>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              <button
+                type="button"
+                onClick={() =>
+                  void navigator.clipboard
+                    .writeText(publishedAssessment.link)
+                    .then(() => toast.success("Assessment link copied."))
+                    .catch(() => toast.error("Could not copy assessment link."))
+                }
+                className="rounded-md border border-border px-3 py-2 text-xs"
+              >
+                Copy link
+              </button>
+              <button
+                type="button"
+                onClick={() => setShowAdditionalRecipientPicker((current) => !current)}
+                className="inline-flex items-center gap-2 rounded-md border border-border px-3 py-2 text-xs"
+              >
+                <Mail className="size-3.5" />
+                Email link to candidates
+              </button>
+            </div>
           </div>
+          {showAdditionalRecipientPicker && (
+            <div className="space-y-3 rounded-lg border border-border bg-background/40 p-3">
+              <CandidatePicker
+                selectedCandidates={selectedCandidates}
+                onSelectionChange={setSelectedCandidates}
+                disabled={sendingAdditionalInvitations}
+              />
+              <button
+                type="button"
+                disabled={sendingAdditionalInvitations || selectedCandidates.length === 0}
+                onClick={() => void sendAdditionalInvitations()}
+                className="w-full rounded-lg bg-cyber px-3 py-2 text-xs font-medium text-primary-foreground disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                {sendingAdditionalInvitations ? "Sending email..." : "Send assessment link by email"}
+              </button>
+            </div>
+          )}
           {invitationResults.length > 0 && (
             <>
               <p className="text-sm">
@@ -1289,7 +1379,7 @@ export function CompanyQuestionGenerator({
                 <button
                   type="button"
                   onClick={publishAssessment}
-                  disabled={publishing || selectedCandidates.length === 0}
+                  disabled={publishing}
                   className="inline-flex items-center gap-2 rounded-lg bg-cyber px-3 py-2 text-xs font-medium text-primary-foreground transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-60"
                 >
                   {publishing ? (
@@ -1300,7 +1390,7 @@ export function CompanyQuestionGenerator({
                   ) : (
                     <>
                       <CheckCircle2 className="size-3.5" />
-                      Confirm & Publish
+                      Publish Assessment
                     </>
                   )}
                 </button>

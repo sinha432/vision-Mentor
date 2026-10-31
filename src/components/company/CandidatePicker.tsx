@@ -1,6 +1,7 @@
-import { useEffect, useState } from "react";
-import { Loader2, Search, UserRound, X } from "lucide-react";
+import { useEffect, useState, type FormEvent } from "react";
+import { Loader2, Mail, Search, UserRound, X } from "lucide-react";
 import { toast } from "sonner";
+import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 
@@ -25,6 +26,8 @@ export function CandidatePicker({
   const [options, setOptions] = useState<CandidateOption[]>([]);
   const [searching, setSearching] = useState(false);
   const [searchError, setSearchError] = useState("");
+  const [emailName, setEmailName] = useState("");
+  const [emailAddress, setEmailAddress] = useState("");
 
   useEffect(() => {
     const search = query.trim();
@@ -81,6 +84,29 @@ export function CandidatePicker({
     );
   };
 
+  const addEmailRecipient = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    const name = emailName.trim();
+    const email = emailAddress.trim().toLowerCase();
+    if (!name || !email) return;
+    if (selectedCandidates.length >= 25) {
+      toast.error("You can send up to 25 invitations at a time.");
+      return;
+    }
+
+    const existing = selectedCandidates.find(
+      (candidate) => candidate.email.toLowerCase() === email,
+    );
+    if (existing) {
+      toast.error("This email address is already selected.");
+      return;
+    }
+
+    onSelectionChange([...selectedCandidates, { id: `email:${email}`, name, email }]);
+    setEmailName("");
+    setEmailAddress("");
+  };
+
   return (
     <section className="space-y-4">
       <div className="flex flex-wrap items-start justify-between gap-3">
@@ -90,7 +116,8 @@ export function CandidatePicker({
           </div>
           <h2 className="font-display text-lg">Choose who receives the test</h2>
           <p className="mt-1 text-sm text-muted-foreground">
-            Select registered candidates to receive the assessment link by email.
+            Select a registered candidate or enter an email address. Recipients can sign in or
+            create an individual account using that email before starting the test.
           </p>
         </div>
         <span className="rounded-full border border-border px-2.5 py-1 text-xs text-muted-foreground">
@@ -178,6 +205,37 @@ export function CandidatePicker({
           })}
         </ul>
       )}
+
+      <form onSubmit={addEmailRecipient} className="grid gap-2 sm:grid-cols-[1fr_1fr_auto]">
+        <Input
+          value={emailName}
+          onChange={(event) => setEmailName(event.target.value)}
+          placeholder="Candidate name"
+          aria-label="Candidate name for email invitation"
+          disabled={disabled || selectedCandidates.length >= 25}
+          maxLength={100}
+          required
+        />
+        <Input
+          type="email"
+          value={emailAddress}
+          onChange={(event) => setEmailAddress(event.target.value)}
+          placeholder="candidate@example.com"
+          aria-label="Candidate email for invitation"
+          disabled={disabled || selectedCandidates.length >= 25}
+          maxLength={254}
+          required
+        />
+        <Button
+          type="submit"
+          variant="outline"
+          disabled={disabled || selectedCandidates.length >= 25}
+          className="gap-2"
+        >
+          <Mail className="h-4 w-4" />
+          Add email
+        </Button>
+      </form>
     </section>
   );
 }

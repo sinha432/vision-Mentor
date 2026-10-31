@@ -357,7 +357,17 @@ function VisionMetrics() {
         : { text: "Focused", level: "warn" as Level };
   const peopleText =
     v.people > 1 ? `${v.people} people` : v.people === 1 ? "1 person" : "No face detected";
-  const phoneText = v.phone ? "Phone detected" : "No phone detected";
+  const phoneStatus = {
+    phone_detected: { text: "Phone detected", level: "bad" as Level },
+    possible_phone: { text: "Phone seen · verifying", level: "warn" as Level },
+    wallet_detected: { text: "Wallet detected", level: "good" as Level },
+    calculator_detected: { text: "Calculator detected", level: "good" as Level },
+    notebook_detected: { text: "Notebook detected", level: "good" as Level },
+    id_card_detected: { text: "ID card detected", level: "good" as Level },
+    other_object: { text: "Other object", level: "good" as Level },
+    uncertain: { text: "Object uncertain", level: "warn" as Level },
+    clear: { text: "No phone detected", level: "good" as Level },
+  }[v.phoneState];
   const items = [
     { label: "Posture", value: postureShort, level: v.posture.level },
     { label: "Eye", value: eyeShort, level: v.eye.level },
@@ -366,7 +376,7 @@ function VisionMetrics() {
       value: peopleText,
       level: v.people > 1 ? ("bad" as Level) : ("good" as Level),
     },
-    { label: "Phone", value: phoneText, level: v.phone ? ("bad" as Level) : ("good" as Level) },
+    { label: "Phone", value: phoneStatus.text, level: phoneStatus.level },
     { label: "Audio", value: v.audio.text, level: v.audio.level },
     { label: "Mood", value: mood.text, level: mood.level },
   ];

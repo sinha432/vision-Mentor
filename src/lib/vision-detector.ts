@@ -1,8 +1,19 @@
 import type {
   FaceLandmarker,
+  HandLandmarker,
+  ImageClassifier,
   ObjectDetector,
   PoseLandmarker,
 } from "@mediapipe/tasks-vision";
+import {
+  classifyVisionObjectLabel,
+  isHandNearObject,
+  PhoneDetectionTracker,
+  type PhoneDetectionConfig,
+  type PhoneDetectionState,
+  type VisionObjectCategory,
+  type VisionObjectCandidate,
+} from "./phone-detection";
 
 import {
   setVisionStatus,
@@ -21,6 +32,35 @@ const POSE_MODEL =
 
 const OBJECT_MODEL =
   "https://storage.googleapis.com/mediapipe-models/object_detector/efficientdet_lite0/float32/1/efficientdet_lite0.tflite";
+const HANDHELD_OBJECT_DETECTOR_MODEL = "/models/visionmentor-handheld-detector.tflite";
+const HANDHELD_CLASSIFIER_MODEL = "/models/visionmentor-handheld-classifier.tflite";
+
+const OBJECT_DETECTION_INTERVAL_MS = 200;
+const STATUS_EMIT_INTERVAL_MS = 250;
+const HAND_DETECTION_INTERVAL_MS = 200;
+const CLASSIFIER_DETECTION_INTERVAL_MS = OBJECT_DETECTION_INTERVAL_MS;
+const OBJECT_CANDIDATE_LABELS = new Set([
+  "cell phone",
+  "cellphone",
+  "mobile phone",
+  "phone",
+  "smartphone",
+  "handbag",
+  "suitcase",
+  "book",
+  "remote",
+  "tablet",
+  "calculator",
+  "notebook",
+  "id card",
+  "identity card",
+  "laptop",
+  "keyboard",
+  "monitor",
+  "tv",
+]);
+const HAND_MODEL =
+  "https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task";
 
 // -----------------------------------------------------------------------------
 // FACE MESH INDICES
@@ -315,6 +355,9 @@ function evalGrooming(
 
 export class VisionDetector {
   private face: FaceLandmarker | null = null;
+  private hands: HandLandmarker | null = null;
+  private handheldObjectDetector: ObjectDetector | null = null;
+  private handheldClassifier: ImageClassifier | null = null;
   private pose: PoseLandmarker | null = null;
   private objects: ObjectDetector | null = null;
 
@@ -335,17 +378,19 @@ export class VisionDetector {
   //
   // Face       = ~5 FPS
   // Pose       = ~4 FPS
-  // Objects    = ~3 FPS
+  // Objects    = ~5 FPS
   // Grooming   = ~1 FPS
-  // UI         = ~2 FPS
+  // UI         = ~4 FPS
   //
   // Object detection is faster now so phone detection reacts quickly,
   // but we don't run it every animation frame because that would cause lag.
   // ---------------------------------------------------------------------------
 
   private lastFace = 0;
+  private lastHands = 0;
   private lastPose = 0;
   private lastObjects = 0;
+  private lastClassifier = 0;
   private lastGrooming = 0;
   private lastEmit = 0;
 
@@ -362,13 +407,26 @@ export class VisionDetector {
 
   private peopleDetected = 0;
 
-  // ---------------------------------------------------------------------------
-  // PHONE
-  // ---------------------------------------------------------------------------
-
+  private readonly phoneTracker: PhoneDetectionTracker;
   private phoneDetected = false;
+  private phoneState: PhoneDetectionState = "clear";
+  private phoneConfidence = 0;
+  private phoneHeld = false;
+  private handInitializationStarted = false;
+  private initializeHands: (() => void) | null = null;
+  private classifierInitializationStarted = false;
+  private initializeClassifier: (() => void) | null = null;
+  private classifierLoadFailed = false;
+  private handheldDetectorInitializationStarted = false;
+  private initializeHandheldDetector: (() => void) | null = null;
+  private handheldDetectorLoadFailed = false;
+  private objectCropCanvas =
+    typeof document !== "undefined" ? document.createElement("canvas") : null;
+  private sessionGeneration = 0;
 
-  private phoneMisses = 0;
+  constructor(phoneDetectionConfig: Partial<PhoneDetectionConfig> = {}) {
+    this.phoneTracker = new PhoneDetectionTracker(phoneDetectionConfig);
+  }
 
   // ---------------------------------------------------------------------------
   // START
@@ -384,6 +442,18 @@ export class VisionDetector {
 
     this.initializing = true;
     this.video = video;
+    const generation = ++this.sessionGeneration;
+    this.phoneTracker.reset();
+    this.phoneDetected = false;
+    this.phoneState = "clear";
+    this.phoneConfidence = 0;
+    this.phoneHeld = false;
+    this.handInitializationStarted = false;
+    this.classifierInitializationStarted = false;
+    this.classifierLoadFailed = false;
+    this.handheldDetectorInitializationStarted = false;
+    this.handheldDetectorLoadFailed = false;
+    this.lastClassifier = 0;
 
     try {
       const vision =
@@ -398,6 +468,82 @@ export class VisionDetector {
         await vision.FilesetResolver.forVisionTasks(
           WASM_BASE,
         );
+
+      this.initializeHands = () => {
+        if (this.handInitializationStarted) return;
+        this.handInitializationStarted = true;
+        void vision.HandLandmarker.createFromOptions(fileset, {
+          baseOptions: {
+            modelAssetPath: HAND_MODEL,
+            delegate: "GPU",
+          },
+          runningMode: "VIDEO",
+          numHands: 2,
+          minHandDetectionConfidence: 0.45,
+          minHandPresenceConfidence: 0.45,
+          minTrackingConfidence: 0.45,
+        }).then((landmarker) => {
+          if (!this.running || this.sessionGeneration !== generation) {
+            landmarker.close();
+            return;
+          }
+          this.hands = landmarker;
+        }).catch((error: unknown) => {
+          console.warn("Hand landmark detector unavailable.", error);
+        });
+      };
+
+      this.initializeClassifier = () => {
+        if (this.classifierInitializationStarted || this.classifierLoadFailed) return;
+        this.classifierInitializationStarted = true;
+        void vision.ImageClassifier.createFromModelPath(
+          fileset,
+          HANDHELD_CLASSIFIER_MODEL,
+        ).then((classifier) => {
+          if (!this.running || this.sessionGeneration !== generation) {
+            classifier.close();
+            return;
+          }
+          this.handheldClassifier = classifier;
+        }).catch((error: unknown) => {
+          this.classifierLoadFailed = true;
+          console.warn(
+            "[Vision Mentor] Custom handheld classifier unavailable; phone detections will remain unconfirmed.",
+            error,
+          );
+        });
+      };
+
+      this.initializeHandheldDetector = () => {
+        if (
+          this.handheldDetectorInitializationStarted ||
+          this.handheldDetectorLoadFailed
+        ) {
+          return;
+        }
+        this.handheldDetectorInitializationStarted = true;
+        void vision.ObjectDetector.createFromOptions(fileset, {
+          baseOptions: {
+            modelAssetPath: HANDHELD_OBJECT_DETECTOR_MODEL,
+            delegate: "GPU",
+          },
+          runningMode: "VIDEO",
+          scoreThreshold: 0.3,
+          maxResults: 5,
+        }).then((detector) => {
+          if (!this.running || this.sessionGeneration !== generation) {
+            detector.close();
+            return;
+          }
+          this.handheldObjectDetector = detector;
+        }).catch((error: unknown) => {
+          this.handheldDetectorLoadFailed = true;
+          console.warn(
+            "[Vision Mentor] Custom handheld object detector unavailable; phone detections will remain unconfirmed.",
+            error,
+          );
+        });
+      };
 
       // -----------------------------------------------------------------------
       // FACE
@@ -571,7 +717,7 @@ export class VisionDetector {
 
         if (
           this.objects &&
-          now - this.lastObjects >= 350
+          now - this.lastObjects >= OBJECT_DETECTION_INTERVAL_MS
         ) {
           this.lastObjects = now;
 
@@ -583,6 +729,30 @@ export class VisionDetector {
 
           const detections =
             result.detections ?? [];
+
+          if (import.meta.env.DEV) {
+            for (const detection of detections) {
+              console.debug(
+                "[Vision Mentor][Nova object detector]",
+                {
+                  model: "EfficientDet Lite0 COCO",
+                  categories: detection.categories.map((category) => ({
+                    categoryName: category.categoryName,
+                    categoryIndex: category.index,
+                    confidence: category.score,
+                  })),
+                  boundingBox: detection.boundingBox
+                    ? {
+                        x: detection.boundingBox.originX,
+                        y: detection.boundingBox.originY,
+                        width: detection.boundingBox.width,
+                        height: detection.boundingBox.height,
+                      }
+                    : null,
+                },
+              );
+            }
+          }
 
           // -------------------------------------------------------------------
           // PERSON COUNT
@@ -623,92 +793,235 @@ export class VisionDetector {
               faceCount,
             );
 
-          // -------------------------------------------------------------------
-          // PHONE DETECTION
-          // -------------------------------------------------------------------
+          let objectCandidate: VisionObjectCandidate | null = null;
+          let objectBox:
+            | { x: number; y: number; width: number; height: number }
+            | undefined;
+          let objectPixelBox:
+            | { x: number; y: number; width: number; height: number }
+            | undefined;
 
-          let detectedPhone = false;
+          for (const detection of detections) {
+            const category = detection.categories?.[0];
+            const label =
+              category?.categoryName?.trim().toLowerCase().replace(/[_-]+/g, " ") ?? "";
+            if (!label || !OBJECT_CANDIDATE_LABELS.has(label)) continue;
 
-          for (
-            const detection of detections
-          ) {
-            const category =
-              detection.categories?.[0];
-
-            const name =
-              category?.categoryName
-                ?.toLowerCase()
-                .trim() ?? "";
-
-            const score =
-              category?.score ?? 0;
-
-            /*
-             * Only accept actual phone classes.
-             *
-             * DO NOT include:
-             * remote
-             * laptop
-             * bottle
-             * cup
-             * etc.
-             */
-            const isPhone =
-              name === "cell phone" ||
-              name === "cellphone" ||
-              name === "mobile phone" ||
-              name === "mobile" ||
-              name === "smartphone" ||
-              name === "phone" ||
-              name.includes("phone");
-
-            /*
-             * 0.45 is deliberately lower than the
-             * old 0.65 threshold.
-             *
-             * The global detector threshold is 0.30,
-             * so phone detections between 0.30 and 0.45
-             * are available but are not strong enough
-             * to trigger the warning.
-             */
-            if (isPhone && score >= 0.30) {
-              detectedPhone = true;
-              break;
+            const confidence = category?.score ?? 0;
+            const isPhone = classifyVisionObjectLabel(label) === "phone";
+            const currentIsPhone =
+              objectCandidate !== null &&
+              classifyVisionObjectLabel(objectCandidate.label) === "phone";
+            if (
+              !objectCandidate ||
+              (isPhone && !currentIsPhone) ||
+              (isPhone === currentIsPhone && confidence > objectCandidate.confidence)
+            ) {
+              const box = detection.boundingBox;
+              objectCandidate = {
+                label,
+                confidence,
+                ...(box
+                  ? {
+                      center: {
+                        x: (box.originX + box.width / 2) / video.videoWidth,
+                        y: (box.originY + box.height / 2) / video.videoHeight,
+                      },
+                    }
+                  : {}),
+              };
+              objectBox = box
+                ? {
+                    x: box.originX / video.videoWidth,
+                    y: box.originY / video.videoHeight,
+                    width: box.width / video.videoWidth,
+                    height: box.height / video.videoHeight,
+                  }
+                : undefined;
+              objectPixelBox = box
+                ? {
+                    x: box.originX,
+                    y: box.originY,
+                    width: box.width,
+                    height: box.height,
+                  }
+                : undefined;
             }
           }
 
-          // -------------------------------------------------------------------
-          // PHONE STABILITY
-          // -------------------------------------------------------------------
-
-          if (detectedPhone) {
-            /*
-             * Immediate detection.
-             *
-             * As soon as MediaPipe sees a phone
-             * above the threshold, the status becomes true.
-             */
-            this.phoneDetected = true;
-
-            this.phoneMisses = 0;
-          } else {
-            /*
-             * Don't instantly remove the warning because
-             * one frame may miss the phone.
-             */
-            this.phoneMisses += 1;
-
-            /*
-             * 2 misses at 200 ms each ≈ 400 ms.
-             *
-             * This prevents flicker while still
-             * clearing the warning quickly.
-             */
-            if (
-              this.phoneMisses >= 2
-            ) {
-              this.phoneDetected = false;
+          if (this.handheldObjectDetector) {
+            const handheldResult =
+              this.handheldObjectDetector.detectForVideo(video, now);
+            const handheldDetections = handheldResult.detections ?? [];
+            if (import.meta.env.DEV) {
+              for (const detection of handheldDetections) {
+                console.debug("[Vision Mentor][Nova handheld object detector]", {
+                  model: HANDHELD_OBJECT_DETECTOR_MODEL,
+                  categories: detection.categories.map((category) => ({
+                    categoryName: category.categoryName,
+                    categoryIndex: category.index,
+                    confidence: category.score,
+                  })),
+                  boundingBox: detection.boundingBox
+                    ? {
+                        x: detection.boundingBox.originX,
+                        y: detection.boundingBox.originY,
+                        width: detection.boundingBox.width,
+                        height: detection.boundingBox.height,
+                      }
+                    : null,
+                });
+              }
             }
+
+            const customCandidate = handheldDetections.reduce<{
+              label: string;
+              category: VisionObjectCategory;
+              confidence: number;
+              index: number;
+              box?: { originX: number; originY: number; width: number; height: number };
+            } | null>((best, detection) => {
+              const category = detection.categories[0];
+              if (!category || (best && category.score <= best.confidence)) return best;
+              return {
+                label: category.categoryName,
+                category: classifyVisionObjectLabel(category.categoryName),
+                confidence: category.score,
+                index: category.index,
+                box: detection.boundingBox,
+              };
+            }, null);
+
+            if (customCandidate) {
+              const box = customCandidate.box;
+              objectCandidate = {
+                label: customCandidate.label,
+                confidence: customCandidate.confidence,
+                detectorCategory: customCandidate.category,
+                detectorConfidence: customCandidate.confidence,
+                ...(box
+                  ? {
+                      center: {
+                        x: (box.originX + box.width / 2) / video.videoWidth,
+                        y: (box.originY + box.height / 2) / video.videoHeight,
+                      },
+                    }
+                  : {}),
+              };
+              objectBox = box
+                ? {
+                    x: box.originX / video.videoWidth,
+                    y: box.originY / video.videoHeight,
+                    width: box.width / video.videoWidth,
+                    height: box.height / video.videoHeight,
+                  }
+                : undefined;
+              objectPixelBox = box
+                ? {
+                    x: box.originX,
+                    y: box.originY,
+                    width: box.width,
+                    height: box.height,
+                  }
+                : undefined;
+              if (import.meta.env.DEV) {
+                console.debug("[Vision Mentor][Nova handheld detector candidate]", {
+                  categoryName: customCandidate.label,
+                  categoryIndex: customCandidate.index,
+                  confidence: customCandidate.confidence,
+                });
+              }
+            }
+          }
+
+          if (objectCandidate) {
+            this.initializeHands?.();
+            this.initializeClassifier?.();
+            this.initializeHandheldDetector?.();
+          }
+
+          let handNearby = false;
+          if (this.hands && now - this.lastHands >= HAND_DETECTION_INTERVAL_MS) {
+            this.lastHands = now;
+            const handResult = this.hands.detectForVideo(video, now);
+            handNearby = isHandNearObject(handResult.landmarks, objectBox);
+          }
+
+          if (
+            objectCandidate &&
+            objectPixelBox &&
+            this.handheldClassifier &&
+            this.objectCropCanvas &&
+            now - this.lastClassifier >= CLASSIFIER_DETECTION_INTERVAL_MS
+          ) {
+            this.lastClassifier = now;
+            const x = Math.max(0, Math.floor(objectPixelBox.x));
+            const y = Math.max(0, Math.floor(objectPixelBox.y));
+            const right = Math.min(
+              video.videoWidth,
+              Math.ceil(objectPixelBox.x + objectPixelBox.width),
+            );
+            const bottom = Math.min(
+              video.videoHeight,
+              Math.ceil(objectPixelBox.y + objectPixelBox.height),
+            );
+            const width = right - x;
+            const height = bottom - y;
+            const context = this.objectCropCanvas.getContext("2d");
+            if (context && width > 0 && height > 0) {
+              this.objectCropCanvas.width = width;
+              this.objectCropCanvas.height = height;
+              context.drawImage(video, x, y, width, height, 0, 0, width, height);
+              try {
+                const categories =
+                  this.handheldClassifier.classify(this.objectCropCanvas).classifications[0]
+                    ?.categories ?? [];
+                const bestCategory = categories[0];
+                if (bestCategory) {
+                  const classifierCategory: VisionObjectCategory =
+                    classifyVisionObjectLabel(bestCategory.categoryName);
+                  objectCandidate = {
+                    ...objectCandidate,
+                    classifierCategory,
+                    classifierConfidence: bestCategory.score,
+                  };
+                  if (import.meta.env.DEV) {
+                    console.debug("[Vision Mentor][Nova handheld classifier]", {
+                      model: HANDHELD_CLASSIFIER_MODEL,
+                      categoryName: bestCategory.categoryName,
+                      categoryIndex: bestCategory.index,
+                      confidence: bestCategory.score,
+                      detectorCategory: objectCandidate.label,
+                      detectorConfidence: objectCandidate.confidence,
+                      finalCategory: classifierCategory,
+                    });
+                  }
+                }
+              } catch (error) {
+                console.warn("[Vision Mentor] Handheld crop classification failed.", error);
+              }
+            }
+          }
+
+          const verification = this.phoneTracker.record(
+            objectCandidate,
+            handNearby,
+          );
+          this.phoneDetected = verification.confirmed;
+          this.phoneState = verification.state;
+          this.phoneConfidence = verification.confidence;
+          this.phoneHeld = verification.held;
+          if (import.meta.env.DEV && objectCandidate) {
+            console.debug("[Vision Mentor][Nova phone decision]", {
+              detectorCategory: objectCandidate.label,
+              detectorConfidence: objectCandidate.confidence,
+              classifierCategory: objectCandidate.classifierCategory ?? null,
+              classifierConfidence: objectCandidate.classifierConfidence ?? null,
+              verifiedPhoneFrames: verification.phoneDetections,
+              requiredPhoneFrames: this.phoneTracker.config.minPhoneDetections,
+              finalDecision: verification.state,
+              confirmed: verification.confirmed,
+            });
           }
         }
 
@@ -717,7 +1030,7 @@ export class VisionDetector {
         // ---------------------------------------------------------------------
 
         if (
-          now - this.lastEmit >= 500
+          now - this.lastEmit >= STATUS_EMIT_INTERVAL_MS
         ) {
           this.lastEmit = now;
 
@@ -786,6 +1099,9 @@ export class VisionDetector {
 
             phone:
               this.phoneDetected,
+            phoneState: this.phoneState,
+            phoneConfidence: this.phoneConfidence,
+            phoneHeld: this.phoneHeld,
 
             eye,
 
@@ -855,6 +1171,7 @@ export class VisionDetector {
   // ---------------------------------------------------------------------------
 
   stop() {
+    this.sessionGeneration += 1;
     this.running = false;
     this.initializing = false;
 
@@ -875,6 +1192,24 @@ export class VisionDetector {
     }
 
     try {
+      this.hands?.close();
+    } catch {
+      // ignore
+    }
+
+    try {
+      this.handheldClassifier?.close();
+    } catch {
+      // ignore
+    }
+
+    try {
+      this.handheldObjectDetector?.close();
+    } catch {
+      // ignore
+    }
+
+    try {
       this.pose?.close();
     } catch {
       // ignore
@@ -887,6 +1222,9 @@ export class VisionDetector {
     }
 
     this.face = null;
+    this.hands = null;
+    this.handheldObjectDetector = null;
+    this.handheldClassifier = null;
     this.pose = null;
     this.objects = null;
 
@@ -897,10 +1235,23 @@ export class VisionDetector {
 
     this.peopleDetected = 0;
 
+    this.phoneTracker.reset();
     this.phoneDetected = false;
-    this.phoneMisses = 0;
+    this.phoneState = "clear";
+    this.phoneConfidence = 0;
+    this.phoneHeld = false;
+    this.handInitializationStarted = false;
+    this.initializeHands = null;
+    this.classifierInitializationStarted = false;
+    this.initializeClassifier = null;
+    this.classifierLoadFailed = false;
+    this.handheldDetectorInitializationStarted = false;
+    this.initializeHandheldDetector = null;
+    this.handheldDetectorLoadFailed = false;
 
     this.lastFace = 0;
+    this.lastHands = 0;
+    this.lastClassifier = 0;
     this.lastPose = 0;
     this.lastObjects = 0;
     this.lastGrooming = 0;

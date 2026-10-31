@@ -24,25 +24,48 @@ export const Route = createFileRoute("/api/company/assessment-invitations")({
         }
 
         try {
-          const body = (await request.json()) as { code?: unknown; candidateIds?: unknown };
+          const body = (await request.json()) as {
+            code?: unknown;
+            candidateIds?: unknown;
+            recipients?: unknown;
+          };
           const code = typeof body.code === "string" ? body.code.trim() : "";
           const rawCandidateIds = body.candidateIds;
+          const rawRecipients = body.recipients ?? [];
+          const candidateIdsInput = Array.isArray(rawCandidateIds) ? rawCandidateIds : [];
+          const recipientCount =
+            candidateIdsInput.length + (Array.isArray(rawRecipients) ? rawRecipients.length : 0);
 
           if (!/^[A-Za-z0-9-]{1,100}$/.test(code)) {
             return Response.json({ error: "Valid assessment code is required" }, { status: 400 });
           }
           if (
-            !Array.isArray(rawCandidateIds) ||
-            rawCandidateIds.length === 0 ||
-            rawCandidateIds.length > 25 ||
-            rawCandidateIds.some((id) => typeof id !== "string" || !id.trim() || id.length > 100)
+            (rawCandidateIds !== undefined &&
+              (!Array.isArray(rawCandidateIds) ||
+                candidateIdsInput.some(
+                  (id) => typeof id !== "string" || !id.trim() || id.length > 100,
+                ))) ||
+            !Array.isArray(rawRecipients) ||
+            rawRecipients.some(
+              (recipient) =>
+                !recipient ||
+                typeof recipient !== "object" ||
+                typeof recipient.name !== "string" ||
+                !recipient.name.trim() ||
+                recipient.name.trim().length > 100 ||
+                typeof recipient.email !== "string" ||
+                recipient.email.trim().length > 254 ||
+                !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(recipient.email.trim()),
+            ) ||
+            recipientCount === 0 ||
+            recipientCount > 25
           ) {
             return Response.json(
-              { error: "Select between 1 and 25 valid candidates" },
+              { error: "Select between 1 and 25 valid candidates or email recipients" },
               { status: 400 },
             );
           }
-          const candidateIds = [...new Set(rawCandidateIds as string[])];
+          const candidateIds = [...new Set(candidateIdsInput as string[])];
 
           const assessment = await getAssessment(code);
           if (!assessment || assessment.companyUserId !== session.id) {
@@ -54,6 +77,22 @@ export const Route = createFileRoute("/api/company/assessment-invitations")({
 
           const candidates = await getIndividualUsersByIds(candidateIds);
           const candidatesById = new Map(candidates.map((candidate) => [candidate.id, candidate]));
+          const registeredEmails = new Set(
+            candidates.map((candidate) => candidate.email.toLowerCase()),
+          );
+          const externalRecipients = rawRecipients as { name: string; email: string }[];
+          const externalTargets = [
+            ...new Map(
+              externalRecipients
+                .map((recipient) => ({
+                  id: `email:${recipient.email.trim().toLowerCase()}`,
+                  name: recipient.name.trim(),
+                  email: recipient.email.trim().toLowerCase(),
+                }))
+                .filter((target) => !registeredEmails.has(target.email))
+                .map((target) => [target.email, target]),
+            ).values(),
+          ];
           const emailSettings = {
             EMAILJS_ASSESSMENT_SERVICE_ID: process.env.EMAILJS_ASSESSMENT_SERVICE_ID,
             EMAILJS_ASSESSMENT_TEMPLATE_ID: process.env.EMAILJS_ASSESSMENT_TEMPLATE_ID,
@@ -77,8 +116,16 @@ export const Route = createFileRoute("/api/company/assessment-invitations")({
           ).toString();
 
           const results: InvitationResult[] = await Promise.all(
-            candidateIds.map(async (candidateId) => {
-              const candidate = candidatesById.get(candidateId);
+            [
+              ...candidateIds.map((candidateId) => ({
+                candidateId,
+                candidate: candidatesById.get(candidateId),
+              })),
+              ...externalTargets.map((candidate) => ({
+                candidateId: candidate.id,
+                candidate,
+              })),
+            ].map(async ({ candidateId, candidate }) => {
               if (!candidate) {
                 return {
                   candidateId,

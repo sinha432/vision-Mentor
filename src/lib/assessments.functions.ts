@@ -155,11 +155,20 @@ export async function createAssessment({ data }: { data: unknown }) {
 export async function createAssessmentWithPersistence({ data }: { data: unknown }) {
   const input = createSchema.parse(data);
   const assessment = insertAssessment(assessmentFields(input), { syncToMongoDB: false });
-  const saved = await syncAssessmentToMongoDB(assessment);
-  return {
-    assessment,
-    persisted: saved?.code === assessment.code,
-  };
+  try {
+    const saved = await syncAssessmentToMongoDB(assessment);
+    return {
+      assessment,
+      persisted: saved?.code === assessment.code,
+      ...(saved ? {} : { error: "The server did not confirm the assessment save." }),
+    };
+  } catch (error) {
+    return {
+      assessment,
+      persisted: false,
+      error: error instanceof Error ? error.message : "Assessment save failed.",
+    };
+  }
 }
 
 export async function listCompanyAssessments({ data }: { data: unknown }) {

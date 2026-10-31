@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import type { PhoneDetectionState } from "./phone-detection";
 
 export type Level = "good" | "warn" | "bad" | "idle";
 export type Signal = { text: string; level: Level };
@@ -18,6 +19,9 @@ export type VisionStatus = {
   people: number;
   /** phone in frame / in hand */
   phone: boolean;
+  phoneState: PhoneDetectionState;
+  phoneConfidence: number;
+  phoneHeld: boolean;
   leftHand: Signal;
   rightHand: Signal;
   /** microphone environment read */
@@ -31,6 +35,9 @@ const INITIAL: VisionStatus = {
   grooming: { text: "Waiting…", level: "idle" },
   people: 0,
   phone: false,
+  phoneState: "clear",
+  phoneConfidence: 0,
+  phoneHeld: false,
   leftHand: { text: "Waiting…", level: "idle" },
   rightHand: { text: "Waiting…", level: "idle" },
   audio: { text: "Not connected", level: "idle" },

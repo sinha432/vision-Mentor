@@ -13,7 +13,7 @@ import {
   type DetectionSummary,
   type GazeDirection,
 } from "@/interviewer/lib/detection-types";
-import { ASSESSMENT_PHONE_TERMINATION_CONFIDENCE } from "@/lib/assessment-integrity";
+import { ASSESSMENT_PHONE_DETECTION_PRIORITY_CONFIDENCE } from "@/lib/assessment-integrity";
 
 /**
  * On-device interview detection engine.
@@ -507,12 +507,7 @@ export function useDetectionEngine({
 
       const eventKey =
         kind === "device_visible"
-          ? `${kind}:${deviceType ?? "unknown"}:${
-              deviceType === "phone" &&
-              confidence >= ASSESSMENT_PHONE_TERMINATION_CONFIDENCE
-                ? "high"
-                : "normal"
-            }`
+          ? `${kind}:${deviceType ?? "unknown"}`
           : kind;
       const previous = lastEvent.get(eventKey);
 
@@ -1346,7 +1341,7 @@ export function useDetectionEngine({
             const highConfidencePhone = found.find(
               (candidate) =>
                 candidate.label === "phone" &&
-                candidate.score >= ASSESSMENT_PHONE_TERMINATION_CONFIDENCE,
+                candidate.score >= ASSESSMENT_PHONE_DETECTION_PRIORITY_CONFIDENCE,
             );
             const detected = highConfidencePhone ?? best;
 

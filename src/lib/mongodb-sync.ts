@@ -31,7 +31,9 @@ export async function syncInterviewToMongoDB(interview: unknown): Promise<unknow
   }
 }
 
-export async function syncAssessmentToMongoDB(assessment: any): Promise<any> {
+export async function syncAssessmentToMongoDB(
+  assessment: StoredAssessment,
+): Promise<StoredAssessment | null> {
   try {
     const response = await fetch("/api/db/assessment", {
       method: "POST",
@@ -39,17 +41,24 @@ export async function syncAssessmentToMongoDB(assessment: any): Promise<any> {
       body: JSON.stringify(assessment),
     });
 
+    const result = await response.json().catch(() => ({}));
     if (!response.ok) {
-      console.warn("MongoDB sync failed, will use localStorage");
-      return null;
+      const message =
+        typeof result?.error === "string"
+          ? result.error
+          : `Assessment save failed (HTTP ${response.status}).`;
+      throw new Error(message);
     }
 
-    const result = await response.json();
+    if (!result || typeof result.code !== "string" || result.code !== assessment.code) {
+      throw new Error("The server did not confirm the assessment save.");
+    }
+
     console.log("✓ Assessment synced to MongoDB");
-    return result;
+    return result as StoredAssessment;
   } catch (error) {
-    console.warn("MongoDB sync error:", error);
-    return null;
+    console.error("MongoDB assessment save failed:", error);
+    throw error instanceof Error ? error : new Error("Assessment save failed.");
   }
 }
 

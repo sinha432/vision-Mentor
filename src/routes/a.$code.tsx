@@ -166,6 +166,20 @@ function AssessmentPage() {
   const [leftPageWarning, setLeftPageWarning] =
     useState(false);
 
+  const attachPreview = useCallback(async (stream: MediaStream) => {
+    const video = videoRef.current;
+    if (!video) return;
+
+    if (video.srcObject !== stream) video.srcObject = stream;
+    try {
+      await video.play();
+      setMediaError(null);
+    } catch (error) {
+      console.warn("Assessment camera preview could not start:", error);
+      setMediaError("Camera access is active, but the preview could not start. Use Enable Camera to retry.");
+    }
+  }, []);
+
   /*
    * ---------------------------------------------------------
    * LOAD ASSESSMENT
@@ -274,13 +288,28 @@ function AssessmentPage() {
    * allowing both camera and microphone monitoring.
    */
 
-  const startMedia = useCallback(async () => {
-    if (streamRef.current) {
-      return;
+  const startMedia = useCallback(async (): Promise<string | null> => {
+    const existingStream = streamRef.current;
+    if (existingStream) {
+      const cameraAvailable = existingStream.getVideoTracks().some((track) => track.readyState === "live");
+      const microphoneAvailable = existingStream.getAudioTracks().some((track) => track.readyState === "live");
+      if (cameraAvailable && microphoneAvailable) {
+        await attachPreview(existingStream);
+        setCameraOn(true);
+        setMicOn(true);
+        return null;
+      }
+
+      streamRef.current = null;
+      existingStream.getTracks().forEach((track) => track.stop());
     }
 
     try {
       setMediaError(null);
+
+      if (!navigator.mediaDevices?.getUserMedia) {
+        throw new Error("This browser cannot provide camera and microphone access. Open the assessment in a supported browser over HTTPS.");
+      }
 
       const video: MediaTrackConstraints = {
         facingMode: "user",
@@ -292,59 +321,55 @@ function AssessmentPage() {
         noiseSuppression: true,
         autoGainControl: true,
       };
-      let stream: MediaStream;
-      let unavailableMessage: string | null = null;
-
-      try {
-        stream = await navigator.mediaDevices.getUserMedia({ video, audio });
-      } catch (combinedError) {
-        try {
-          stream = await navigator.mediaDevices.getUserMedia({ audio });
-          unavailableMessage = "Camera unavailable. Audio monitoring is active; phone detection is limited.";
-        } catch {
-          try {
-            stream = await navigator.mediaDevices.getUserMedia({ video });
-            unavailableMessage = "Microphone unavailable. Camera monitoring is active; audio detection is disabled.";
-          } catch {
-            throw combinedError;
-          }
-        }
-      }
-
-      streamRef.current = stream;
-
-      if (videoRef.current) {
-        videoRef.current.srcObject = stream;
-
-        await videoRef.current.play().catch(() => {
-          // Browser may require a user gesture.
-        });
-      }
+      const stream = await navigator.mediaDevices.getUserMedia({ video, audio });
 
       const cameraAvailable = stream.getVideoTracks().some((track) => track.readyState === "live");
       const microphoneAvailable = stream.getAudioTracks().some((track) => track.readyState === "live");
-      setCameraOn(cameraAvailable);
-      setMicOn(microphoneAvailable);
-      setMediaError(
-        unavailableMessage ??
-          (!cameraAvailable || !microphoneAvailable
-            ? "Camera and microphone monitoring are not both available."
-            : null),
-      );
+      if (!cameraAvailable || !microphoneAvailable) {
+        stream.getTracks().forEach((track) => track.stop());
+        throw new Error("A live camera and microphone are both required to join this assessment.");
+      }
+
+      streamRef.current = stream;
+      for (const track of stream.getTracks()) {
+        track.addEventListener(
+          "ended",
+          () => {
+            if (streamRef.current !== stream) return;
+            streamRef.current = null;
+            stream.getTracks().forEach((activeTrack) => activeTrack.stop());
+            setCameraOn(false);
+            setMicOn(false);
+            setMediaError("The camera or microphone disconnected. Re-enable both devices to continue monitoring.");
+          },
+          { once: true },
+        );
+      }
+
+      await attachPreview(stream);
+
+      setCameraOn(true);
+      setMicOn(true);
     } catch (error) {
       console.error(
         "Camera/microphone permission failed:",
         error,
       );
 
-      setMediaError(
-        "Camera and microphone access is required for the monitored assessment.",
-      );
-
+      const message =
+        error instanceof DOMException && error.name === "NotAllowedError"
+          ? "Allow camera and microphone access in your browser, then try again."
+          : error instanceof Error
+            ? error.message
+            : "Camera and microphone access is required to join this assessment.";
+      setMediaError(message);
       setCameraOn(false);
       setMicOn(false);
+      return message;
     }
-  }, []);
+
+    return null;
+  }, [attachPreview]);
 
   const verifyCandidate = async (event: React.FormEvent) => {
     event.preventDefault();
@@ -365,6 +390,10 @@ function AssessmentPage() {
       if (alreadyAttempted) {
         throw new Error("You have already submitted this assessment. Open your reports to view the result.");
       }
+      const mediaFailure = await startMedia();
+      if (mediaFailure) {
+        throw new Error(mediaFailure);
+      }
       setCandidate({ id: authenticated.id, name: authenticated.name, email: authenticated.email });
     } catch (error) {
       setEntryError(error instanceof Error ? error.message : "Could not verify this account.");
@@ -378,18 +407,18 @@ function AssessmentPage() {
       return;
     }
 
-    void startMedia();
+    const stream = streamRef.current;
+    if (stream) void attachPreview(stream);
 
     return () => {
       const stream = streamRef.current;
+      streamRef.current = null;
 
       stream?.getTracks().forEach((track) => {
         track.stop();
       });
-
-      streamRef.current = null;
     };
-  }, [assessment, candidate, startMedia]);
+  }, [assessment, candidate, attachPreview]);
 
   /*
    * ---------------------------------------------------------
@@ -944,7 +973,7 @@ function AssessmentPage() {
             <UserRound className="mx-auto mb-3 h-10 w-10 text-primary" />
             <h1 className="font-display text-2xl font-bold">Verify your account</h1>
             <p className="mt-2 text-sm text-muted-foreground">
-              Sign in with your registered individual Vision Mentor account before entering this assessment.
+              Sign in with your registered individual Vision Mentor account. Camera and microphone access are required to join the assessment.
             </p>
           </div>
           <div className="space-y-4">
@@ -984,7 +1013,7 @@ function AssessmentPage() {
           {entryError && <p className="mt-4 rounded-lg bg-destructive/10 p-3 text-sm text-destructive">{entryError}</p>}
           <Button type="submit" disabled={entryBusy} className="mt-6 w-full">
             {entryBusy ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
-            {entryBusy ? "Verifying…" : "Verify and enter assessment"}
+            {entryBusy ? "Verifying and checking media…" : "Verify and join assessment"}
           </Button>
 
           <div className="mt-4 text-center text-sm text-muted-foreground">

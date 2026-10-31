@@ -2,7 +2,6 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   ASSESSMENT_HIGH_NOISE_DURATION_MS,
-  ASSESSMENT_PHONE_TERMINATION_CONFIDENCE,
   assessmentViolationForEvent,
   recordAssessmentViolation,
   shouldTerminateForAssessmentEvent,
@@ -56,31 +55,21 @@ test("only phone and sustained-audio event kinds consume violation strikes", () 
   assert.equal(assessmentViolationForEvent("face_missing"), null);
 });
 
-test("a single high-confidence phone detection is an immediate termination event", () => {
+test("phone detections only terminate after three warnings, regardless of confidence", () => {
   assert.equal(
     shouldTerminateForAssessmentEvent({
       kind: "device_visible",
-      deviceType: "phone",
-      confidence: ASSESSMENT_PHONE_TERMINATION_CONFIDENCE,
-    }),
-    true,
-  );
-  assert.equal(
-    shouldTerminateForAssessmentEvent({
-      kind: "device_visible",
-      deviceType: "phone",
-      confidence: ASSESSMENT_PHONE_TERMINATION_CONFIDENCE - 1,
-    }),
-    false,
-  );
-  assert.equal(
-    shouldTerminateForAssessmentEvent({
-      kind: "device_visible",
-      deviceType: "other",
       confidence: 100,
     }),
     false,
   );
+  let state = initialState();
+  for (let warning = 1; warning <= 3; warning += 1) {
+    const decision = recordAssessmentViolation(state, "phone", warning * 10_000);
+    state = decision.state;
+    assert.equal(decision.warningNumber, warning);
+    assert.equal(decision.shouldTerminate, warning === 3);
+  }
   assert.equal(
     shouldTerminateForAssessmentEvent({
       kind: "background_noise",

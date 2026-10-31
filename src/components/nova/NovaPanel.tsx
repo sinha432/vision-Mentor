@@ -126,6 +126,42 @@ export function NovaPanel({
               ? `${status.posture.text} · ${status.people} person${status.people === 1 ? "" : "s"}`
               : "OFFLINE"}
           </span>
+          {senses.cameraOn && (
+            <span
+              role="status"
+              aria-live="polite"
+              className="text-center text-[10px] font-semibold leading-tight"
+              style={{
+                color:
+                  status.phoneState === "phone_detected"
+                    ? "var(--destructive)"
+                    : status.phoneState === "possible_phone" ||
+                        status.phoneState === "uncertain"
+                      ? "var(--amber)"
+                      : "var(--cyber)",
+              }}
+            >
+              {status.phoneHeld
+                ? "PHONE DETECTED · IN HAND"
+                : status.phoneState === "phone_detected"
+                  ? "PHONE DETECTED"
+                  : status.phoneState === "possible_phone"
+                    ? "PHONE SEEN · VERIFYING"
+                    : status.phoneState === "wallet_detected"
+                      ? "WALLET DETECTED"
+                      : status.phoneState === "calculator_detected"
+                        ? "CALCULATOR DETECTED"
+                        : status.phoneState === "notebook_detected"
+                          ? "NOTEBOOK DETECTED"
+                          : status.phoneState === "id_card_detected"
+                            ? "ID CARD DETECTED"
+                            : status.phoneState === "other_object"
+                              ? "OTHER OBJECT"
+                              : status.phoneState === "uncertain"
+                                ? "DETECTION UNCERTAIN"
+                                : "PHONE CLEAR"}
+            </span>
+          )}
         </div>
       </div>
 

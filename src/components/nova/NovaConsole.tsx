@@ -160,6 +160,8 @@ export function NovaConsole({
   const [publishedAssessment, setPublishedAssessment] = useState<{ code: string; link: string } | null>(null);
   const [invitationResults, setInvitationResults] = useState<InvitationResult[]>([]);
   const [retryingInvitations, setRetryingInvitations] = useState(false);
+  const [showPublishedRecipientPicker, setShowPublishedRecipientPicker] = useState(false);
+  const [sendingAdditionalInvitations, setSendingAdditionalInvitations] = useState(false);
 
   /*
    * Company HR interview scheduling state.
@@ -323,14 +325,6 @@ export function NovaConsole({
           return message;
         }
 
-        if (selectedCandidates.length === 0) {
-          setShowQuestionGenerator(true);
-          setShowRecipientPicker(true);
-          const message = "Select at least one registered candidate in the panel, then confirm to publish and email the test link.";
-          conversationRef.current?.appendAssistantMessage(message, true);
-          return message;
-        }
-
         setPublishing(true);
 
         try {
@@ -417,31 +411,37 @@ export function NovaConsole({
 
           if (!created.persisted) {
             setPendingAssessment(publishedRecord);
-            throw new Error("MongoDB did not confirm the assessment save. No invitations were sent.");
+            throw new Error(
+              "error" in created && created.error
+                ? `${created.error} No invitations were sent.`
+                : "MongoDB did not confirm the assessment save. No invitations were sent.",
+            );
           }
           setPendingAssessment(null);
 
           const defaultLink = `${window.location.origin}/a/${encodeURIComponent(publishedRecord.code)}`;
           setPublishedAssessment({ code: publishedRecord.code, link: defaultLink });
 
-          let results: InvitationResult[];
           let canonicalLink = defaultLink;
-          try {
-            const invitationResponse = await sendAssessmentInvitations(
-              publishedRecord.code,
-              selectedCandidates.map((candidate) => candidate.id),
-            );
-            results = invitationResponse.results;
-            canonicalLink = invitationResponse.testLink ?? defaultLink;
-          } catch (error) {
-            const message = error instanceof Error ? error.message : "Could not send invitations.";
-            results = selectedCandidates.map((candidate) => ({
-              candidateId: candidate.id,
-              name: candidate.name,
-              email: candidate.email,
-              success: false,
-              error: message,
-            }));
+          let results: InvitationResult[] = [];
+          if (selectedCandidates.length > 0) {
+            try {
+              const invitationResponse = await sendAssessmentInvitations(
+                publishedRecord.code,
+                selectedCandidates,
+              );
+              results = invitationResponse.results;
+              canonicalLink = invitationResponse.testLink ?? defaultLink;
+            } catch (error) {
+              const message = error instanceof Error ? error.message : "Could not send invitations.";
+              results = selectedCandidates.map((candidate) => ({
+                candidateId: candidate.id,
+                name: candidate.name,
+                email: candidate.email,
+                success: false,
+                error: message,
+              }));
+            }
           }
           setInvitationResults(results);
           setPublishedAssessment({ code: publishedRecord.code, link: canonicalLink });
@@ -476,7 +476,10 @@ export function NovaConsole({
 
           const sent = results.filter((result) => result.success).length;
           const failed = results.length - sent;
-          const successMessage = `Assessment saved in MongoDB (${questions.length} questions, code ${publishedRecord.code}). ${sent} invitation(s) sent; ${failed} failed. Link: ${canonicalLink}`;
+          const invitationSummary = selectedCandidates.length > 0
+            ? `${sent} invitation(s) sent; ${failed} failed.`
+            : "No invitations were sent yet.";
+          const successMessage = `Assessment saved in MongoDB (${questions.length} questions, code ${publishedRecord.code}). ${invitationSummary} Link: ${canonicalLink}`;
 
           /*
            * Tell Nova about the successful
@@ -500,7 +503,17 @@ export function NovaConsole({
           setShowRecipientPicker(false);
           setSelectedCandidates([]);
 
-          toast.success(`Assessment published. ${sent} invitation(s) sent; ${failed} failed.`);
+          if (failed > 0) {
+            toast.error(
+              `Assessment published, but ${failed} invitation(s) failed. The link is available to copy or retry.`,
+            );
+          } else {
+            toast.success(
+              selectedCandidates.length > 0
+                ? `Assessment published and emailed to ${sent} candidate(s).`
+                : "Assessment published. Copy the link or email it to candidates.",
+            );
+          }
 
           return successMessage;
         } catch (error) {
@@ -546,12 +559,18 @@ export function NovaConsole({
 
   const retryFailedAiInvitations = useCallback(async () => {
     if (!publishedAssessment) return;
-    const failedIds = invitationResults.filter((result) => !result.success).map((result) => result.candidateId);
-    if (!failedIds.length) return;
+    const failedRecipients = invitationResults
+      .filter((result) => !result.success)
+      .map((result) => ({
+        id: result.candidateId,
+        name: result.name,
+        email: result.email,
+      }));
+    if (!failedRecipients.length) return;
 
     setRetryingInvitations(true);
     try {
-      const response = await sendAssessmentInvitations(publishedAssessment.code, failedIds);
+      const response = await sendAssessmentInvitations(publishedAssessment.code, failedRecipients);
       const updatedById = new Map(response.results.map((result) => [result.candidateId, result]));
       setInvitationResults((current) => current.map((result) => updatedById.get(result.candidateId) ?? result));
       if (response.testLink) {
@@ -564,6 +583,40 @@ export function NovaConsole({
       setRetryingInvitations(false);
     }
   }, [publishedAssessment, invitationResults]);
+
+  const sendAdditionalAiInvitations = useCallback(async () => {
+    if (!publishedAssessment || selectedCandidates.length === 0) return;
+    setSendingAdditionalInvitations(true);
+    try {
+      const response = await sendAssessmentInvitations(
+        publishedAssessment.code,
+        selectedCandidates,
+      );
+      setInvitationResults((current) => {
+        const byId = new Map(current.map((result) => [result.candidateId, result]));
+        for (const result of response.results) byId.set(result.candidateId, result);
+        return [...byId.values()];
+      });
+      if (response.testLink) {
+        setPublishedAssessment((current) =>
+          current ? { ...current, link: response.testLink! } : current,
+        );
+      }
+      const sent = response.results.filter((result) => result.success).length;
+      const failed = response.results.length - sent;
+      if (failed === 0) {
+        toast.success(`Assessment link emailed to ${sent} recipient(s).`);
+      } else {
+        toast.error(`${sent} sent; ${failed} failed. You can retry failed invitations.`);
+      }
+      setSelectedCandidates([]);
+      setShowPublishedRecipientPicker(false);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Could not email assessment link.");
+    } finally {
+      setSendingAdditionalInvitations(false);
+    }
+  }, [publishedAssessment, selectedCandidates]);
 
   /*
    * ---------------------------------------------------------
@@ -1504,7 +1557,7 @@ export function NovaConsole({
                   onClick={() => void publishGeneratedAssessment()}
                   className="mt-3 w-full rounded-lg bg-cyber px-3 py-2 text-xs font-medium text-primary-foreground transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
                 >
-                  {publishing ? "Publishing..." : "Choose Candidates to Publish"}
+                  {publishing ? "Publishing..." : "Publish Assessment"}
                 </button>
               </div>
             )}
@@ -1518,11 +1571,15 @@ export function NovaConsole({
                 />
                 <button
                   type="button"
-                  disabled={publishing || selectedCandidates.length === 0}
+                  disabled={publishing}
                   onClick={() => void publishGeneratedAssessment()}
                   className="w-full rounded-lg bg-cyber px-3 py-2 text-xs font-medium text-primary-foreground disabled:cursor-not-allowed disabled:opacity-50"
                 >
-                  {publishing ? "Saving and sending..." : "Publish and Email Test Link"}
+                  {publishing
+                    ? "Publishing..."
+                    : selectedCandidates.length > 0
+                      ? "Publish and Email Test Link"
+                      : "Publish Assessment"}
                 </button>
               </div>
             )}
@@ -1531,10 +1588,51 @@ export function NovaConsole({
 
         {publishedAssessment && (
           <section className="space-y-3 rounded-xl border border-border bg-background/40 p-4" aria-live="polite">
-            <div>
-              <h3 className="text-sm font-semibold">AI assessment published</h3>
-              <p className="mt-1 break-all font-mono text-xs text-primary">{publishedAssessment.link}</p>
+            <div className="flex flex-wrap items-start justify-between gap-3">
+              <div className="min-w-0">
+                <h3 className="text-sm font-semibold">AI assessment published</h3>
+                <p className="mt-1 break-all font-mono text-xs text-primary">{publishedAssessment.link}</p>
+              </div>
+              <div className="flex flex-wrap gap-2">
+                <button
+                  type="button"
+                  onClick={() =>
+                    void navigator.clipboard
+                      .writeText(publishedAssessment.link)
+                      .then(() => toast.success("Assessment link copied."))
+                      .catch(() => toast.error("Could not copy assessment link."))
+                  }
+                  className="rounded-md border border-border px-3 py-2 text-xs"
+                >
+                  Copy link
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setShowPublishedRecipientPicker((current) => !current)}
+                  className="inline-flex items-center gap-2 rounded-md border border-border px-3 py-2 text-xs"
+                >
+                  <Mail className="size-3.5" />
+                  Email link to candidates
+                </button>
+              </div>
             </div>
+            {showPublishedRecipientPicker && (
+              <div className="space-y-3 rounded-lg border border-border bg-background/40 p-3">
+                <CandidatePicker
+                  selectedCandidates={selectedCandidates}
+                  onSelectionChange={setSelectedCandidates}
+                  disabled={sendingAdditionalInvitations}
+                />
+                <button
+                  type="button"
+                  disabled={sendingAdditionalInvitations || selectedCandidates.length === 0}
+                  onClick={() => void sendAdditionalAiInvitations()}
+                  className="w-full rounded-lg bg-cyber px-3 py-2 text-xs font-medium text-primary-foreground disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  {sendingAdditionalInvitations ? "Sending email..." : "Send assessment link by email"}
+                </button>
+              </div>
+            )}
             {invitationResults.length > 0 && (
               <>
                 <p className="text-sm">

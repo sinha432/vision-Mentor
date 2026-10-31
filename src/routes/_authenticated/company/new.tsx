@@ -55,6 +55,7 @@ type CreatedAssessment = {
   code: string;
   link: string;
   persisted: boolean;
+  error?: string;
 };
 
 const newCid = () => Math.random().toString(36).slice(2, 8);
@@ -247,14 +248,18 @@ function NewAssessment() {
 
   const retryFailedInvitations = async () => {
     if (!createdAssessment?.persisted) return;
-    const failedIds = invitationResults
+    const failedRecipients = invitationResults
       .filter((result) => !result.success)
-      .map((result) => result.candidateId);
-    if (failedIds.length === 0) return;
+      .map((result) => ({
+        id: result.candidateId,
+        name: result.name,
+        email: result.email,
+      }));
+    if (failedRecipients.length === 0) return;
 
     setRetryingInvitations(true);
     try {
-      const response = await sendAssessmentInvitations(createdAssessment.code, failedIds);
+      const response = await sendAssessmentInvitations(createdAssessment.code, failedRecipients);
       if (response.testLink) {
         setCreatedAssessment((current) =>
           current ? { ...current, link: response.testLink! } : current,
@@ -359,7 +364,7 @@ function NewAssessment() {
 
     setBusy(true);
     try {
-      const { assessment: rec, persisted } = await createAssessmentWithPersistence({
+      const { assessment: rec, persisted, error: saveError } = await createAssessmentWithPersistence({
         data: {
           companyUserId: user.id,
           title: title.trim(),
@@ -369,18 +374,25 @@ function NewAssessment() {
         },
       });
       const link = `${window.location.origin}/a/${rec.code}`;
-      setCreatedAssessment({ code: rec.code, link, persisted });
+      setCreatedAssessment({
+        code: rec.code,
+        link,
+        persisted,
+        ...(saveError ? { error: saveError } : {}),
+      });
       if (!persisted) {
-        const message = "Not sent because the assessment could not be saved to the company server.";
+        const message = saveError
+          ? `Not sent. ${saveError}`
+          : "Not sent because the assessment could not be saved to the company server.";
         setInvitationResults(failedInvitationResults(message));
-        toast.error("Assessment saved only in this browser; invitations were not sent.");
+        toast.error(message);
         return;
       }
 
       try {
         const response = await sendAssessmentInvitations(
           rec.code,
-          selectedCandidates.map((candidate) => candidate.id),
+          selectedCandidates,
         );
         const canonicalLink = response.testLink ?? link;
         setCreatedAssessment({ code: rec.code, link: canonicalLink, persisted: true });
@@ -862,6 +874,7 @@ function NewAssessment() {
                   <p className="mt-2 text-sm text-destructive">
                     This assessment is only saved in this browser and is not available to candidates
                     yet.
+                    {createdAssessment.error ? ` Server response: ${createdAssessment.error}` : ""}
                   </p>
                 )}
                 {createdAssessment.persisted && (
